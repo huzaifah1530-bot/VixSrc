@@ -12,6 +12,9 @@ struct HomeView: View {
     @State private var viewModel: CatalogViewModel?
     @State private var searchText = ""
     @State private var isSearchActive = false
+    /// Persists scroll position across tab switches so returning to Home
+    /// doesn't snap back to the top — same behaviour as App Store / Music.
+    @State private var scrollPosition: ScrollPosition = .init()
 
     var body: some View {
         NavigationStack {
@@ -85,14 +88,26 @@ struct HomeView: View {
                         onToggleFavorite: { viewModel.toggleFavoriteOnHero() },
                         isFavorite: viewModel.hero.map(store.isFavorite) ?? false
                     )
-                    // Use the full scroll view width minus padding.
-                    // containerRelativeFrame gives us the actual available width
-                    // so the card never sizes to content — it always fills edge to edge.
                     .containerRelativeFrame(.horizontal) { width, _ in
                         width - 40 // 20pt padding each side
                     }
                     .padding(.horizontal, 20)
                     .padding(.top, 8)
+
+                    // Last watched mini card — shown when the user has
+                    // at least one recent item and it isn't already the
+                    // hero (to avoid duplicating the same title twice).
+                    if let lastWatched = store.sortedRecents.first,
+                       lastWatched.id != viewModel.hero?.id {
+                        LastWatchedCard(
+                            item: lastWatched,
+                            isFavorite: store.isFavorite(lastWatched),
+                            onContinue: { Task { await viewModel.open(lastWatched) } },
+                            onFavorite: { store.toggleFavorite(lastWatched) }
+                        )
+                        .containerRelativeFrame(.horizontal) { width, _ in width - 40 }
+                        .padding(.horizontal, 20)
+                    }
 
                     FilterBar(selected: filterBinding(viewModel: viewModel))
                         .padding(.horizontal, 20)
@@ -103,6 +118,7 @@ struct HomeView: View {
             .padding(.bottom, 40)
             .padding(.top, 12)
         }
+        .scrollPosition($scrollPosition)
         .overlay(alignment: .bottom) {
             if let toast = viewModel.toastMessage {
                 ToastView(message: toast)
@@ -143,13 +159,25 @@ struct HomeView: View {
                 actionTitle: "Open Settings"
             ) { router.selection = .settings }
         } else if viewModel.totalResultCount == 0 {
-            statusCard(
-                systemImage: "magnifyingglass",
-                title: searchText.isEmpty ? "No matches found" : "No results for \u{201c}\(searchText)\u{201d}",
-                message: "Try another title. TMDB search starts after 2 characters.",
-                actionTitle: nil,
-                action: nil
-            )
+            if viewModel.isSearching {
+                // Debounce is pending or request in flight — show a spinner
+                // so the user sees standby feedback instead of "no results".
+                HStack {
+                    Spacer()
+                    ProgressView()
+                        .tint(.white)
+                        .padding(.top, 60)
+                    Spacer()
+                }
+            } else {
+                statusCard(
+                    systemImage: "magnifyingglass",
+                    title: searchText.isEmpty ? "No matches found" : "No results for \u{201c}\(searchText)\u{201d}",
+                    message: "Try another title. TMDB search starts after 2 characters.",
+                    actionTitle: nil,
+                    action: nil
+                )
+            }
         } else {
             ForEach(viewModel.displayedRows) { row in
                 if row.title == "Search results" {

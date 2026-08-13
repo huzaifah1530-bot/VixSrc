@@ -17,6 +17,9 @@ final class CatalogViewModel {
     private(set) var isLoadingHome = false
     private(set) var homeErrorMessage: String?
     private(set) var homeLoaded = false
+    // Search loading state — true while the debounce is pending or the
+    // network request is in flight. Drives the spinner in the search UI.
+    private(set) var isSearching = false
     private var searchTask: Task<[MediaItem], Never>?
     private var searchDebounceTask: Task<Void, Never>?
     /// Incremented at the start of every `runSearch` call. Lets us discard
@@ -178,12 +181,24 @@ final class CatalogViewModel {
     // MARK: - Search
 
     func debounceSearch(_ value: String) {
-        // Track the query immediately so `commitSearch` (triggered by return
-        // before the debounce fires) doesn't act on a stale value.
         searchQuery = value
         searchDebounceTask?.cancel()
+
+        let trimmed = value.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty {
+            isSearching = false
+            searchItems = []
+            return
+        }
+
+        // Show searching state immediately so the user sees feedback
+        // instead of a blank "no results" state while the debounce waits.
+        isSearching = true
+
+        // 700ms — long enough to avoid firing on every keystroke, short
+        // enough to feel responsive on a deliberate pause.
         searchDebounceTask = Task {
-            try? await Task.sleep(nanoseconds: 260_000_000)
+            try? await Task.sleep(nanoseconds: 700_000_000)
             guard !Task.isCancelled else { return }
             await runSearch(value)
         }
@@ -203,6 +218,7 @@ final class CatalogViewModel {
 
         let trimmed = query.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else {
+            isSearching = false
             searchItems = []
             return
         }
@@ -211,10 +227,12 @@ final class CatalogViewModel {
         previewHero(fromQueryPreview: parsed.titleQuery)
 
         guard !store.credential.trimmingCharacters(in: .whitespaces).isEmpty else {
+            isSearching = false
             searchItems = []
             return
         }
         guard FuzzySearch.compactForMatch(parsed.titleQuery).count >= 2 else {
+            isSearching = false
             searchItems = []
             return
         }
@@ -251,6 +269,7 @@ final class CatalogViewModel {
         // Discard stale results: if searchGeneration advanced while we were
         // awaiting, a newer runSearch call has already taken over.
         guard searchGeneration == generation else { return }
+        isSearching = false
         searchItems = result
         if let first = result.first { hero = first }
     }

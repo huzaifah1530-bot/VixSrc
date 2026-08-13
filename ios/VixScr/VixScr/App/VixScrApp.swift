@@ -17,7 +17,22 @@ import SwiftUI
 struct VelaApp: App {
     @State private var store = AppStore()
     @State private var router = TabRouter()
-    @State private var isLaunching = true
+    /// True only on cold start — the very first time this process renders.
+    /// Set to false after the fade completes and never set back to true,
+    /// so returning from background (warm resume from RAM) shows nothing.
+    @State private var isLaunching = !VelaApp.hasLaunchedThisProcess
+
+    /// Process-lifetime flag. False on cold start (first access), true
+    /// for every subsequent scene activation within the same process.
+    private static var hasLaunchedThisProcess: Bool = {
+        // This runs once when the type is first accessed — i.e. at cold
+        // start. We flip it to true immediately so any subsequent read
+        // (background → foreground) sees true and skips the splash.
+        let already = _hasLaunched
+        _hasLaunched = true
+        return already
+    }()
+    private static var _hasLaunched = false
 
     var body: some Scene {
         WindowGroup {
@@ -39,8 +54,12 @@ struct VelaApp: App {
                 ultraPerformanceMode: store.ultraPerformanceMode
             )
             .task {
+                guard isLaunching else { return }
+                // Wait for the first render pass to settle, then fade out
+                // the splash. 400ms total feels instant on fast devices
+                // while still giving slow devices time to draw the UI.
                 try? await Task.sleep(nanoseconds: 400_000_000)
-                withAnimation(.easeOut(duration: 0.25)) {
+                withAnimation(.easeOut(duration: 0.35)) {
                     isLaunching = false
                 }
             }

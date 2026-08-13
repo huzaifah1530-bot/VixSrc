@@ -7,9 +7,8 @@ import SwiftUI
 struct FavoritesView: View {
     @Environment(AppStore.self) private var store
     @State private var viewModel: CatalogViewModel?
+    @State private var scrollPosition: ScrollPosition = .init()
 
-    // Matches PosterCard's own fixed widths (124pt compact / 154pt large)
-    // so grid columns don't leave a size mismatch gap around each card.
     private let columns = [GridItem(.adaptive(minimum: 124, maximum: 154), spacing: 14)]
 
     var body: some View {
@@ -35,6 +34,7 @@ struct FavoritesView: View {
                         }
                         .padding(20)
                     }
+                    .scrollPosition($scrollPosition)
                 }
             }
             .background(VixTheme.background.ignoresSafeArea())

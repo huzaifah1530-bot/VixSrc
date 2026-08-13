@@ -116,6 +116,12 @@ struct SettingsView: View {
 
     private var searchHistorySection: some View {
         Section("Local Data") {
+            Button("Clear Recently Watched", role: .destructive) {
+                store.recents = []
+                showToast("Recently watched cleared")
+            }
+            .disabled(store.recents.isEmpty)
+
             Button("Clear Recent Searches", role: .destructive) {
                 store.clearSearchHistory()
                 showToast("Recent searches cleared")
