@@ -60,6 +60,16 @@ struct HomeView: View {
             router.selection = .home
             Task { await viewModel?.openByTMDBId(id) }
         }
+        // Apple pattern: tapping the active tab's icon clears search and
+        // returns to the home feed — same behaviour as App Store, Music, etc.
+        .onReceive(NotificationCenter.default.publisher(for: .velaClearSearch)) { _ in
+            guard router.selection == .home else { return }
+            withAnimation(.easeOut(duration: 0.2)) {
+                searchText = ""
+                isSearchActive = false
+            }
+            viewModel?.debounceSearch("")
+        }
     }
 
     @ViewBuilder
@@ -75,6 +85,12 @@ struct HomeView: View {
                         onToggleFavorite: { viewModel.toggleFavoriteOnHero() },
                         isFavorite: viewModel.hero.map(store.isFavorite) ?? false
                     )
+                    // Use the full scroll view width minus padding.
+                    // containerRelativeFrame gives us the actual available width
+                    // so the card never sizes to content — it always fills edge to edge.
+                    .containerRelativeFrame(.horizontal) { width, _ in
+                        width - 40 // 20pt padding each side
+                    }
                     .padding(.horizontal, 20)
                     .padding(.top, 8)
 

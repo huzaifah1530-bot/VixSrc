@@ -7,10 +7,31 @@ enum AppTab: Hashable {
     case settings
 }
 
-/// Lets any view request a tab switch (e.g. the "Add TMDB Key" button deep
-/// inside `HeroView` needs to jump to the Settings tab) without threading a
-/// closure through every intermediate view.
+/// Lets any view request a tab switch without threading a closure through
+/// every intermediate view. Tapping the already-active Home tab fires
+/// `.velaClearSearch` — the standard Apple "re-tap to return to root" pattern.
 @Observable
 final class TabRouter {
-    var selection: AppTab = .home
+    @ObservationIgnored private var _selection: AppTab = .home
+
+    var selection: AppTab {
+        get {
+            access(keyPath: \.selection)
+            return _selection
+        }
+        set {
+            let old = _selection
+            withMutation(keyPath: \.selection) {
+                _selection = newValue
+            }
+            // Re-tapping the active Home tab = clear search / go to root.
+            if newValue == .home, old == .home {
+                NotificationCenter.default.post(name: .velaClearSearch, object: nil)
+            }
+        }
+    }
+}
+
+extension Notification.Name {
+    static let velaClearSearch = Notification.Name("vela.clearSearch")
 }
