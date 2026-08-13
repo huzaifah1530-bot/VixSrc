@@ -1,3 +1,4 @@
+import Foundation
 import Observation
 
 /// The app's top-level destinations, one per native tab.
