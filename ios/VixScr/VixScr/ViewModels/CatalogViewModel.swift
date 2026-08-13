@@ -217,18 +217,23 @@ final class CatalogViewModel {
         if trimmed.isEmpty {
             isSearching = false
             searchItems = []
+            hero = homeRows.flatMap(\.items).first(where: { homeRows.first?.items.first?.id == $0.id }) ?? homeRows.flatMap(\.items).first
+            startHeroCycle()
             return
         }
 
-        // Show searching state immediately so the user sees feedback
-        // instead of a blank "no results" state while the debounce waits.
+        // Mark as searching immediately for UI feedback.
+        // Do NOT run previewHero here — it does synchronous fuzzy matching
+        // across every loaded item on the main thread and is the cause of
+        // per-keystroke lag. It runs inside the debounced task instead.
         isSearching = true
+        heroCycleTask?.cancel()
 
-        // 700ms — long enough to avoid firing on every keystroke, short
-        // enough to feel responsive on a deliberate pause.
-        searchDebounceTask = Task {
+        searchDebounceTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 700_000_000)
             guard !Task.isCancelled else { return }
+            // Now safe to do the fuzzy preview — debounce has settled
+            previewHero(fromQueryPreview: trimmed)
             await runSearch(value)
         }
     }
@@ -301,6 +306,10 @@ final class CatalogViewModel {
         isSearching = false
         searchItems = result
         if let first = result.first { hero = first }
+        // Save to history after a successful search with results
+        if !result.isEmpty {
+            store.addSearchHistory(searchQuery.trimmingCharacters(in: .whitespaces))
+        }
     }
 
     func commitSearch(openBest: Bool) async {

@@ -11,9 +11,11 @@ struct HomeView: View {
     @Environment(TabRouter.self) private var router
     @Environment(\.horizontalSizeClass) private var hSizeClass
     @Environment(\.verticalSizeClass) private var vSizeClass
+    @Environment(\.glassFidelity) private var glassFidelity
     @State private var viewModel: CatalogViewModel?
     @State private var searchText = ""
     @State private var isSearchActive = false
+    @Namespace private var heroNamespace
 
     /// iPhone landscape: both size classes are compact.
     private var isLandscape: Bool { hSizeClass == .compact && vSizeClass == .compact }
@@ -28,10 +30,19 @@ struct HomeView: View {
             .background(VixTheme.background.ignoresSafeArea())
             .navigationTitle("Vela")
             .navigationBarTitleDisplayMode(.large)
+            // When Liquid Glass is off, give the nav bar an explicit opaque
+            // background so it doesn't float glassily over the content.
+            .toolbarBackground(
+                glassFidelity == .full ? .automatic : .visible,
+                for: .navigationBar
+            )
+            .toolbarBackground(
+                glassFidelity == .full ? Color.clear : Color.black,
+                for: .navigationBar
+            )
         }
         .searchable(text: $searchText, isPresented: $isSearchActive, prompt: "Movies, TV shows...")
         .onChange(of: searchText) { _, newValue in
-            viewModel?.previewHero(fromQueryPreview: newValue)
             viewModel?.debounceSearch(newValue)
         }
         .onSubmit(of: .search) {
@@ -42,7 +53,11 @@ struct HomeView: View {
             if viewModel == nil {
                 viewModel = CatalogViewModel(store: store)
             }
-            await viewModel?.loadHome()
+            // Only load if we haven't loaded yet — prevents the flash of
+            // the loading spinner every time the user switches back to Home.
+            if viewModel?.homeLoaded == false {
+                await viewModel?.loadHome()
+            }
         }
         // Settings now lives in its own tab rather than a sheet presented
         // from Home, so Home can no longer trigger a reload right after
@@ -88,15 +103,10 @@ struct HomeView: View {
         .animation(.easeOut(duration: 0.18), value: isSearchActive)
     }
 
-    /// Full-screen search idle state — shown immediately when the search bar
-    /// is tapped, before the user types. Black background, recent searches
-    /// as a grouped list with section header and clear button, matching the
-    /// App Store's search focus state.
     @ViewBuilder
     private func searchIdleOverlay(viewModel: CatalogViewModel) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             if store.searchHistory.isEmpty {
-                // Nothing to show yet
                 VStack(spacing: 10) {
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: 40))
@@ -111,75 +121,51 @@ struct HomeView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(40)
             } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
-                        // Section header — matches App Store "Recent" style
+                // Native List with swipe-to-delete — exactly what App Store uses.
+                // List gives us free row separators, swipe actions, and correct
+                // insets automatically. No custom VStack needed.
+                List {
+                    Section {
+                        ForEach(store.searchHistory, id: \.self) { query in
+                            Button {
+                                searchText = query
+                                viewModel.debounceSearch(query)
+                            } label: {
+                                Label(query, systemImage: "clock.arrow.circlepath")
+                                    .foregroundStyle(.primary)
+                            }
+                            // Native swipe-to-delete — Apple's standard gesture
+                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                Button(role: .destructive) {
+                                    store.searchHistory.removeAll { $0 == query }
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
+                            }
+                        }
+                        .onDelete { offsets in
+                            store.searchHistory.remove(atOffsets: offsets)
+                        }
+                    } header: {
                         HStack {
-                            Text("Recent")
-                                .font(.title3.weight(.bold))
+                            Text("Recent Searches")
                             Spacer()
-                            Button("Clear") {
+                            Button("Clear All") {
                                 store.clearSearchHistory()
                             }
-                            .font(.subheadline.weight(.semibold))
+                            .font(.footnote.weight(.semibold))
                             .foregroundStyle(.blue)
+                            .textCase(nil)
                         }
-                        .padding(.horizontal, 20)
-                        .padding(.top, 8)
-                        .padding(.bottom, 12)
-
-                        // Grouped rounded rect card, like App Store recent searches
-                        VStack(spacing: 0) {
-                            ForEach(Array(store.searchHistory.enumerated()), id: \.offset) { idx, query in
-                                Button {
-                                    searchText = query
-                                    viewModel.debounceSearch(query)
-                                } label: {
-                                    HStack(spacing: 14) {
-                                        Image(systemName: "clock.arrow.circlepath")
-                                            .font(.system(size: 15))
-                                            .foregroundStyle(.secondary)
-                                            .frame(width: 20)
-
-                                        Text(query)
-                                            .font(.body)
-                                            .foregroundStyle(.primary)
-
-                                        Spacer()
-
-                                        Image(systemName: "arrow.up.left")
-                                            .font(.caption.weight(.semibold))
-                                            .foregroundStyle(.tertiary)
-                                    }
-                                    .padding(.horizontal, 16)
-                                    .padding(.vertical, 13)
-                                    .contentShape(Rectangle())
-                                }
-                                .buttonStyle(.plain)
-
-                                if idx < store.searchHistory.count - 1 {
-                                    Divider()
-                                        .padding(.leading, 50)
-                                }
-                            }
-                        }
-                        .background(Color.white.opacity(0.07),
-                                    in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .stroke(Color.white.opacity(0.1), lineWidth: 1)
-                        )
-                        .padding(.horizontal, 20)
                     }
-                    .padding(.bottom, 40)
                 }
+                .listStyle(.insetGrouped)
+                .scrollContentBackground(.hidden)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.black.ignoresSafeArea())
     }
-
-    // MARK: - Portrait layout (unchanged)
 
     @ViewBuilder
     private func portraitContent(viewModel: CatalogViewModel) -> some View {
@@ -197,19 +183,38 @@ struct HomeView: View {
                     .containerRelativeFrame(.horizontal) { width, _ in width - 40 }
                     .padding(.horizontal, 20)
                     .padding(.top, 8)
-                    .id(viewModel.hero?.id)
-                    .transition(.opacity)
+                    // matchedGeometryEffect ties the hero frame to the
+                    // lastWatched card frame. When the last-watched item
+                    // becomes the hero, SwiftUI spring-interpolates the
+                    // frame — the card appears to fly up and expand into
+                    // the hero position.
+                    .matchedGeometryEffect(id: "hero-card", in: heroNamespace)
+                    .animation(.spring(response: 0.42, dampingFraction: 0.78), value: viewModel.hero?.id)
 
+                    // LastWatchedCard — hidden (not just invisible) when it
+                    // is already the hero, which collapses the space and lets
+                    // everything below spring up naturally with a stagger.
                     if let lastWatched = store.sortedRecents.first,
                        lastWatched.id != viewModel.hero?.id {
                         LastWatchedCard(
                             item: lastWatched,
                             isFavorite: store.isFavorite(lastWatched),
-                            onContinue: { Task { await viewModel.open(lastWatched) } },
+                            onContinue: {
+                                withAnimation(.spring(response: 0.42, dampingFraction: 0.78)) {
+                                    Task { await viewModel.open(lastWatched) }
+                                }
+                            },
                             onFavorite: { store.toggleFavorite(lastWatched) }
                         )
                         .containerRelativeFrame(.horizontal) { width, _ in width - 40 }
                         .padding(.horizontal, 20)
+                        .matchedGeometryEffect(id: "last-watched-card", in: heroNamespace)
+                        .transition(
+                            .asymmetric(
+                                insertion: .move(edge: .bottom).combined(with: .opacity),
+                                removal: .move(edge: .top).combined(with: .opacity)
+                            )
+                        )
                     }
 
                     FilterBar(selected: filterBinding(viewModel: viewModel))
@@ -219,6 +224,9 @@ struct HomeView: View {
             }
             .padding(.bottom, 40)
             .padding(.top, 12)
+            // Drive the stagger: content below the last-watched card
+            // animates with the same spring as the card removal.
+            .animation(.spring(response: 0.42, dampingFraction: 0.78), value: store.sortedRecents.first?.id)
         }
         .overlay(alignment: .bottom) {
             if let toast = viewModel.toastMessage {
