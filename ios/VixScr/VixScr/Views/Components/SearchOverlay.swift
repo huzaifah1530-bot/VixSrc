@@ -1,6 +1,15 @@
 import SwiftUI
 import UIKit
 
+/// Reports a view's actual rendered height up through the view tree, so an
+/// ancestor can size itself to content instead of guessing.
+private struct HeightPreferenceKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
 /// Mirrors `#searchOverlay` — recent search chips + live/fuzzy result rows,
 /// shown below the search field while it has focus or text.
 struct SearchOverlay: View {
@@ -12,13 +21,24 @@ struct SearchOverlay: View {
     var onSelectItem: (MediaItem) -> Void
     var onClearRecents: () -> Void
 
+    /// Measured height of the scrollable content. `ScrollView` always wants
+    /// to expand to fill whatever height it's offered, so a plain
+    /// `.frame(maxHeight: cap)` on it doesn't clamp down to a *small*
+    /// content size — it makes the overlay reserve the full cap height even
+    /// when showing one line of empty-state text. That reserved space lives
+    /// inside the same safeAreaInset as the nav bar, so it pushed the whole
+    /// header area (and everything below it) down by the cap amount on
+    /// every focus, even with nothing to show. Measuring the real content
+    /// height and taking `min(measured, cap)` fixes both: the overlay stays
+    /// small when empty, and still scrolls/clamps when content is long.
+    @State private var contentHeight: CGFloat = 0
+
+    private var cappedHeight: CGFloat {
+        let cap = min(UIScreen.main.bounds.height * 0.6, 420)
+        return min(contentHeight, cap)
+    }
+
     var body: some View {
-        // Everything below the sticky header scrolls internally and is
-        // capped to a fraction of the screen height. Previously this was a
-        // plain VStack with no size limit: with up to 8 results it could be
-        // 600pt+ tall, which overflowed off-screen in landscape (where the
-        // whole display is often shorter than that) with no way to scroll
-        // or reach anything below it.
         VStack(alignment: .leading, spacing: 10) {
             Text(statusText.uppercased())
                 .font(.system(size: 11, weight: .black))
@@ -100,12 +120,17 @@ struct SearchOverlay: View {
                     }
                 }
                 .padding(.bottom, 14)
+                .background(
+                    GeometryReader { geo in
+                        Color.clear.preference(key: HeightPreferenceKey.self, value: geo.size.height)
+                    }
+                )
+            }
+            .frame(height: cappedHeight)
+            .onPreferenceChange(HeightPreferenceKey.self) { measured in
+                contentHeight = measured
             }
         }
-        // Cap height to a share of the screen rather than letting content
-        // dictate it, and never exceed a comfortable fixed max on large
-        // screens/landscape.
-        .frame(maxHeight: min(UIScreen.main.bounds.height * 0.6, 420))
         .vixGlass(.strong, cornerRadius: 28)
     }
 
