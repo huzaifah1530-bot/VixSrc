@@ -154,7 +154,9 @@ struct VixGlassContainer<Content: View>: View {
     var body: some View {
         #if compiler(>=6.2)
         if #available(iOS 26.0, *), fidelity == .full {
-            GlassEffectContainer(spacing: spacing) { content }
+            // GlassEffectContainer has no `spacing:` parameter in the public SDK.
+            // Spacing between glass elements is controlled by the content layout.
+            GlassEffectContainer { content }
         } else {
             content
         }

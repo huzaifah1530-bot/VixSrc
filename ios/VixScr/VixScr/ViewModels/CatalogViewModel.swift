@@ -242,7 +242,11 @@ final class CatalogViewModel {
         }
         searchTask = task
         let result = await task.value
-        guard !Task.isCancelled else { return }
+        // Guard against stale results: if `searchTask` was replaced by a newer
+        // call while we were awaiting, discard this result. Using reference
+        // identity on the Task value is the correct check here — NOT
+        // Task.isCancelled, which checks the *calling* task's state, not `task`'s.
+        guard searchTask === task else { return }
         searchItems = result
         if let first = result.first { hero = first }
     }
