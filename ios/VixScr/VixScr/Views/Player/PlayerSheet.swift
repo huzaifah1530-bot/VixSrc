@@ -10,18 +10,18 @@ struct PlayerSheet: View {
                 VStack(alignment: .leading, spacing: 20) {
                     playerFrame
 
-                    if viewModel.store.servers.count > 1 {
-                        ServerSelector(viewModel: viewModel)
-                    }
-
-                    actionRow
-
-                    // Next Episode button — only for TV, only when there's a next ep
+                    // Next Episode — at the very top, above everything else
                     if viewModel.selected?.type == .tv, let next = viewModel.nextEpisode {
                         NextEpisodeButton(episode: next) {
                             Task { await viewModel.selectEpisode(next) }
                         }
                     }
+
+                    if viewModel.store.servers.count > 1 {
+                        ServerSelector(viewModel: viewModel)
+                    }
+
+                    actionRow
 
                     if let description = viewModel.selected?.description {
                         Text(description)
@@ -88,8 +88,7 @@ struct PlayerSheet: View {
 
     // MARK: - Action row
 
-    /// Three equal Liquid Glass capsule buttons — Reload, Copy URL, Save.
-    /// All same font/height/shape so they read as a coherent group.
+    /// Two Liquid Glass capsule buttons — Reload and Save.
     private var actionRow: some View {
         let isFav = viewModel.selected.map(viewModel.store.isFavorite) == true
 
@@ -98,16 +97,6 @@ struct PlayerSheet: View {
                 viewModel.reloadPlayer()
             } label: {
                 Label("Reload", systemImage: "arrow.counterclockwise")
-            }
-            .buttonStyle(CapsuleGlassButtonStyle(fidelity: fidelity))
-
-            Button {
-                if let url = viewModel.currentStreamURL {
-                    UIPasteboard.general.string = url.absoluteString
-                    viewModel.showToast("URL copied")
-                }
-            } label: {
-                Label("Copy URL", systemImage: "doc.on.doc")
             }
             .buttonStyle(CapsuleGlassButtonStyle(fidelity: fidelity))
 
