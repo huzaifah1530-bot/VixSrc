@@ -52,13 +52,25 @@ jobs:
       - name: Show available schemes
         run: xcodebuild -list -project VixScr.xcodeproj
 
+      - name: Pick an installed simulator runtime
+        id: sim
+        run: |
+          NAME=$(xcrun simctl list devices available | grep -m1 -oE '^\s*iPhone [0-9A-Za-z ]+' | sed 's/^ *//;s/ *$//')
+          if [ -z "$NAME" ]; then
+            echo "::error::No available iPhone simulator found on this runner"
+            xcrun simctl list devices available
+            exit 1
+          fi
+          echo "Using simulator: $NAME"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+
       - name: Build for iOS Simulator
         run: |
           set -o pipefail
           xcodebuild build \
             -project VixScr.xcodeproj \
             -scheme VixScr \
-            -destination 'generic/platform=iOS Simulator' \
+            -destination "platform=iOS Simulator,name=${{ steps.sim.outputs.name }}" \
             CODE_SIGNING_ALLOWED=NO \
             2>&1 | tee "$RUNNER_TEMP/VixScr-simulator-xcodebuild.log"
 
