@@ -4,7 +4,7 @@ import SwiftUI
 /// relevant on iOS:
 ///   - `createWindow()` / `loadFile('index.html')`      -> RootView
 ///   - `loading.html` shown briefly before the real UI    -> LaunchView
-///   - `vixscr://<id>` deep link / second-instance handoff -> onOpenURL
+///   - `vela://<id>` deep link / second-instance handoff -> onOpenURL
 ///     below, which is the iOS equivalent of Electron's custom protocol
 ///     registration (`app.setAsDefaultProtocolClient`) combined with
 ///     `open-url` / `second-instance`.
@@ -14,7 +14,7 @@ import SwiftUI
 /// iOS equivalent — the App Store (or TestFlight) owns app updates on iOS,
 /// so that mechanism is intentionally NOT ported.
 @main
-struct VixScrApp: App {
+struct VelaApp: App {
     @State private var store = AppStore()
     @State private var router = TabRouter()
     @State private var isLaunching = true
@@ -50,14 +50,14 @@ struct VixScrApp: App {
         }
     }
 
-    /// Accepts `vixscr://<id>` or `vixscr://open/<id>`, matching
+    /// Accepts `vela://<id>` or `vela://open/<id>`, matching
     /// `extractTmdbId()` in main.js (`/^vixscr:\/\/(?:open\/)?(\d+)/i`).
     ///
-    /// Note the host must be validated as numeric: for `vixscr://open/1726`
+    /// Note the host must be validated as numeric: for `vela://open/1726`
     /// `url.host` is `"open"`, not the id, so taking the host unconditionally
     /// would request `/movie/open` and 404.
     private func handleDeepLink(_ url: URL) {
-        guard url.scheme?.lowercased() == "vixscr" else { return }
+        guard url.scheme?.lowercased() == "vela" else { return }
 
         let candidates = [url.host].compactMap { $0 } + url.pathComponents
         guard let id = candidates.first(where: { component in
@@ -65,12 +65,12 @@ struct VixScrApp: App {
         }) else { return }
 
         router.selection = .home
-        NotificationCenter.default.post(name: .vixscrOpenTMDBId, object: id)
+        NotificationCenter.default.post(name: .velaOpenTMDBId, object: id)
     }
 }
 
 extension Notification.Name {
-    static let vixscrOpenTMDBId = Notification.Name("vixscr.openTMDBId")
+    static let velaOpenTMDBId = Notification.Name("vela.openTMDBId")
 }
 
 /// Native `TabView` root — Home / Favourites / Settings — instead of a

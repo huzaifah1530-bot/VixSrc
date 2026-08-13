@@ -21,7 +21,7 @@ struct HomeView: View {
                 }
             }
             .background(VixTheme.background.ignoresSafeArea())
-            .navigationTitle("VixScr")
+            .navigationTitle("Vela")
             .navigationBarTitleDisplayMode(.large)
         }
         .searchable(text: $searchText, isPresented: $isSearchActive, prompt: "Movies, TV shows...")
@@ -38,7 +38,8 @@ struct HomeView: View {
             viewModel?.debounceSearch(newValue)
         }
         .onSubmit(of: .search) {
-            Task { await viewModel?.commitSearch(openBest: true) }
+            // Dismiss keyboard without opening the first result
+            isSearchActive = false
         }
         .task {
             if viewModel == nil {
@@ -54,7 +55,7 @@ struct HomeView: View {
         .onChange(of: store.credential) { _, _ in
             Task { await viewModel?.loadHome() }
         }
-        .onReceive(NotificationCenter.default.publisher(for: .vixscrOpenTMDBId)) { notification in
+        .onReceive(NotificationCenter.default.publisher(for: .velaOpenTMDBId)) { notification in
             guard let id = notification.object as? String else { return }
             router.selection = .home
             Task { await viewModel?.openByTMDBId(id) }
@@ -135,8 +136,21 @@ struct HomeView: View {
             )
         } else {
             ForEach(viewModel.displayedRows) { row in
-                MediaRowView(row: row, store: store) { item in
-                    Task { await viewModel.open(item) }
+                if row.title == "Continue watching" {
+                    // Dedicated animated row — tapping a card springs it to
+                    // position #1 before opening the player.
+                    ContinueWatchingRowView(
+                        title: row.title,
+                        subtitle: row.subtitle,
+                        sourceItems: row.items,
+                        store: store
+                    ) { item in
+                        Task { await viewModel.open(item) }
+                    }
+                } else {
+                    MediaRowView(row: row, store: store) { item in
+                        Task { await viewModel.open(item) }
+                    }
                 }
             }
         }

@@ -10,7 +10,7 @@ import Observation
 ///
 /// UserDefaults is the direct native analogue of localStorage: both are
 /// simple, synchronous, on-device key/value stores.
-// Not marked @MainActor deliberately: `VixScrApp` creates this in a `@State`
+// Not marked @MainActor deliberately: `VelaApp` creates this in a `@State`
 // default-value expression, which is evaluated in a nonisolated context, so a
 // @MainActor initialiser would not be callable there. Every current access
 // already happens from the main actor (SwiftUI view bodies and the

@@ -43,11 +43,13 @@ struct HeroView: View {
                     .foregroundStyle(.white)
                     .lineLimit(2)
                     .minimumScaleFactor(0.8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
                 Text(item?.description ?? "Add your TMDB API key or read access token to search the live TMDB database and load seasons dynamically.")
                     .font(.subheadline)
                     .foregroundStyle(.white.opacity(0.75))
                     .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
                 HStack(spacing: 10) {
                     if item != nil {
@@ -84,6 +86,7 @@ struct HeroView: View {
             }
             .padding(16)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(white: 0.08))
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
     }

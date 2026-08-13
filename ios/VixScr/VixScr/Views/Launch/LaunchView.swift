@@ -22,7 +22,7 @@ struct LaunchView: View {
                     .scaleEffect(1.1)
 
                 VStack(spacing: 6) {
-                    Text("Starting VixScr")
+                    Text("Vela")
                         .font(.system(size: 20, weight: .black))
                         .foregroundStyle(.white)
                     Text("Loading your catalogue...")
