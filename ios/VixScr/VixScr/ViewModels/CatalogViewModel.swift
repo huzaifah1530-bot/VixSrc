@@ -4,6 +4,7 @@ import Observation
 /// The main screen state machine. This is the SwiftUI/MVVM analogue of the
 /// giant `state` object + free functions (loadHome, runSearch, openContent,
 /// selectSeason, selectEpisode, switchServer, ...) in index.html.
+@MainActor
 @Observable
 final class CatalogViewModel {
     let store: AppStore
