@@ -14,6 +14,13 @@ struct HomeView: View {
     @State private var viewModel: CatalogViewModel?
     @State private var searchText = ""
     @State private var isSearchActive = false
+    /// Separately tracked overlay visibility so we can animate it in/out
+    /// with an explicit transaction. The .searchable binding is updated by
+    /// UIKit's cancel button outside any SwiftUI animation context, so
+    /// relying on .animation(value: isSearchActive) for the removal produces
+    /// a snap. This state is always set inside withAnimation, giving us
+    /// full control over both the fade-in and the fade-out.
+    @State private var showSearchOverlay = false
 
     /// iPhone landscape: both size classes are compact.
     private var isLandscape: Bool { hSizeClass == .compact && vSizeClass == .compact }
@@ -32,6 +39,16 @@ struct HomeView: View {
         .searchable(text: $searchText, isPresented: $isSearchActive, prompt: "Movies, TV shows...")
         .onChange(of: searchText) { _, newValue in
             viewModel?.debounceSearch(newValue)
+            // Show overlay when search is active and field is empty.
+            // Animated separately so we control both directions.
+            let shouldShow = isSearchActive && newValue.trimmingCharacters(in: .whitespaces).isEmpty
+            if shouldShow != showSearchOverlay {
+                withAnimation(.easeInOut(duration: 0.22)) { showSearchOverlay = shouldShow }
+            }
+        }
+        .onChange(of: isSearchActive) { _, active in
+            let shouldShow = active && searchText.trimmingCharacters(in: .whitespaces).isEmpty
+            withAnimation(.easeInOut(duration: 0.22)) { showSearchOverlay = shouldShow }
         }
         .onSubmit(of: .search) {
             // Dismiss keyboard without opening the first result
@@ -64,9 +81,10 @@ struct HomeView: View {
         // returns to the home feed — same behaviour as App Store, Music, etc.
         .onReceive(NotificationCenter.default.publisher(for: .velaClearSearch)) { _ in
             guard router.selection == .home else { return }
-            withAnimation(.easeOut(duration: 0.2)) {
+            withAnimation(.easeInOut(duration: 0.22)) {
                 searchText = ""
                 isSearchActive = false
+                showSearchOverlay = false
             }
             viewModel?.debounceSearch("")
         }
@@ -81,14 +99,15 @@ struct HomeView: View {
                 portraitContent(viewModel: viewModel)
             }
 
-            // Search overlay: shown when search bar is active but no text
-            // typed yet. Black background + recent searches, App Store style.
-            if isSearchActive && searchText.trimmingCharacters(in: .whitespaces).isEmpty {
+            // Search overlay: shown when the bar is active with no text yet.
+            // Driven by showSearchOverlay which is always set inside
+            // withAnimation — guarantees the fade runs on both open and close,
+            // even when the cancel button dismisses via UIKit.
+            if showSearchOverlay {
                 searchIdleOverlay(viewModel: viewModel)
                     .transition(.opacity)
             }
         }
-        .animation(.easeOut(duration: 0.18), value: isSearchActive)
     }
 
     @ViewBuilder
