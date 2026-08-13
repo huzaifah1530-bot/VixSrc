@@ -51,28 +51,21 @@ jobs:
       - name: Pick a concrete simulator destination
         id: sim
         run: |
-          # -showdestinations lists both generic "placeholder" destinations
-          # (not buildable) and concrete simulator instances like
-          # "{ platform:iOS Simulator, ..., OS:26.2, name:iPhone 16 Pro }".
-          # Grab the name+OS of the first concrete one, preferring an
-          # iPhone, and build a real "name=...,OS=..." destination from it.
-          RAW=$(xcodebuild -showdestinations -project VixScr.xcodeproj -scheme VixScr 2>/dev/null)
-
-          LINE=$(echo "$RAW" | grep 'platform:iOS Simulator' | grep -v 'placeholder' | grep 'name:iPhone' | head -1)
-          if [ -z "$LINE" ]; then
-            LINE=$(echo "$RAW" | grep 'platform:iOS Simulator' | grep -v 'placeholder' | head -1)
-          fi
-          if [ -z "$LINE" ]; then
-            echo "::error::No concrete iOS Simulator destination available"
-            echo "$RAW"
+          # `xcodebuild -showdestinations` can flakily report only the
+          # generic placeholder entries depending on CoreSimulator state.
+          # Query the simulator device list directly via simctl instead —
+          # it's independent of the scheme/xcodebuild and reliably lists
+          # every concrete simulator instance with its UDID, e.g.:
+          #   "iPhone 16 Pro (26.2) (E514A76C-...) (Shutdown)"
+          UDID=$(xcrun simctl list devices available iOS | grep -m1 -oE '[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}')
+          if [ -z "$UDID" ]; then
+            echo "::error::No available iOS Simulator device found via simctl"
+            xcrun simctl list devices available
             exit 1
           fi
-
-          NAME=$(echo "$LINE" | sed -E 's/.*name:([^,}]+).*/\1/')
-          OS=$(echo "$LINE" | sed -E 's/.*OS:([^,}]+).*/\1/')
-          echo "Using simulator: name=$NAME OS=$OS"
-          echo "name=$NAME" >> "$GITHUB_OUTPUT"
-          echo "os=$OS" >> "$GITHUB_OUTPUT"
+          echo "Using simulator UDID: $UDID"
+          xcrun simctl list devices available | grep "$UDID" || true
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
 
       - name: Build for iOS Simulator
         run: |
@@ -80,7 +73,7 @@ jobs:
           xcodebuild build \
             -project VixScr.xcodeproj \
             -scheme VixScr \
-            -destination "platform=iOS Simulator,name=${{ steps.sim.outputs.name }},OS=${{ steps.sim.outputs.os }}" \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
             CODE_SIGNING_ALLOWED=NO \
             2>&1 | tee "$RUNNER_TEMP/VixScr-simulator-xcodebuild.log"
 
