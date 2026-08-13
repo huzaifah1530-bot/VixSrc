@@ -23,7 +23,11 @@ final class CatalogViewModel {
     // Hero / currently previewed item on the home screen.
     private(set) var hero: MediaItem?
 
-    // Player sheet
+    // Player sheet. Presented from the root of the tab hierarchy (see
+    // `RootView`) rather than from an individual tab, so opening a title
+    // from any tab (Home, Favourites, a deep link) shows the player over
+    // the whole app instead of only over whichever tab happened to
+    // present it.
     var isPlayerPresented = false
     private(set) var selected: MediaItem?
     private(set) var tvDetails: TVDetails?
@@ -36,9 +40,6 @@ final class CatalogViewModel {
     private(set) var currentServerIndex = 0
     private(set) var currentStreamURL: URL?
     private(set) var cast: [CastMember] = []
-
-    // Settings sheet
-    var isSettingsPresented = false
 
     private var castTask: Task<Void, Never>?
 

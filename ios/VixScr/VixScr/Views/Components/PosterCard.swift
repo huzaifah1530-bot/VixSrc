@@ -21,11 +21,11 @@ struct PosterCard: View {
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(item.title)
-                        .font(.system(size: 13, weight: .black))
+                        .font(.footnote.weight(.semibold))
                         .lineLimit(2)
                         .foregroundStyle(.white)
                     Text(item.year.isEmpty ? "TMDB" : item.year)
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.caption2.weight(.medium))
                         .foregroundStyle(.white.opacity(0.56))
                 }
                 .padding(10)
@@ -34,8 +34,7 @@ struct PosterCard: View {
                 VStack {
                     HStack {
                         Text(item.typeLabel.uppercased())
-                            .font(.system(size: 9, weight: .black))
-                            .tracking(1)
+                            .font(.caption2.weight(.bold))
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
                             .background(.black.opacity(0.45), in: Capsule())
@@ -43,7 +42,7 @@ struct PosterCard: View {
                         Spacer()
                         if isFavorite {
                             Image(systemName: "heart.fill")
-                                .font(.system(size: 13))
+                                .font(.footnote)
                                 .foregroundStyle(.white)
                                 .padding(6)
                                 .background(.black.opacity(0.48), in: Circle())
@@ -52,8 +51,7 @@ struct PosterCard: View {
                     Spacer()
                     if let season = item.resumeSeason, let episode = item.resumeEpisode {
                         Text("RESUME S\(season) E\(episode)")
-                            .font(.system(size: 10, weight: .black))
-                            .tracking(1)
+                            .font(.caption2.weight(.bold))
                             .padding(.horizontal, 9)
                             .padding(.vertical, 6)
                             .frame(maxWidth: .infinity)
@@ -92,9 +90,8 @@ struct PosterCard: View {
         Rectangle()
             .fill(Color.white.opacity(0.08))
             .overlay(
-                Text("NO POSTER")
-                    .font(.system(size: 10, weight: .black))
-                    .tracking(2)
+                Image(systemName: "photo")
+                    .font(.title3)
                     .foregroundStyle(.white.opacity(0.35))
             )
     }

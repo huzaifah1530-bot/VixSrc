@@ -1,7 +1,9 @@
 import SwiftUI
 
-/// Mirrors `#playerModal` — the full streaming sheet: player frame, server
-/// selector, action buttons, cast row, and (for TV) the season/episode hub.
+/// The streaming sheet: player frame, server selector, action buttons, cast
+/// row, and (for TV) the season/episode hub. Built from native button
+/// styles, `Menu`, and system text styles/colors so it matches the rest of
+/// the app's native look rather than the web app's custom glass cards.
 struct PlayerSheet: View {
     @Bindable var viewModel: CatalogViewModel
 
@@ -19,8 +21,8 @@ struct PlayerSheet: View {
 
                     if let description = viewModel.selected?.description {
                         Text(description)
-                            .font(.system(size: 14))
-                            .foregroundStyle(.white.opacity(0.8))
+                            .font(.body)
+                            .foregroundStyle(.secondary)
                             .lineLimit(4)
                     }
 
@@ -94,13 +96,11 @@ struct PlayerSheet: View {
     private func actionButton(_ title: String, icon: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Label(title, systemImage: icon)
-                .font(.system(size: 13, weight: .black))
-                .padding(.horizontal, 14)
-                .padding(.vertical, 12)
-                .frame(maxWidth: .infinity, minHeight: 20)
+                .frame(maxWidth: .infinity)
         }
-        .foregroundStyle(.white)
-        .vixGlass(.regular, cornerRadius: 18)
+        .buttonStyle(.bordered)
+        .tint(.white)
+        .controlSize(.regular)
     }
 
     @ViewBuilder
@@ -119,8 +119,8 @@ struct PlayerSheet: View {
 
     private func chip(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 12, weight: .bold))
-            .foregroundStyle(.white.opacity(0.58))
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
             .padding(.horizontal, 12)
             .padding(.vertical, 7)
             .background(Color.white.opacity(0.08), in: Capsule())
@@ -128,33 +128,41 @@ struct PlayerSheet: View {
     }
 }
 
+/// A native `Menu` acting as a button-styled picker — the standard iOS
+/// pattern (e.g. Apple Music's "Up Next" sort menu) for a short list of
+/// mutually-exclusive options that doesn't need to be a full segmented
+/// control.
 struct ServerSelector: View {
     @Bindable var viewModel: CatalogViewModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("STREAMING SERVER")
-                .font(.system(size: 11, weight: .black))
-                .tracking(2)
-                .foregroundStyle(.white.opacity(0.45))
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(Array(viewModel.store.servers.enumerated()), id: \.offset) { index, server in
-                        let isActive = index == viewModel.currentServerIndex
-                        Button(server.name) { viewModel.switchServer(to: index) }
-                            .font(.system(size: 12, weight: .black))
-                            .tracking(0.5)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 10)
-                            .foregroundStyle(isActive ? .black : .white)
-                            .background(isActive ? Color.white : Color.white.opacity(0.1), in: Capsule())
-                            .overlay(Capsule().stroke(Color.white.opacity(isActive ? 0 : 0.2), lineWidth: 1))
+        HStack {
+            Text("Server")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Spacer()
+            Menu {
+                ForEach(Array(viewModel.store.servers.enumerated()), id: \.offset) { index, server in
+                    Button {
+                        viewModel.switchServer(to: index)
+                    } label: {
+                        if index == viewModel.currentServerIndex {
+                            Label(server.name, systemImage: "checkmark")
+                        } else {
+                            Text(server.name)
+                        }
                     }
                 }
+            } label: {
+                let currentName = viewModel.store.servers.indices.contains(viewModel.currentServerIndex)
+                    ? viewModel.store.servers[viewModel.currentServerIndex].name
+                    : "Select"
+                Label(currentName, systemImage: "chevron.up.chevron.down")
+                    .font(.subheadline.weight(.semibold))
             }
         }
-        .padding(16)
-        .vixGlass(.regular, cornerRadius: 24)
+        .padding(14)
+        .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 }
 
@@ -163,10 +171,9 @@ struct CastRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("CAST")
-                .font(.system(size: 11, weight: .black))
-                .tracking(2)
-                .foregroundStyle(.white.opacity(0.45))
+            Text("Cast")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 16) {
                     ForEach(cast) { actor in
@@ -182,7 +189,7 @@ struct CastRow: View {
                                         }
                                     } else {
                                         Text(actor.initials)
-                                            .font(.system(size: 13, weight: .black))
+                                            .font(.caption.weight(.bold))
                                             .foregroundStyle(.white.opacity(0.6))
                                     }
                                 }
@@ -190,12 +197,12 @@ struct CastRow: View {
                                 .overlay(Circle().stroke(Color.white.opacity(0.2), lineWidth: 1))
 
                                 Text(actor.name)
-                                    .font(.system(size: 11, weight: .black))
-                                    .foregroundStyle(.white)
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.primary)
                                     .lineLimit(1)
                                 Text(actor.character ?? "")
-                                    .font(.system(size: 10, weight: .medium))
-                                    .foregroundStyle(.white.opacity(0.5))
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
                                     .lineLimit(1)
                             }
                             .frame(width: 80)
@@ -205,7 +212,5 @@ struct CastRow: View {
                 }
             }
         }
-        .padding(16)
-        .vixGlass(.regular, cornerRadius: 24)
     }
 }
