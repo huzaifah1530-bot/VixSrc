@@ -217,7 +217,8 @@ final class CatalogViewModel {
         if trimmed.isEmpty {
             isSearching = false
             searchItems = []
-            hero = homeRows.flatMap(\.items).first(where: { homeRows.first?.items.first?.id == $0.id }) ?? homeRows.flatMap(\.items).first
+            // Restore hero to wherever the cycle currently is — don't snap
+            // back to item 0. startHeroCycle() owns this, not debounceSearch.
             startHeroCycle()
             return
         }
@@ -258,7 +259,8 @@ final class CatalogViewModel {
         }
 
         let parsed = FuzzySearch.parseSearchQuery(trimmed)
-        previewHero(fromQueryPreview: parsed.titleQuery)
+        // previewHero is already called by debounceSearch before runSearch
+        // is invoked — no need to run it again here (double fuzzy scan).
 
         guard !store.credential.trimmingCharacters(in: .whitespaces).isEmpty else {
             isSearching = false
@@ -319,7 +321,8 @@ final class CatalogViewModel {
             await runSearch("")
             return
         }
-        store.addSearchHistory(query)
+        // Do NOT save history here — runSearch saves after a successful
+        // (non-empty) result, which avoids persisting zero-result queries.
         await runSearch(query)
         if openBest, let best = searchItems.first {
             await open(best)

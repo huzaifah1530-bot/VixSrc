@@ -15,7 +15,6 @@ struct HomeView: View {
     @State private var viewModel: CatalogViewModel?
     @State private var searchText = ""
     @State private var isSearchActive = false
-    @Namespace private var heroNamespace
 
     /// iPhone landscape: both size classes are compact.
     private var isLandscape: Bool { hSizeClass == .compact && vSizeClass == .compact }
@@ -183,32 +182,26 @@ struct HomeView: View {
                     .containerRelativeFrame(.horizontal) { width, _ in width - 40 }
                     .padding(.horizontal, 20)
                     .padding(.top, 8)
-                    // matchedGeometryEffect ties the hero frame to the
-                    // lastWatched card frame. When the last-watched item
-                    // becomes the hero, SwiftUI spring-interpolates the
-                    // frame — the card appears to fly up and expand into
-                    // the hero position.
-                    .matchedGeometryEffect(id: "hero-card", in: heroNamespace)
-                    .animation(.spring(response: 0.42, dampingFraction: 0.78), value: viewModel.hero?.id)
+                    // Cross-fade the hero content when the featured item changes.
+                    .animation(.easeInOut(duration: 0.35), value: viewModel.hero?.id)
 
-                    // LastWatchedCard — hidden (not just invisible) when it
-                    // is already the hero, which collapses the space and lets
-                    // everything below spring up naturally with a stagger.
+                    // LastWatchedCard — only shown when the most recent item is
+                    // not already the hero. When tapped it becomes the hero,
+                    // which removes this card; the .transition drives the
+                    // slide-up-and-fade-out, and the LazyVStack animation
+                    // springs all rows below upward at the same time.
                     if let lastWatched = store.sortedRecents.first,
                        lastWatched.id != viewModel.hero?.id {
                         LastWatchedCard(
                             item: lastWatched,
                             isFavorite: store.isFavorite(lastWatched),
                             onContinue: {
-                                withAnimation(.spring(response: 0.42, dampingFraction: 0.78)) {
-                                    Task { await viewModel.open(lastWatched) }
-                                }
+                                Task { await viewModel.open(lastWatched) }
                             },
                             onFavorite: { store.toggleFavorite(lastWatched) }
                         )
                         .containerRelativeFrame(.horizontal) { width, _ in width - 40 }
                         .padding(.horizontal, 20)
-                        .matchedGeometryEffect(id: "last-watched-card", in: heroNamespace)
                         .transition(
                             .asymmetric(
                                 insertion: .move(edge: .bottom).combined(with: .opacity),
