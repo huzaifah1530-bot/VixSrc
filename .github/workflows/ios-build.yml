@@ -52,17 +52,22 @@ jobs:
       - name: Show available schemes
         run: xcodebuild -list -project VixScr.xcodeproj
 
-      - name: Pick an installed simulator runtime
+      - name: Pick a valid simulator destination for this scheme
         id: sim
         run: |
-          NAME=$(xcrun simctl list devices available | grep -m1 -oE '^\s*iPhone [0-9A-Za-z ]+' | sed 's/^ *//;s/ *$//')
-          if [ -z "$NAME" ]; then
-            echo "::error::No available iPhone simulator found on this runner"
-            xcrun simctl list devices available
+          # Ask xcodebuild itself which iOS Simulator destinations are
+          # actually valid for this scheme on this runner, instead of
+          # guessing a device/OS combo that might not be installed.
+          DEST_ID=$(xcodebuild -showdestinations -project VixScr.xcodeproj -scheme VixScr 2>/dev/null \
+            | grep -m1 'platform:iOS Simulator' \
+            | sed -E 's/.*id:([^,}]+).*/\1/')
+          if [ -z "$DEST_ID" ]; then
+            echo "::error::No valid iOS Simulator destination found for scheme VixScr"
+            xcodebuild -showdestinations -project VixScr.xcodeproj -scheme VixScr
             exit 1
           fi
-          echo "Using simulator: $NAME"
-          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "Using destination id: $DEST_ID"
+          echo "id=$DEST_ID" >> "$GITHUB_OUTPUT"
 
       - name: Build for iOS Simulator
         run: |
@@ -70,7 +75,7 @@ jobs:
           xcodebuild build \
             -project VixScr.xcodeproj \
             -scheme VixScr \
-            -destination "platform=iOS Simulator,name=${{ steps.sim.outputs.name }}" \
+            -destination "id=${{ steps.sim.outputs.id }}" \
             CODE_SIGNING_ALLOWED=NO \
             2>&1 | tee "$RUNNER_TEMP/VixScr-simulator-xcodebuild.log"
 
