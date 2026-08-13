@@ -73,13 +73,7 @@ struct HeroView: View {
                     }
 
                     if item != nil {
-                        Button(action: onToggleFavorite) {
-                            Image(systemName: isFavorite ? "heart.fill" : "heart")
-                                .frame(width: 20, height: 20)
-                        }
-                        .buttonStyle(.bordered)
-                        .tint(.white)
-                        .accessibilityLabel(isFavorite ? "Remove from favourites" : "Add to favourites")
+                        FavoriteButton(isFavorite: isFavorite, action: onToggleFavorite)
                     }
                 }
                 .controlSize(.large)

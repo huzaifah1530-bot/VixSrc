@@ -42,10 +42,10 @@ struct PosterCard: View {
                         Spacer()
                         if isFavorite {
                             Image(systemName: "heart.fill")
-                                .font(.footnote)
-                                .foregroundStyle(.white)
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(.blue)
                                 .padding(6)
-                                .background(.black.opacity(0.48), in: Circle())
+                                .vixGlass(.regular, cornerRadius: 999)
                         }
                     }
                     Spacer()
