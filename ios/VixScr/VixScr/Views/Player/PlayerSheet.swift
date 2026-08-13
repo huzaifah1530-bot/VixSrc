@@ -48,6 +48,7 @@ struct PlayerSheet: View {
                         Image(systemName: "xmark")
                             .foregroundStyle(.white)
                     }
+                    .accessibilityLabel("Close")
                 }
             }
         }
@@ -93,7 +94,7 @@ struct PlayerSheet: View {
                 .font(.system(size: 13, weight: .black))
                 .padding(.horizontal, 14)
                 .padding(.vertical, 12)
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: .infinity, minHeight: 20)
         }
         .foregroundStyle(.white)
         .vixGlass(.regular, cornerRadius: 18)

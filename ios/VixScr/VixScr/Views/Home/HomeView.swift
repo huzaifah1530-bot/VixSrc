@@ -111,6 +111,11 @@ struct HomeView: View {
             // Grouped so the three nav-bar glass surfaces morph/merge together
             // on iOS 26 instead of rendering as three unrelated panes.
             VixGlassContainer {
+            // Unlike a plain HStack of three independently-sized pills (which
+            // could overflow on narrower widths or larger Dynamic Type, the
+            // same bug already fixed in HeroView's button row), the brand
+            // pill and settings button are fixed-size while the search pill
+            // is the only flexible element and absorbs all the shrinking.
             HStack(spacing: 10) {
                 HStack(spacing: 8) {
                     ZStack {
@@ -121,16 +126,21 @@ struct HomeView: View {
                     Text("Screen House")
                         .font(.system(size: 14, weight: .black))
                         .foregroundStyle(.white)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
                 .vixGlass(.regular, cornerRadius: 999)
+                .layoutPriority(1)
+                .fixedSize()
 
                 HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass").foregroundStyle(.white.opacity(0.55))
-                    TextField("", text: $searchText, prompt: Text("Search Screen House...").foregroundStyle(.white.opacity(0.42)))
+                    TextField("", text: $searchText, prompt: Text("Search...").foregroundStyle(.white.opacity(0.42)))
                         .foregroundStyle(.white)
                         .focused($searchFieldFocused)
+                        .lineLimit(1)
                         .onChange(of: searchText) { _, newValue in
                             viewModel.previewHero(fromQueryPreview: newValue)
                             viewModel.debounceSearch(newValue)
@@ -143,20 +153,32 @@ struct HomeView: View {
                             searchText = ""
                             Task { await viewModel.runSearch("") }
                         } label: {
-                            Image(systemName: "xmark.circle.fill").foregroundStyle(.white.opacity(0.5))
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.white.opacity(0.5))
+                                .frame(width: 44, height: 44)
+                                .contentShape(Rectangle())
                         }
+                        .accessibilityLabel("Clear search")
                     }
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
                 .vixGlass(.regular, cornerRadius: 999)
+                // The only element allowed to shrink, so the row as a whole
+                // never exceeds the available width.
+                .layoutPriority(0)
 
                 Button { viewModel.isSettingsPresented = true } label: {
                     Image(systemName: "key.fill")
                         .foregroundStyle(.white)
-                        .frame(width: 40, height: 40)
+                        // 44x44 is Apple's documented minimum tap target
+                        // (was 40x40).
+                        .frame(width: 44, height: 44)
                 }
                 .vixGlass(.regular, cornerRadius: 999)
+                .accessibilityLabel("Settings")
+                .layoutPriority(1)
+                .fixedSize()
             }
             }
 
@@ -222,6 +244,8 @@ struct HomeView: View {
         .padding(.horizontal, 20)
         .padding(.top, 40)
     }
+
+    // MARK: - Empty/error states
 
     private var emptyCard: some View {
         VStack(spacing: 14) {

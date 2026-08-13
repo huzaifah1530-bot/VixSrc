@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Mirrors the `#hero` section — a full-bleed backdrop with title,
 /// description, and action buttons (Play / Add TMDB Key / Browse /
@@ -101,8 +102,23 @@ struct HeroView: View {
             // child rather than to its parent.
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(height: 460)
+        // A fixed 460pt was taller than the entire landscape viewport on
+        // every iPhone (max ~430pt tall), and ate ~70% of an iPhone SE's
+        // portrait screen before any content below it was visible. Scale
+        // with the device instead: a healthy fraction of height, clamped
+        // to a sane range so it never gets absurdly short or tall.
+        .frame(height: heroHeight)
         .clipped()
+    }
+
+    private var heroHeight: CGFloat {
+        let screen = UIScreen.main.bounds
+        let isLandscape = screen.width > screen.height
+        let shorterSide = min(screen.width, screen.height)
+        // In landscape, cap relative to the actual (short) viewport height
+        // rather than the long side, otherwise this would still overshoot.
+        let reference = isLandscape ? screen.height : shorterSide
+        return min(max(reference * (isLandscape ? 0.7 : 0.58), 320), 460)
     }
 
     private var tagText: String {

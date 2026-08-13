@@ -63,7 +63,10 @@ struct SettingsSheet: View {
                 Button { showCredential.toggle() } label: {
                     Image(systemName: showCredential ? "eye.slash" : "eye")
                         .foregroundStyle(.white.opacity(0.7))
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
                 }
+                .accessibilityLabel(showCredential ? "Hide credential" : "Show credential")
             }
             .padding(14)
             .background(Color.white.opacity(0.1), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
@@ -230,15 +233,21 @@ struct SettingsSheet: View {
                             newServerURL = server.base
                         } label: {
                             Image(systemName: "pencil")
+                                .frame(width: 44, height: 44)
+                                .contentShape(Rectangle())
                         }
                         .foregroundStyle(.white)
+                        .accessibilityLabel("Edit \(server.name)")
                         Button {
                             viewModel.store.removeServer(at: index)
                             viewModel.showToast("\(server.name) removed")
                         } label: {
                             Image(systemName: "trash")
+                                .frame(width: 44, height: 44)
+                                .contentShape(Rectangle())
                         }
                         .foregroundStyle(.red.opacity(0.85))
+                        .accessibilityLabel("Remove \(server.name)")
                     }
                     .padding(10)
                     .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
