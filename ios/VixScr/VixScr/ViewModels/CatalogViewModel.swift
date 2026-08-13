@@ -340,7 +340,13 @@ final class CatalogViewModel {
 
         do {
             let seasonDetails = try await client.season(tvId: tvId, seasonNumber: seasonNumber, credential: store.credential)
-            let fetchedEpisodes = seasonDetails.episodes ?? []
+            // Inject seasonNumber into each episode so the NextEpisodeButton
+            // can display "S2E1" without re-querying the season number.
+            let fetchedEpisodes = (seasonDetails.episodes ?? []).map { ep -> Episode in
+                var e = ep
+                e.seasonNumber = seasonNumber
+                return e
+            }
             episodes = fetchedEpisodes
             isLoadingEpisodes = false
 
@@ -364,6 +370,18 @@ final class CatalogViewModel {
             ].joined(separator: " "))
             return haystack.contains(query) || FuzzySearch.fuzzyScore(query: query, title: episode.name ?? "") >= 0.62
         }
+    }
+
+    /// The episode that comes after the currently-playing one in the loaded
+    /// season. Returns nil when on the last episode of the last season, or
+    /// when no episode is selected yet. The button uses this to offer
+    /// "Play Next" without any extra network call.
+    var nextEpisode: Episode? {
+        guard let current = selectedEpisode else { return nil }
+        let sorted = episodes.sorted { $0.episodeNumber < $1.episodeNumber }
+        guard let idx = sorted.firstIndex(where: { $0.id == current.id }),
+              idx + 1 < sorted.count else { return nil }
+        return sorted[idx + 1]
     }
 
     /// The server the user last picked. `index.html` reads `getServers()` fresh

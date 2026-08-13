@@ -136,9 +136,12 @@ struct HomeView: View {
             )
         } else {
             ForEach(viewModel.displayedRows) { row in
-                if row.title == "Continue watching" {
-                    // Dedicated animated row — tapping a card springs it to
-                    // position #1 before opening the player.
+                if row.title == "Search results" {
+                    // Search: 2-column vertical grid matching the Favourites layout
+                    SearchResultsGrid(items: row.items, store: store) { item in
+                        Task { await viewModel.open(item) }
+                    }
+                } else if row.title == "Continue watching" {
                     ContinueWatchingRowView(
                         title: row.title,
                         subtitle: row.subtitle,

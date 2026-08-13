@@ -55,6 +55,8 @@ struct Episode: Codable, Identifiable, Hashable {
     var overview: String?
     var stillPath: String?
     var runtime: Int?
+    /// Injected after fetch so NextEpisodeButton can display "S2E1" labels.
+    var seasonNumber: Int?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -62,6 +64,7 @@ struct Episode: Codable, Identifiable, Hashable {
         case name, overview
         case stillPath = "still_path"
         case runtime
+        // seasonNumber is not in TMDB's episode JSON — we inject it manually.
     }
 
     var stillURL: URL? { TMDBImage.url(path: stillPath, size: .w780) }

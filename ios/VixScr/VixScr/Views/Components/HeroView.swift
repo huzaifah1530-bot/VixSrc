@@ -1,10 +1,7 @@
 import SwiftUI
-import UIKit
 
-/// A featured-title card at the top of Home. Styled like Apple's own
-/// featured-content cards (App Store "Today" cards, TV app "Up Next"),
-/// rather than a full-bleed web-style hero banner: a rounded card with a
-/// backdrop image, a short title/description, and native button styles.
+/// Featured-title card at the top of Home. Apple TV / App Store "Today" card
+/// style: rounded card, backdrop image, short title/description, native buttons.
 struct HeroView: View {
     let item: MediaItem?
     let hasCredential: Bool
@@ -22,9 +19,12 @@ struct HeroView: View {
                 .frame(maxWidth: .infinity)
                 .clipped()
                 .overlay(alignment: .bottomLeading) {
-                    LinearGradient(colors: [.black.opacity(0.85), .clear], startPoint: .bottom, endPoint: .top)
-                        .frame(height: 120)
-                        .frame(maxWidth: .infinity)
+                    LinearGradient(
+                        colors: [.black.opacity(0.85), .clear],
+                        startPoint: .bottom, endPoint: .top
+                    )
+                    .frame(height: 120)
+                    .frame(maxWidth: .infinity)
                 }
                 .overlay(alignment: .topLeading) {
                     Text(tagText.uppercased())
@@ -45,38 +45,45 @@ struct HeroView: View {
                     .minimumScaleFactor(0.8)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                Text(item?.description ?? "Add your TMDB API key or read access token to search the live TMDB database and load seasons dynamically.")
+                Text(item?.description ?? "Add your TMDB API key or read access token to browse the live TMDB catalogue.")
                     .font(.subheadline)
                     .foregroundStyle(.white.opacity(0.75))
                     .lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                HStack(spacing: 10) {
+                // Button row: Play stretches to fill, fav circle is fixed 50pt.
+                // Using GeometryReader-free layout: HStack lets Play take all
+                // remaining space via .frame(maxWidth: .infinity).
+                HStack(spacing: 12) {
                     if item != nil {
                         Button(action: onPlay) {
                             Label("Play", systemImage: "play.fill")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.black)
                                 .frame(maxWidth: .infinity)
+                                .frame(height: 50)
+                                .background(.white, in: Capsule())
                         }
-                        .buttonStyle(.borderedProminent)
-                        .tint(.white)
-                        .foregroundStyle(.black)
+                        .buttonStyle(.plain)
                     }
 
                     if !hasCredential {
                         Button(action: onSetup) {
                             Label("Add TMDB Key", systemImage: "key.fill")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.black)
                                 .frame(maxWidth: .infinity)
+                                .frame(height: 50)
+                                .background(.white, in: Capsule())
                         }
-                        .buttonStyle(.borderedProminent)
-                        .tint(.white)
-                        .foregroundStyle(.black)
+                        .buttonStyle(.plain)
                     }
 
                     if item != nil {
+                        // Fixed-size circle — never pushes the card edge.
                         FavoriteButton(isFavorite: isFavorite, action: onToggleFavorite)
                     }
                 }
-                .controlSize(.large)
             }
             .padding(16)
         }
@@ -90,8 +97,6 @@ struct HeroView: View {
         return item.typeLabel + (item.year.isEmpty ? "" : " · \(item.year)")
     }
 
-    /// Ultra performance mode hides backdrop images entirely, matching
-    /// `body.ultra-perf-mode` in index.html.
     @ViewBuilder
     private var backdrop: some View {
         if let url = item?.backdropURL, glassFidelity != .opaque {

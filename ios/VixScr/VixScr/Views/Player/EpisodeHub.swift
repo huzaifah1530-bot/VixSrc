@@ -1,18 +1,19 @@
 import SwiftUI
 
-/// Season picker (native `Menu`), an episode search field, and the list of
-/// episode rows for the selected season.
+/// Season picker + episode search + episode list.
 struct EpisodeHub: View {
     @Bindable var viewModel: CatalogViewModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 16) {
+            // Header row: "Episodes" title + season picker
             HStack {
                 Text("Episodes")
                     .font(.title3.weight(.bold))
                     .foregroundStyle(.primary)
                 Spacer()
-                if let details = viewModel.tvDetails, let selectedSeason = viewModel.selectedSeason {
+                if let details = viewModel.tvDetails,
+                   let selectedSeason = viewModel.selectedSeason {
                     Menu {
                         ForEach(details.usableSeasons) { season in
                             Button {
@@ -28,31 +29,36 @@ struct EpisodeHub: View {
                     } label: {
                         Label("Season \(selectedSeason.seasonNumber)", systemImage: "chevron.up.chevron.down")
                             .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.blue)
                     }
                 }
             }
 
+            // Episode search field
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                 TextField("Find episode in this season", text: $viewModel.episodeQuery)
+                    .font(.subheadline)
             }
             .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .padding(.vertical, 11)
+            .background(Color.white.opacity(0.08),
+                        in: RoundedRectangle(cornerRadius: 12, style: .continuous))
 
+            // Episode list
             if viewModel.isLoadingEpisodes {
-                HStack {
-                    Spacer()
-                    ProgressView("Loading episodes")
-                    Spacer()
-                }
-                .padding(.vertical, 20)
+                HStack { Spacer(); ProgressView("Loading episodes").tint(.white); Spacer() }
+                    .padding(.vertical, 20)
             } else if let error = viewModel.episodeErrorMessage {
-                ContentUnavailableView("Couldn't load episodes", systemImage: "exclamationmark.triangle", description: Text(error))
+                ContentUnavailableView(
+                    "Couldn't load episodes",
+                    systemImage: "exclamationmark.triangle",
+                    description: Text(error)
+                )
             } else if viewModel.filteredEpisodes.isEmpty {
                 ContentUnavailableView.search
             } else {
-                VStack(spacing: 8) {
+                VStack(spacing: 10) {
                     ForEach(viewModel.filteredEpisodes) { episode in
                         EpisodeRow(
                             episode: episode,
@@ -67,7 +73,8 @@ struct EpisodeHub: View {
     }
 }
 
-/// Mirrors `#episodeHub`'s individual episode rows.
+// MARK: - Episode row
+
 private struct EpisodeRow: View {
     let episode: Episode
     let isActive: Bool
@@ -75,35 +82,50 @@ private struct EpisodeRow: View {
 
     var body: some View {
         Button(action: onTap) {
-            HStack(spacing: 12) {
+            HStack(spacing: 14) {
+                // Thumbnail — wider, no clipping
                 stillImage
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text("Episode \(episode.episodeNumber)")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(isActive ? .black.opacity(0.6) : .secondary)
+
+                // Text — episode number + runtime on one line, title large, no description
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("E\(episode.episodeNumber)")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(isActive ? Color.black.opacity(0.55) : .secondary)
                         Spacer()
                         if let runtime = episode.runtime {
                             Text("\(runtime)m")
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(isActive ? .black.opacity(0.6) : .secondary)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(isActive ? Color.black.opacity(0.55) : .secondary)
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 3)
-                                .background((isActive ? Color.black.opacity(0.08) : Color.white.opacity(0.1)), in: Capsule())
+                                .background(
+                                    (isActive ? Color.black.opacity(0.08) : Color.white.opacity(0.1)),
+                                    in: Capsule()
+                                )
                         }
                     }
-                    Text(episode.name ?? "Untitled episode")
+
+                    Text(episode.name ?? "Untitled")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(isActive ? .black : .primary)
                         .lineLimit(1)
-                    Text(episode.overview ?? "No episode overview from TMDB.")
-                        .font(.footnote)
-                        .foregroundStyle(isActive ? .black.opacity(0.6) : .secondary)
-                        .lineLimit(2)
+
+                    // One line only — no one reads the full synopsis in a list
+                    if let overview = episode.overview, !overview.isEmpty {
+                        Text(overview)
+                            .font(.caption)
+                            .foregroundStyle(isActive ? Color.black.opacity(0.55) : .secondary)
+                            .lineLimit(1)
+                    }
                 }
             }
-            .padding(10)
-            .background(isActive ? Color.white : Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(
+                isActive ? Color.white : Color.white.opacity(0.07),
+                in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+            )
         }
         .buttonStyle(.plain)
     }
@@ -112,12 +134,13 @@ private struct EpisodeRow: View {
     private var stillImage: some View {
         RoundedRectangle(cornerRadius: 10, style: .continuous)
             .fill(Color.white.opacity(0.1))
-            .frame(width: 96, height: 64)
+            .frame(width: 108, height: 72)
             .overlay {
                 if let url = episode.stillURL {
                     AsyncImage(url: url) { phase in
                         if let image = phase.image {
-                            image.resizable().scaledToFill()
+                            image.resizable()
+                                .scaledToFill()
                                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                         }
                     }
@@ -126,5 +149,7 @@ private struct EpisodeRow: View {
                         .foregroundStyle(.tertiary)
                 }
             }
+            // Clip the container so nothing bleeds outside the rounded rect
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 }

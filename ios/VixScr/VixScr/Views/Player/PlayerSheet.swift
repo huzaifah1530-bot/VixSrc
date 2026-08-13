@@ -1,11 +1,8 @@
 import SwiftUI
 
-/// The streaming sheet: player frame, server selector, action buttons, cast
-/// row, and (for TV) the season/episode hub. Built from native button
-/// styles, `Menu`, and system text styles/colors so it matches the rest of
-/// the app's native look rather than the web app's custom glass cards.
 struct PlayerSheet: View {
     @Bindable var viewModel: CatalogViewModel
+    @Environment(\.glassFidelity) private var fidelity
 
     var body: some View {
         NavigationStack {
@@ -19,11 +16,18 @@ struct PlayerSheet: View {
 
                     actionRow
 
+                    // Next Episode button — only for TV, only when there's a next ep
+                    if viewModel.selected?.type == .tv, let next = viewModel.nextEpisode {
+                        NextEpisodeButton(episode: next) {
+                            Task { await viewModel.selectEpisode(next) }
+                        }
+                    }
+
                     if let description = viewModel.selected?.description {
                         Text(description)
-                            .font(.body)
+                            .font(.subheadline)
                             .foregroundStyle(.secondary)
-                            .lineLimit(4)
+                            .lineLimit(3)
                     }
 
                     metaLine
@@ -44,21 +48,25 @@ struct PlayerSheet: View {
             .toolbarBackground(.hidden, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
+                    // Liquid Glass circle close button — matches Apple's own
+                    // sheet dismiss buttons (e.g. Maps, Shortcuts).
                     Button {
                         viewModel.closePlayer()
                     } label: {
                         Image(systemName: "xmark")
+                            .font(.system(size: 13, weight: .bold))
                             .foregroundStyle(.white)
-                            // 44x44 minimum tap target.
-                            .frame(width: 44, height: 44)
-                            .contentShape(Rectangle())
+                            .frame(width: 34, height: 34)
                     }
+                    .buttonStyle(CircleGlassButtonStyle(fidelity: fidelity))
                     .accessibilityLabel("Close")
                 }
             }
         }
         .preferredColorScheme(.dark)
     }
+
+    // MARK: - Player frame
 
     @ViewBuilder
     private var playerFrame: some View {
@@ -72,36 +80,47 @@ struct PlayerSheet: View {
         }
         .aspectRatio(16.0 / 9.0, contentMode: .fit)
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(Color.white.opacity(0.2), lineWidth: 1))
+        .overlay(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(Color.white.opacity(0.2), lineWidth: 1)
+        )
     }
 
+    // MARK: - Action row
+
+    /// Three equal Liquid Glass capsule buttons — Reload, Copy URL, Save.
+    /// All same font/height/shape so they read as a coherent group.
     private var actionRow: some View {
-        HStack(spacing: 10) {
-            actionButton("Reload", icon: "arrow.counterclockwise") { viewModel.reloadPlayer() }
-            actionButton("Copy URL", icon: "doc.on.doc") {
+        let isFav = viewModel.selected.map(viewModel.store.isFavorite) == true
+
+        return HStack(spacing: 10) {
+            Button {
+                viewModel.reloadPlayer()
+            } label: {
+                Label("Reload", systemImage: "arrow.counterclockwise")
+            }
+            .buttonStyle(CapsuleGlassButtonStyle(fidelity: fidelity))
+
+            Button {
                 if let url = viewModel.currentStreamURL {
                     UIPasteboard.general.string = url.absoluteString
-                    viewModel.showToast("Embed URL copied")
+                    viewModel.showToast("URL copied")
                 }
+            } label: {
+                Label("Copy URL", systemImage: "doc.on.doc")
             }
-            actionButton(
-                viewModel.selected.map(viewModel.store.isFavorite) == true ? "Favourited" : "Favourite",
-                icon: viewModel.selected.map(viewModel.store.isFavorite) == true ? "heart.fill" : "heart"
-            ) {
+            .buttonStyle(CapsuleGlassButtonStyle(fidelity: fidelity))
+
+            Button {
                 viewModel.toggleFavoriteOnSelected()
+            } label: {
+                Label(isFav ? "Saved" : "Save", systemImage: isFav ? "heart.fill" : "heart")
             }
+            .buttonStyle(CapsuleGlassButtonStyle(isActive: isFav, fidelity: fidelity))
         }
     }
 
-    private func actionButton(_ title: String, icon: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Label(title, systemImage: icon)
-                .frame(maxWidth: .infinity)
-        }
-        .buttonStyle(.bordered)
-        .tint(.white)
-        .controlSize(.regular)
-    }
+    // MARK: - Meta chips
 
     @ViewBuilder
     private var metaLine: some View {
@@ -110,7 +129,7 @@ struct PlayerSheet: View {
                 HStack(spacing: 8) {
                     chip(item.typeLabel)
                     if !item.year.isEmpty { chip(item.year) }
-                    if let rating = item.rating, rating > 0 { chip("\u{2605} \(String(format: "%.1f", rating))") }
+                    if let r = item.rating, r > 0 { chip("★ \(String(format: "%.1f", r))") }
                     chip("TMDB \(item.tmdbId)")
                 }
             }
@@ -128,12 +147,79 @@ struct PlayerSheet: View {
     }
 }
 
-/// A native `Menu` acting as a button-styled picker — the standard iOS
-/// pattern (e.g. Apple Music's "Up Next" sort menu) for a short list of
-/// mutually-exclusive options that doesn't need to be a full segmented
-/// control.
+// MARK: - Next Episode button
+
+/// Prominent full-width "Next Episode" row shown above the episode list.
+/// Handles season boundary: if we're on the last episode of a season and
+/// a next season exists, it shows "Next: S2E1 …" and switches season on tap.
+struct NextEpisodeButton: View {
+    let episode: Episode
+    let onTap: () -> Void
+
+    @Environment(\.glassFidelity) private var fidelity
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 14) {
+                Image(systemName: "play.circle.fill")
+                    .font(.system(size: 32))
+                    .foregroundStyle(.white)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("NEXT EPISODE")
+                        .font(.caption2.weight(.bold))
+                        .tracking(0.6)
+                        .foregroundStyle(.white.opacity(0.55))
+                    Text("S\(episode.seasonNumber ?? 0)E\(episode.episodeNumber) · \(episode.name ?? "Next")")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                }
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.45))
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 14)
+            .frame(maxWidth: .infinity)
+            .background { nextEpBackground }
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private var nextEpBackground: some View {
+        #if compiler(>=6.2)
+        if #available(iOS 26.0, *), fidelity == .full {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .glassEffect(.regular.tint(Color.white.opacity(0.07)).interactive(),
+                             in: .rect(cornerRadius: 18))
+        } else {
+            fallbackBg
+        }
+        #else
+        fallbackBg
+        #endif
+    }
+
+    private var fallbackBg: some View {
+        RoundedRectangle(cornerRadius: 18, style: .continuous)
+            .fill(Color.white.opacity(0.08))
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(Color.white.opacity(0.15), lineWidth: 1)
+            )
+    }
+}
+
+// MARK: - Server selector
+
 struct ServerSelector: View {
     @Bindable var viewModel: CatalogViewModel
+    @Environment(\.glassFidelity) private var fidelity
 
     var body: some View {
         HStack {
@@ -154,17 +240,40 @@ struct ServerSelector: View {
                     }
                 }
             } label: {
-                let currentName = viewModel.store.servers.indices.contains(viewModel.currentServerIndex)
-                    ? viewModel.store.servers[viewModel.currentServerIndex].name
-                    : "Select"
-                Label(currentName, systemImage: "chevron.up.chevron.down")
+                let name = viewModel.store.servers.indices.contains(viewModel.currentServerIndex)
+                    ? viewModel.store.servers[viewModel.currentServerIndex].name : "Select"
+                Label(name, systemImage: "chevron.up.chevron.down")
                     .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.blue)
             }
         }
         .padding(14)
-        .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background { selectorBackground }
+    }
+
+    @ViewBuilder
+    private var selectorBackground: some View {
+        #if compiler(>=6.2)
+        if #available(iOS 26.0, *), fidelity == .full {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .glassEffect(.regular.tint(Color.white.opacity(0.06)),
+                             in: .rect(cornerRadius: 14))
+        } else {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color.white.opacity(0.06))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                )
+        }
+        #else
+        RoundedRectangle(cornerRadius: 14, style: .continuous)
+            .fill(Color.white.opacity(0.06))
+        #endif
     }
 }
+
+// MARK: - Cast row
 
 struct CastRow: View {
     let cast: [CastMember]
