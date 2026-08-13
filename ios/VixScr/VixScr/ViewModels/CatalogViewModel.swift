@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import SwiftUI
 
 /// The main screen state machine. This is the SwiftUI/MVVM analogue of the
 /// giant `state` object + free functions (loadHome, runSearch, openContent,

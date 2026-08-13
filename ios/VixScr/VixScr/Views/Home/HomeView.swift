@@ -14,7 +14,6 @@ struct HomeView: View {
     @State private var viewModel: CatalogViewModel?
     @State private var searchText = ""
     @State private var isSearchActive = false
-    @State private var scrollPosition: ScrollPosition = .init()
 
     /// iPhone landscape: both size classes are compact.
     private var isLandscape: Bool { hSizeClass == .compact && vSizeClass == .compact }
@@ -221,7 +220,6 @@ struct HomeView: View {
             .padding(.bottom, 40)
             .padding(.top, 12)
         }
-        .scrollPosition($scrollPosition)
         .overlay(alignment: .bottom) {
             if let toast = viewModel.toastMessage {
                 ToastView(message: toast)

@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-	<string>VixScr</string>
+	<string>Vela</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -56,7 +56,7 @@
 			<string>com.vixscr.app.deeplink</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>vixscr</string>
+				<string>vela</string>
 			</array>
 		</dict>
 	</array>

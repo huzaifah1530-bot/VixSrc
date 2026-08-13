@@ -9,7 +9,6 @@ struct FavoritesView: View {
     @Environment(\.horizontalSizeClass) private var hSizeClass
     @Environment(\.verticalSizeClass) private var vSizeClass
     @State private var viewModel: CatalogViewModel?
-    @State private var scrollPosition: ScrollPosition = .init()
 
     private var isLandscape: Bool { hSizeClass == .compact && vSizeClass == .compact }
 
@@ -41,7 +40,6 @@ struct FavoritesView: View {
                         }
                         .padding(20)
                     }
-                    .scrollPosition($scrollPosition)
                 }
             }
             .background(VixTheme.background.ignoresSafeArea())
