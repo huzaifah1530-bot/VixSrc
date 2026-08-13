@@ -33,25 +33,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Select an Xcode with an installed iOS Simulator runtime
+      - name: Select Xcode
         run: |
-          # Different Xcode installs on the runner image can have different
-          # simulator runtimes pre-cached (or none at all). Try each
-          # installed Xcode, newest first, and keep the first one that
-          # actually reports an available iOS runtime, rather than assuming
-          # any particular major version has one.
-          for XCODE_APP in $(find /Applications -maxdepth 1 -type d -name 'Xcode*.app' | sort -rV); do
-            sudo xcode-select -s "$XCODE_APP"
-            if xcrun simctl list runtimes available 2>/dev/null | grep -q 'iOS'; then
-              echo "Selected $XCODE_APP (has an iOS simulator runtime)"
-              xcodebuild -version
-              xcrun simctl list runtimes
-              exit 0
-            fi
-          done
-          echo "::error::No installed Xcode on this runner has an iOS Simulator runtime available"
-          find /Applications -maxdepth 1 -type d -name 'Xcode*.app'
-          exit 1
+          XCODE_APP=$(find /Applications -maxdepth 1 -type d -name 'Xcode*.app' | sort -rV | head -1)
+          sudo xcode-select -s "$XCODE_APP"
+          xcodebuild -version
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -62,22 +48,31 @@ jobs:
       - name: Show available schemes
         run: xcodebuild -list -project VixScr.xcodeproj
 
-      - name: Pick a valid simulator destination for this scheme
+      - name: Pick a concrete simulator destination
         id: sim
         run: |
-          # Ask xcodebuild itself which iOS Simulator destinations are
-          # actually valid for this scheme on this runner, instead of
-          # guessing a device/OS combo that might not be installed.
-          DEST_ID=$(xcodebuild -showdestinations -project VixScr.xcodeproj -scheme VixScr 2>/dev/null \
-            | grep -m1 'platform:iOS Simulator' \
-            | sed -E 's/.*id:([^,}]+).*/\1/')
-          if [ -z "$DEST_ID" ]; then
-            echo "::error::No valid iOS Simulator destination found for scheme VixScr"
-            xcodebuild -showdestinations -project VixScr.xcodeproj -scheme VixScr
+          # -showdestinations lists both generic "placeholder" destinations
+          # (not buildable) and concrete simulator instances like
+          # "{ platform:iOS Simulator, ..., OS:26.2, name:iPhone 16 Pro }".
+          # Grab the name+OS of the first concrete one, preferring an
+          # iPhone, and build a real "name=...,OS=..." destination from it.
+          RAW=$(xcodebuild -showdestinations -project VixScr.xcodeproj -scheme VixScr 2>/dev/null)
+
+          LINE=$(echo "$RAW" | grep 'platform:iOS Simulator' | grep -v 'placeholder' | grep 'name:iPhone' | head -1)
+          if [ -z "$LINE" ]; then
+            LINE=$(echo "$RAW" | grep 'platform:iOS Simulator' | grep -v 'placeholder' | head -1)
+          fi
+          if [ -z "$LINE" ]; then
+            echo "::error::No concrete iOS Simulator destination available"
+            echo "$RAW"
             exit 1
           fi
-          echo "Using destination id: $DEST_ID"
-          echo "id=$DEST_ID" >> "$GITHUB_OUTPUT"
+
+          NAME=$(echo "$LINE" | sed -E 's/.*name:([^,}]+).*/\1/')
+          OS=$(echo "$LINE" | sed -E 's/.*OS:([^,}]+).*/\1/')
+          echo "Using simulator: name=$NAME OS=$OS"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "os=$OS" >> "$GITHUB_OUTPUT"
 
       - name: Build for iOS Simulator
         run: |
@@ -85,7 +80,7 @@ jobs:
           xcodebuild build \
             -project VixScr.xcodeproj \
             -scheme VixScr \
-            -destination "id=${{ steps.sim.outputs.id }}" \
+            -destination "platform=iOS Simulator,name=${{ steps.sim.outputs.name }},OS=${{ steps.sim.outputs.os }}" \
             CODE_SIGNING_ALLOWED=NO \
             2>&1 | tee "$RUNNER_TEMP/VixScr-simulator-xcodebuild.log"
 
@@ -102,7 +97,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Select an Xcode with a working toolchain
+      - name: Select Xcode
         run: |
           XCODE_APP=$(find /Applications -maxdepth 1 -type d -name 'Xcode*.app' | sort -rV | head -1)
           sudo xcode-select -s "$XCODE_APP"
@@ -163,7 +158,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Select an Xcode with a working toolchain
+      - name: Select Xcode
         run: |
           XCODE_APP=$(find /Applications -maxdepth 1 -type d -name 'Xcode*.app' | sort -rV | head -1)
           sudo xcode-select -s "$XCODE_APP"
