@@ -17,7 +17,9 @@ struct LiquidGlassBackground: ViewModifier {
     var cornerRadius: CGFloat
     var tint: Color = .white.opacity(0.08)
 
+    @ViewBuilder
     func body(content: Content) -> some View {
+        #if compiler(>=6.2)
         if #available(iOS 26.0, *) {
             content
                 .glassEffect(
@@ -35,6 +37,17 @@ struct LiquidGlassBackground: ViewModifier {
                         )
                 )
         }
+        #else
+        content
+            .background(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                            .stroke(Color.white.opacity(0.2), lineWidth: 1)
+                    )
+            )
+        #endif
     }
 }
 
@@ -67,12 +80,17 @@ extension View {
 struct VixGlassContainer<Content: View>: View {
     @ViewBuilder var content: Content
 
+    @ViewBuilder
     var body: some View {
+        #if compiler(>=6.2)
         if #available(iOS 26.0, *) {
             GlassEffectContainer(spacing: 12) { content }
         } else {
             content
         }
+        #else
+        content
+        #endif
     }
 }
 

@@ -16,7 +16,7 @@ final class CatalogViewModel {
     private(set) var isLoadingHome = false
     private(set) var homeErrorMessage: String?
     private(set) var homeLoaded = false
-    private var searchTask: Task<Void, Never>?
+    private var searchTask: Task<[MediaItem], Never>?
     private var searchDebounceTask: Task<Void, Never>?
 
     // Hero / currently previewed item on the home screen.
