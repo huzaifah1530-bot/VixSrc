@@ -84,6 +84,14 @@ struct CastMember: Codable, Identifiable, Hashable {
 
     var profileURL: URL? { TMDBImage.url(path: profilePath, size: .w500) }
 
+    /// TMDB person page, opened when a cast card is tapped — same as the
+    /// Electron cast-card click handler. Non-optional so views don't have to
+    /// force-unwrap; the id is always numeric so this cannot realistically fail.
+    var tmdbPersonURL: URL {
+        URL(string: "https://www.themoviedb.org/person/\(id)")
+            ?? URL(string: "https://www.themoviedb.org")!
+    }
+
     var initials: String {
         name.split(separator: " ")
             .prefix(2)

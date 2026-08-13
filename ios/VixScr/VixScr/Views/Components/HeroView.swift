@@ -12,6 +12,8 @@ struct HeroView: View {
     var onToggleFavorite: () -> Void
     var isFavorite: Bool
 
+    @Environment(\.glassFidelity) private var glassFidelity
+
     var body: some View {
         ZStack(alignment: .bottomLeading) {
             backdrop
@@ -94,9 +96,11 @@ struct HeroView: View {
         return item.typeLabel + (item.year.isEmpty ? "" : " · \(item.year)")
     }
 
+    /// Ultra performance mode hides backdrop images entirely, matching
+    /// `body.ultra-perf-mode` in index.html.
     @ViewBuilder
     private var backdrop: some View {
-        if let url = item?.backdropURL {
+        if let url = item?.backdropURL, glassFidelity != .opaque {
             AsyncImage(url: url) { phase in
                 if let image = phase.image {
                     image.resizable().scaledToFill()

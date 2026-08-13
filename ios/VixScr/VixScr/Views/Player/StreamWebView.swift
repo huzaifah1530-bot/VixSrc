@@ -75,7 +75,7 @@ struct StreamWebView: UIViewRepresentable {
         /// originally-loaded host (the chosen streaming server) and TMDB
         /// domains are allowed; everything else — ad redirects, affiliate
         /// hops, pop-under targets — is cancelled outright.
-        func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
             guard let url = navigationAction.request.url else {
                 decisionHandler(.cancel)
                 return
@@ -109,11 +109,11 @@ struct StreamWebView: UIViewRepresentable {
         /// Ad/tracker pages sometimes use `beforeunload`, `alert`, or
         /// `confirm` dialogs to trap navigation. Auto-dismiss instead of
         /// presenting them.
-        func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
+        func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping @MainActor @Sendable () -> Void) {
             completionHandler()
         }
 
-        func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
+        func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping @MainActor @Sendable (Bool) -> Void) {
             completionHandler(false)
         }
 

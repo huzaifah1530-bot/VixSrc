@@ -287,7 +287,11 @@ struct SettingsSheet: View {
         request.timeoutInterval = 8
         do {
             let (_, response) = try await URLSession.shared.data(for: request)
-            return (response as? HTTPURLResponse) != nil
+            guard let http = response as? HTTPURLResponse else { return false }
+            // Any HTTPURLResponse used to count as success, so a typo'd host
+            // that merely resolves would "pass". Require a non-error status,
+            // matching `testServerUrl` in index.html.
+            return (200..<400).contains(http.statusCode)
         } catch {
             return false
         }

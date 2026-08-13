@@ -166,7 +166,7 @@ struct CastRow: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 16) {
                     ForEach(cast) { actor in
-                        Link(destination: URL(string: "https://www.themoviedb.org/person/\(actor.id)")!) {
+                        Link(destination: actor.tmdbPersonURL) {
                             VStack(spacing: 6) {
                                 ZStack {
                                     Circle().fill(Color.white.opacity(0.1))

@@ -29,6 +29,13 @@ struct VixScrApp: App {
                         .transition(.opacity)
                 }
             }
+            // Propagates Performance / Ultra Performance mode to every glass
+            // surface, the iOS analogue of toggling `body.perf-mode` /
+            // `body.ultra-perf-mode` in index.html.
+            .vixGlassFidelity(
+                performanceMode: store.performanceMode,
+                ultraPerformanceMode: store.ultraPerformanceMode
+            )
             .task {
                 try? await Task.sleep(nanoseconds: 400_000_000)
                 withAnimation(.easeOut(duration: 0.25)) {
@@ -42,11 +49,19 @@ struct VixScrApp: App {
     }
 
     /// Accepts `vixscr://<id>` or `vixscr://open/<id>`, matching
-    /// `extractTmdbId()` in main.js.
+    /// `extractTmdbId()` in main.js (`/^vixscr:\/\/(?:open\/)?(\d+)/i`).
+    ///
+    /// Note the host must be validated as numeric: for `vixscr://open/1726`
+    /// `url.host` is `"open"`, not the id, so taking the host unconditionally
+    /// would request `/movie/open` and 404.
     private func handleDeepLink(_ url: URL) {
         guard url.scheme?.lowercased() == "vixscr" else { return }
-        let id = url.host ?? url.pathComponents.last(where: { $0 != "/" && $0 != "open" })
-        guard let id, !id.isEmpty else { return }
+
+        let candidates = [url.host].compactMap { $0 } + url.pathComponents
+        guard let id = candidates.first(where: { component in
+            !component.isEmpty && component.allSatisfy(\.isNumber)
+        }) else { return }
+
         NotificationCenter.default.post(name: .vixscrOpenTMDBId, object: id)
     }
 }

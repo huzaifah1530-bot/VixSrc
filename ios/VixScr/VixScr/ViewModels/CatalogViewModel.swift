@@ -40,6 +40,8 @@ final class CatalogViewModel {
     // Settings sheet
     var isSettingsPresented = false
 
+    private var castTask: Task<Void, Never>?
+
     // Toasts
     var toastMessage: String?
     private var toastTask: Task<Void, Never>?
@@ -73,7 +75,14 @@ final class CatalogViewModel {
 
     private func applyContentFilter(_ rows: [MediaRow]) -> [MediaRow] {
         rows.map { row in
-            MediaRow(title: row.title, subtitle: row.subtitle, items: row.items.filter(passesContentFilter))
+            // Dedupe per row, like `dedupe(...)` on every row in index.html.
+            // TMDB can return the same id twice (e.g. trending + popular
+            // overlap), which would otherwise collide in ForEach.
+            var seen = Set<String>()
+            let items = row.items
+                .filter(passesContentFilter)
+                .filter { seen.insert($0.id).inserted }
+            return MediaRow(title: row.title, subtitle: row.subtitle, items: items)
         }
     }
 
@@ -157,6 +166,9 @@ final class CatalogViewModel {
     // MARK: - Search
 
     func debounceSearch(_ value: String) {
+        // Track the query immediately so `commitSearch` (triggered by return
+        // before the debounce fires) doesn't act on a stale value.
+        searchQuery = value
         searchDebounceTask?.cancel()
         searchDebounceTask = Task {
             try? await Task.sleep(nanoseconds: 260_000_000)
@@ -258,11 +270,14 @@ final class CatalogViewModel {
         cast = []
         isPlayerPresented = true
 
-        Task { await loadCast(for: item) }
+        // Cancel any in-flight cast fetch, otherwise a slow response for a
+        // previously-opened title can overwrite the cast of this one.
+        castTask?.cancel()
+        castTask = Task { await loadCast(for: item) }
 
         if item.type == .movie {
             store.addRecent(item)
-            currentStreamURL = store.servers.first.flatMap { $0.movieURL(tmdbId: item.tmdbId) }
+            currentStreamURL = activeServer?.movieURL(tmdbId: item.tmdbId)
             return
         }
 
@@ -303,7 +318,12 @@ final class CatalogViewModel {
     @MainActor
     func selectSeason(_ seasonNumber: Int, preferredEpisode: Int? = nil) async {
         guard let details = tvDetails,
-              let seasonMeta = details.usableSeasons.first(where: { $0.seasonNumber == seasonNumber }) else { return }
+              let seasonMeta = details.usableSeasons.first(where: { $0.seasonNumber == seasonNumber }),
+              let tvId = selected?.tmdbId, !tvId.isEmpty else {
+            // Clear the spinner, otherwise `open()` leaves it spinning forever.
+            isLoadingEpisodes = false
+            return
+        }
 
         selectedSeason = seasonMeta
         episodeQuery = ""
@@ -311,7 +331,7 @@ final class CatalogViewModel {
         episodes = []
 
         do {
-            let seasonDetails = try await client.season(tvId: selected?.tmdbId ?? "", seasonNumber: seasonNumber, credential: store.credential)
+            let seasonDetails = try await client.season(tvId: tvId, seasonNumber: seasonNumber, credential: store.credential)
             let fetchedEpisodes = seasonDetails.episodes ?? []
             episodes = fetchedEpisodes
             isLoadingEpisodes = false
@@ -338,12 +358,21 @@ final class CatalogViewModel {
         }
     }
 
+    /// The server the user last picked. `index.html` reads `getServers()` fresh
+    /// on every URL build and keeps `state.currentServerIndex`, so changing
+    /// episode must NOT silently drop back to server 0.
+    private var activeServer: StreamServer? {
+        if store.servers.indices.contains(currentServerIndex) {
+            return store.servers[currentServerIndex]
+        }
+        return store.servers.first
+    }
+
     @MainActor
     func selectEpisode(_ episode: Episode) async {
         selectedEpisode = episode
-        currentServerIndex = 0
         guard let item = selected, let season = selectedSeason else { return }
-        currentStreamURL = store.servers.first?.tvURL(tmdbId: item.tmdbId, season: season.seasonNumber, episode: episode.episodeNumber)
+        currentStreamURL = activeServer?.tvURL(tmdbId: item.tmdbId, season: season.seasonNumber, episode: episode.episodeNumber)
         store.addRecent(item, season: season.seasonNumber, episode: episode.episodeNumber, episodeTitle: episode.name)
     }
 
@@ -381,8 +410,10 @@ final class CatalogViewModel {
     private func loadCast(for item: MediaItem) async {
         do {
             let response = try await client.credits(type: item.type, tmdbId: item.tmdbId, credential: store.credential)
+            guard !Task.isCancelled, selected?.id == item.id else { return }
             cast = Array((response.cast ?? []).prefix(15))
         } catch {
+            guard !Task.isCancelled, selected?.id == item.id else { return }
             cast = []
         }
     }

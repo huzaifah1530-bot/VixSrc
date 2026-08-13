@@ -10,9 +10,14 @@ import Observation
 ///
 /// UserDefaults is the direct native analogue of localStorage: both are
 /// simple, synchronous, on-device key/value stores.
+// Not marked @MainActor deliberately: `VixScrApp` creates this in a `@State`
+// default-value expression, which is evaluated in a nonisolated context, so a
+// @MainActor initialiser would not be callable there. Every current access
+// already happens from the main actor (SwiftUI view bodies and the
+// @MainActor CatalogViewModel).
 @Observable
 final class AppStore {
-    private let defaults: UserDefaults
+    @ObservationIgnored private let defaults: UserDefaults
 
     enum Keys {
         static let credential = "vixsrc_live_tmdb_credential"
@@ -31,40 +36,140 @@ final class AppStore {
     /// users through Settings, matching a "clean" build.
     static let hardcodedTMDBCredential = ""
 
+    // NOTE: These are hand-written computed properties over @ObservationIgnored
+    // backing storage, using the macro-provided access(keyPath:) /
+    // withMutation(keyPath:) hooks.
+    //
+    // Why not stored properties with `didSet`? @Observable rewrites each
+    // stored property into a get/set pair, and a property cannot have both an
+    // explicit accessor and a `didSet` observer — that combination does not
+    // compile. Doing it manually keeps SwiftUI observation working *and*
+    // persists to UserDefaults on every mutation (the localStorage-write
+    // behaviour of the Electron app).
+    @ObservationIgnored private var storedCredential: String
     var credential: String {
-        didSet { defaults.set(credential, forKey: Keys.credential) }
+        get {
+            access(keyPath: \.credential)
+            return storedCredential
+        }
+        set {
+            withMutation(keyPath: \.credential) {
+                storedCredential = newValue
+                defaults.set(newValue, forKey: Keys.credential)
+            }
+        }
     }
 
+    @ObservationIgnored private var storedFavorites: [MediaItem]
     var favorites: [MediaItem] {
-        didSet { save(favorites, key: Keys.favorites) }
+        get {
+            access(keyPath: \.favorites)
+            return storedFavorites
+        }
+        set {
+            withMutation(keyPath: \.favorites) {
+                storedFavorites = newValue
+                save(newValue, key: Keys.favorites)
+            }
+        }
     }
 
+    @ObservationIgnored private var storedRecents: [MediaItem]
     var recents: [MediaItem] {
-        didSet { save(recents, key: Keys.recents) }
+        get {
+            access(keyPath: \.recents)
+            return storedRecents
+        }
+        set {
+            withMutation(keyPath: \.recents) {
+                storedRecents = newValue
+                save(newValue, key: Keys.recents)
+            }
+        }
     }
 
+    @ObservationIgnored private var storedContentFilter: ContentFilter
     var contentFilter: ContentFilter {
-        didSet { defaults.set(contentFilter.rawValue, forKey: Keys.contentFilter) }
+        get {
+            access(keyPath: \.contentFilter)
+            return storedContentFilter
+        }
+        set {
+            withMutation(keyPath: \.contentFilter) {
+                storedContentFilter = newValue
+                defaults.set(newValue.rawValue, forKey: Keys.contentFilter)
+            }
+        }
     }
 
+    @ObservationIgnored private var storedSearchHistory: [String]
     var searchHistory: [String] {
-        didSet { defaults.set(searchHistory, forKey: Keys.searchHistory) }
+        get {
+            access(keyPath: \.searchHistory)
+            return storedSearchHistory
+        }
+        set {
+            withMutation(keyPath: \.searchHistory) {
+                storedSearchHistory = newValue
+                defaults.set(newValue, forKey: Keys.searchHistory)
+            }
+        }
     }
 
+    @ObservationIgnored private var storedCardSize: CardSize
     var cardSize: CardSize {
-        didSet { defaults.set(cardSize.rawValue, forKey: Keys.cardSize) }
+        get {
+            access(keyPath: \.cardSize)
+            return storedCardSize
+        }
+        set {
+            withMutation(keyPath: \.cardSize) {
+                storedCardSize = newValue
+                defaults.set(newValue.rawValue, forKey: Keys.cardSize)
+            }
+        }
     }
 
+    @ObservationIgnored private var storedPerformanceMode: Bool
     var performanceMode: Bool {
-        didSet { defaults.set(performanceMode, forKey: Keys.perfMode) }
+        get {
+            access(keyPath: \.performanceMode)
+            return storedPerformanceMode
+        }
+        set {
+            withMutation(keyPath: \.performanceMode) {
+                storedPerformanceMode = newValue
+                defaults.set(newValue, forKey: Keys.perfMode)
+            }
+        }
     }
 
+    @ObservationIgnored private var storedUltraPerformanceMode: Bool
     var ultraPerformanceMode: Bool {
-        didSet { defaults.set(ultraPerformanceMode, forKey: Keys.ultraPerfMode) }
+        get {
+            access(keyPath: \.ultraPerformanceMode)
+            return storedUltraPerformanceMode
+        }
+        set {
+            withMutation(keyPath: \.ultraPerformanceMode) {
+                storedUltraPerformanceMode = newValue
+                defaults.set(newValue, forKey: Keys.ultraPerfMode)
+            }
+        }
     }
 
+    @ObservationIgnored private var storedServers: [StreamServer]
     var servers: [StreamServer] {
-        didSet { save(servers, key: Keys.servers) }
+        get {
+            access(keyPath: \.servers)
+            return storedServers
+        }
+        set {
+            withMutation(keyPath: \.servers) {
+                storedServers = newValue
+                save(newValue, key: Keys.servers)
+            }
+        }
     }
 
     enum ContentFilter: String, CaseIterable {
@@ -77,19 +182,19 @@ final class AppStore {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        self.credential = {
+        self.storedCredential = {
             let hardcoded = AppStore.hardcodedTMDBCredential.trimmingCharacters(in: .whitespacesAndNewlines)
             if !hardcoded.isEmpty { return hardcoded }
             return defaults.string(forKey: Keys.credential) ?? ""
         }()
-        self.favorites = AppStore.load([MediaItem].self, key: Keys.favorites, defaults: defaults) ?? []
-        self.recents = AppStore.load([MediaItem].self, key: Keys.recents, defaults: defaults) ?? []
-        self.contentFilter = ContentFilter(rawValue: defaults.string(forKey: Keys.contentFilter) ?? "all") ?? .all
-        self.searchHistory = defaults.stringArray(forKey: Keys.searchHistory) ?? []
-        self.cardSize = CardSize(rawValue: defaults.string(forKey: Keys.cardSize) ?? "large") ?? .large
-        self.performanceMode = defaults.bool(forKey: Keys.perfMode)
-        self.ultraPerformanceMode = defaults.bool(forKey: Keys.ultraPerfMode)
-        self.servers = AppStore.load([StreamServer].self, key: Keys.servers, defaults: defaults) ?? StreamServer.defaults
+        self.storedFavorites = AppStore.load([MediaItem].self, key: Keys.favorites, defaults: defaults) ?? []
+        self.storedRecents = AppStore.load([MediaItem].self, key: Keys.recents, defaults: defaults) ?? []
+        self.storedContentFilter = ContentFilter(rawValue: defaults.string(forKey: Keys.contentFilter) ?? "all") ?? .all
+        self.storedSearchHistory = defaults.stringArray(forKey: Keys.searchHistory) ?? []
+        self.storedCardSize = CardSize(rawValue: defaults.string(forKey: Keys.cardSize) ?? "large") ?? .large
+        self.storedPerformanceMode = defaults.bool(forKey: Keys.perfMode)
+        self.storedUltraPerformanceMode = defaults.bool(forKey: Keys.ultraPerfMode)
+        self.storedServers = AppStore.load([StreamServer].self, key: Keys.servers, defaults: defaults) ?? StreamServer.defaults
     }
 
     private func save<T: Encodable>(_ value: T, key: String) {

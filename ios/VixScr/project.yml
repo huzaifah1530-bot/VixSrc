@@ -21,15 +21,18 @@ targets:
       - path: VixScr
         excludes:
           - "Info.plist"
-    info:
-      path: VixScr/Info.plist
-      properties:
-        UILaunchScreen: {}
+    # No `info:` block on purpose. XcodeGen *generates* a plist when `info:` is
+    # present, overwriting the hand-written VixScr/Info.plist and silently
+    # dropping CFBundleURLTypes (the vixscr:// scheme), NSAppTransportSecurity,
+    # UIUserInterfaceStyle and the orientation arrays. Point at the real file
+    # via INFOPLIST_FILE instead.
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.vixscr.app
         PRODUCT_NAME: VixScr
+        INFOPLIST_FILE: VixScr/Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         SWIFT_EMIT_LOC_STRINGS: YES
         GENERATE_INFOPLIST_FILE: NO
+        TARGETED_DEVICE_FAMILY: "1,2"
     capabilities: []

@@ -35,22 +35,34 @@ actor TMDBClient {
         let trimmed = credential.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw TMDBError.missingCredential }
 
-        var components = URLComponents(url: base.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
+        // Callers pass paths with a leading slash ("/tv/123"), and `base`
+        // already ends in "/3", so appendingPathComponent would produce
+        // ".../3//tv/123". Trim to match `TMDB_BASE + path` in index.html.
+        let normalizedPath = path.hasPrefix("/") ? String(path.dropFirst()) : path
+        guard var components = URLComponents(
+            url: base.appendingPathComponent(normalizedPath),
+            resolvingAgainstBaseURL: false
+        ) else {
+            throw TMDBError.decoding
+        }
+
         var items = query.map { URLQueryItem(name: $0.key, value: $0.value) }
         if !query.keys.contains("language") {
             items.append(URLQueryItem(name: "language", value: "en-GB"))
         }
 
-        var request = URLRequest(url: base)
-        request.setValue("application/json", forHTTPHeaderField: "accept")
-
-        if isBearerToken(trimmed) {
-            request.setValue("Bearer \(trimmed)", forHTTPHeaderField: "Authorization")
-        } else {
+        if isBearerToken(trimmed) == false {
             items.append(URLQueryItem(name: "api_key", value: trimmed))
         }
         components.queryItems = items
-        request.url = components.url
+
+        guard let url = components.url else { throw TMDBError.decoding }
+
+        var request = URLRequest(url: url)
+        request.setValue("application/json", forHTTPHeaderField: "accept")
+        if isBearerToken(trimmed) {
+            request.setValue("Bearer \(trimmed)", forHTTPHeaderField: "Authorization")
+        }
 
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw TMDBError.decoding }

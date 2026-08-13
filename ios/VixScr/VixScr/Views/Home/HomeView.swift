@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 
 /// Top-level screen. Mirrors the `<header>` + `#hero` + `#workspace`
@@ -7,7 +8,6 @@ struct HomeView: View {
     @Environment(AppStore.self) private var store
     @State private var viewModel: CatalogViewModel?
     @State private var searchText = ""
-    @State private var isSearchFocused = false
     @FocusState private var searchFieldFocused: Bool
 
     var body: some View {
@@ -108,6 +108,9 @@ struct HomeView: View {
     @ViewBuilder
     private func navBar(viewModel: CatalogViewModel) -> some View {
         VStack(spacing: 10) {
+            // Grouped so the three nav-bar glass surfaces morph/merge together
+            // on iOS 26 instead of rendering as three unrelated panes.
+            VixGlassContainer {
             HStack(spacing: 10) {
                 HStack(spacing: 8) {
                     ZStack {
@@ -154,6 +157,7 @@ struct HomeView: View {
                         .frame(width: 40, height: 40)
                 }
                 .vixGlass(.regular, cornerRadius: 999)
+            }
             }
 
             if searchFieldFocused || !searchText.isEmpty {
