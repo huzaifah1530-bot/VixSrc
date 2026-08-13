@@ -33,15 +33,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Select Xcode
+      - name: Select an Xcode with an installed iOS Simulator runtime
         run: |
-          XCODE_APP=$(find /Applications -maxdepth 1 -type d -name 'Xcode_16*.app' | sort | tail -1)
-          if [ -z "$XCODE_APP" ]; then
-            XCODE_APP=$(find /Applications -maxdepth 1 -type d -name 'Xcode*.app' | sort | tail -1)
-          fi
-          sudo xcode-select -s "$XCODE_APP"
-          xcodebuild -version
-          xcrun simctl list runtimes
+          # Different Xcode installs on the runner image can have different
+          # simulator runtimes pre-cached (or none at all). Try each
+          # installed Xcode, newest first, and keep the first one that
+          # actually reports an available iOS runtime, rather than assuming
+          # any particular major version has one.
+          for XCODE_APP in $(find /Applications -maxdepth 1 -type d -name 'Xcode*.app' | sort -rV); do
+            sudo xcode-select -s "$XCODE_APP"
+            if xcrun simctl list runtimes available 2>/dev/null | grep -q 'iOS'; then
+              echo "Selected $XCODE_APP (has an iOS simulator runtime)"
+              xcodebuild -version
+              xcrun simctl list runtimes
+              exit 0
+            fi
+          done
+          echo "::error::No installed Xcode on this runner has an iOS Simulator runtime available"
+          find /Applications -maxdepth 1 -type d -name 'Xcode*.app'
+          exit 1
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -92,15 +102,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Select Xcode
+      - name: Select an Xcode with a working toolchain
         run: |
-          XCODE_APP=$(find /Applications -maxdepth 1 -type d -name 'Xcode_16*.app' | sort | tail -1)
-          if [ -z "$XCODE_APP" ]; then
-            XCODE_APP=$(find /Applications -maxdepth 1 -type d -name 'Xcode*.app' | sort | tail -1)
-          fi
+          XCODE_APP=$(find /Applications -maxdepth 1 -type d -name 'Xcode*.app' | sort -rV | head -1)
           sudo xcode-select -s "$XCODE_APP"
           xcodebuild -version
-          xcrun simctl list runtimes
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -157,15 +163,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Select Xcode
+      - name: Select an Xcode with a working toolchain
         run: |
-          XCODE_APP=$(find /Applications -maxdepth 1 -type d -name 'Xcode_16*.app' | sort | tail -1)
-          if [ -z "$XCODE_APP" ]; then
-            XCODE_APP=$(find /Applications -maxdepth 1 -type d -name 'Xcode*.app' | sort | tail -1)
-          fi
+          XCODE_APP=$(find /Applications -maxdepth 1 -type d -name 'Xcode*.app' | sort -rV | head -1)
           sudo xcode-select -s "$XCODE_APP"
           xcodebuild -version
-          xcrun simctl list runtimes
 
       - name: Install XcodeGen
         run: brew install xcodegen
