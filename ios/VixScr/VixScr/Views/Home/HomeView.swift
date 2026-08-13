@@ -9,12 +9,15 @@ import SwiftUI
 struct HomeView: View {
     @Environment(AppStore.self) private var store
     @Environment(TabRouter.self) private var router
+    @Environment(\.horizontalSizeClass) private var hSizeClass
+    @Environment(\.verticalSizeClass) private var vSizeClass
     @State private var viewModel: CatalogViewModel?
     @State private var searchText = ""
     @State private var isSearchActive = false
-    /// Persists scroll position across tab switches so returning to Home
-    /// doesn't snap back to the top — same behaviour as App Store / Music.
     @State private var scrollPosition: ScrollPosition = .init()
+
+    /// iPhone landscape: both size classes are compact.
+    private var isLandscape: Bool { hSizeClass == .compact && vSizeClass == .compact }
 
     var body: some View {
         NavigationStack {
@@ -77,6 +80,17 @@ struct HomeView: View {
 
     @ViewBuilder
     private func content(viewModel: CatalogViewModel) -> some View {
+        if isLandscape {
+            landscapeContent(viewModel: viewModel)
+        } else {
+            portraitContent(viewModel: viewModel)
+        }
+    }
+
+    // MARK: - Portrait layout (unchanged)
+
+    @ViewBuilder
+    private func portraitContent(viewModel: CatalogViewModel) -> some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 28, pinnedViews: []) {
                 if searchText.trimmingCharacters(in: .whitespaces).isEmpty {
@@ -88,15 +102,12 @@ struct HomeView: View {
                         onToggleFavorite: { viewModel.toggleFavoriteOnHero() },
                         isFavorite: viewModel.hero.map(store.isFavorite) ?? false
                     )
-                    .containerRelativeFrame(.horizontal) { width, _ in
-                        width - 40 // 20pt padding each side
-                    }
+                    .containerRelativeFrame(.horizontal) { width, _ in width - 40 }
                     .padding(.horizontal, 20)
                     .padding(.top, 8)
+                    .id(viewModel.hero?.id)
+                    .transition(.opacity)
 
-                    // Last watched mini card — shown when the user has
-                    // at least one recent item and it isn't already the
-                    // hero (to avoid duplicating the same title twice).
                     if let lastWatched = store.sortedRecents.first,
                        lastWatched.id != viewModel.hero?.id {
                         LastWatchedCard(
@@ -112,7 +123,6 @@ struct HomeView: View {
                     FilterBar(selected: filterBinding(viewModel: viewModel))
                         .padding(.horizontal, 20)
                 }
-
                 statusOrRows(viewModel: viewModel)
             }
             .padding(.bottom, 40)
@@ -123,6 +133,81 @@ struct HomeView: View {
             if let toast = viewModel.toastMessage {
                 ToastView(message: toast)
                     .padding(.bottom, 24)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .sheet(isPresented: Binding(
+            get: { viewModel.isPlayerPresented },
+            set: { viewModel.isPlayerPresented = $0 }
+        )) {
+            PlayerSheet(viewModel: viewModel)
+        }
+    }
+
+    // MARK: - Landscape layout
+    // Left: hero + last watched stacked (fixed ~45% width)
+    // Right: filter bar + rows scrolling vertically
+
+    @ViewBuilder
+    private func landscapeContent(viewModel: CatalogViewModel) -> some View {
+        GeometryReader { geo in
+            let leftWidth = geo.size.width * 0.42
+            let rightWidth = geo.size.width - leftWidth
+
+            HStack(alignment: .top, spacing: 0) {
+                // LEFT — hero panel, fixed width, scrolls independently
+                ScrollView {
+                    VStack(spacing: 12) {
+                        if searchText.trimmingCharacters(in: .whitespaces).isEmpty {
+                            HeroView(
+                                item: viewModel.hero,
+                                hasCredential: !store.credential.trimmingCharacters(in: .whitespaces).isEmpty,
+                                onPlay: { Task { if let hero = viewModel.hero { await viewModel.open(hero) } } },
+                                onSetup: { router.selection = .settings },
+                                onToggleFavorite: { viewModel.toggleFavoriteOnHero() },
+                                isFavorite: viewModel.hero.map(store.isFavorite) ?? false
+                            )
+                            .id(viewModel.hero?.id)
+                            .transition(.opacity)
+
+                            if let lastWatched = store.sortedRecents.first,
+                               lastWatched.id != viewModel.hero?.id {
+                                LastWatchedCard(
+                                    item: lastWatched,
+                                    isFavorite: store.isFavorite(lastWatched),
+                                    onContinue: { Task { await viewModel.open(lastWatched) } },
+                                    onFavorite: { store.toggleFavorite(lastWatched) }
+                                )
+                            }
+                        }
+                    }
+                    .padding(12)
+                    .padding(.bottom, 20)
+                }
+                .frame(width: leftWidth)
+
+                Divider()
+                    .background(Color.white.opacity(0.1))
+
+                // RIGHT — filter + rows
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 22) {
+                        if searchText.trimmingCharacters(in: .whitespaces).isEmpty {
+                            FilterBar(selected: filterBinding(viewModel: viewModel))
+                                .padding(.horizontal, 16)
+                        }
+                        statusOrRows(viewModel: viewModel)
+                    }
+                    .padding(.bottom, 30)
+                    .padding(.top, 8)
+                }
+                .frame(width: rightWidth)
+            }
+        }
+        .overlay(alignment: .bottom) {
+            if let toast = viewModel.toastMessage {
+                ToastView(message: toast)
+                    .padding(.bottom, 16)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }

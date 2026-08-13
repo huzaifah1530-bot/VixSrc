@@ -14,6 +14,7 @@ struct SettingsView: View {
     @State private var isTestingServer = false
     @State private var toastMessage: String?
     @State private var toastTask: Task<Void, Never>?
+    @State private var showRestartAlert = false
 
     var body: some View {
         NavigationStack {
@@ -88,16 +89,32 @@ struct SettingsView: View {
         Section {
             Toggle("Performance Mode", isOn: Binding(
                 get: { store.performanceMode },
-                set: { store.performanceMode = $0 }
+                set: { newValue in
+                    store.performanceMode = newValue
+                    showRestartAlert = true
+                }
             ))
             Toggle("Ultra Performance Mode", isOn: Binding(
                 get: { store.ultraPerformanceMode },
-                set: { store.ultraPerformanceMode = $0 }
+                set: { newValue in
+                    store.ultraPerformanceMode = newValue
+                    showRestartAlert = true
+                }
             ))
         } header: {
             Text("Performance")
         } footer: {
             Text("Performance Mode disables Liquid Glass blur and animations. Ultra Performance Mode also hides backdrop images. Use either on older hardware or to save battery.")
+        }
+        .alert("Restart Required", isPresented: $showRestartAlert) {
+            Button("Restart Now", role: .destructive) {
+                // exit(0) is the accepted iOS pattern for forced app restart.
+                // The OS relaunches the app cleanly from scratch.
+                exit(0)
+            }
+            Button("Later", role: .cancel) {}
+        } message: {
+            Text("Performance mode changes take full effect after restarting Vela.")
         }
     }
 

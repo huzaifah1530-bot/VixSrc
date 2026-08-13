@@ -7,11 +7,15 @@ struct SearchResultsGrid: View {
     let store: AppStore
     let onSelect: (MediaItem) -> Void
 
-    // Two equal columns with 14pt gap — matches FavoritesView spacing.
-    private let columns = [
-        GridItem(.flexible(), spacing: 14),
-        GridItem(.flexible(), spacing: 14)
-    ]
+    @Environment(\.horizontalSizeClass) private var hSizeClass
+    @Environment(\.verticalSizeClass) private var vSizeClass
+
+    private var isLandscape: Bool { hSizeClass == .compact && vSizeClass == .compact }
+
+    private var columns: [GridItem] {
+        let count = isLandscape ? 4 : 2
+        return Array(repeating: GridItem(.flexible(), spacing: 14), count: count)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {

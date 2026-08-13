@@ -28,7 +28,10 @@ final class CatalogViewModel {
     private var searchGeneration = 0
 
     // Hero / currently previewed item on the home screen.
+    // Cycles through homeRows items every 10s; never shows recents.
     private(set) var hero: MediaItem?
+    private var heroCycleIndex = 0
+    private var heroCycleTask: Task<Void, Never>?
 
     // Player sheet. Presented from the root of the tab hierarchy (see
     // `RootView`) rather than from an individual tab, so opening a title
@@ -158,8 +161,10 @@ final class CatalogViewModel {
 
             if let first = homeRows.flatMap(\.items).first {
                 hero = first
+                heroCycleIndex = 0
             }
             homeLoaded = true
+            startHeroCycle()
         } catch {
             homeErrorMessage = error.localizedDescription
         }
@@ -170,12 +175,35 @@ final class CatalogViewModel {
     func previewHero(fromQueryPreview query: String) {
         let trimmed = query.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else {
-            hero = homeRows.flatMap(\.items).first
+            // Search cleared — restart the cycle from the current index
+            startHeroCycle()
             return
         }
+        // Pause cycle while user is actively searching
+        heroCycleTask?.cancel()
         guard FuzzySearch.compactForMatch(trimmed).count >= 3 else { return }
         let local = localFuzzyItems(query: trimmed, limit: 1).first
         if let local { hero = local }
+    }
+
+    // MARK: - Hero cycling
+
+    /// Cycles the hero card through all home items every 10 seconds.
+    /// Never includes recents — the LastWatchedCard handles those.
+    private func startHeroCycle() {
+        heroCycleTask?.cancel()
+        heroCycleTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 10_000_000_000) // 10s
+                guard !Task.isCancelled, let self else { return }
+                let allItems = homeRows.flatMap(\.items)
+                guard allItems.count > 1 else { return }
+                heroCycleIndex = (heroCycleIndex + 1) % allItems.count
+                withAnimation(.easeInOut(duration: 0.6)) {
+                    hero = allItems[heroCycleIndex]
+                }
+            }
+        }
     }
 
     // MARK: - Search
@@ -294,6 +322,7 @@ final class CatalogViewModel {
 
     @MainActor
     func open(_ item: MediaItem) async {
+        heroCycleTask?.cancel()
         selected = item
         hero = item
         tvDetails = nil
@@ -455,6 +484,7 @@ final class CatalogViewModel {
     func closePlayer() {
         isPlayerPresented = false
         currentStreamURL = nil
+        startHeroCycle()
     }
 
     // MARK: - Cast
