@@ -191,19 +191,61 @@ final class CatalogViewModel {
 
     /// Cycles the hero card through all home items every 10 seconds.
     /// Never includes recents — the LastWatchedCard handles those.
+    ///
+    /// Before advancing the hero, pre-warms the next item's backdrop image
+    /// into URLCache so AsyncImage finds it already loaded and shows no
+    /// placeholder flash. The cycle also pauses while the player sheet is
+    /// open — no point loading images the user cannot see.
     private func startHeroCycle() {
         heroCycleTask?.cancel()
         heroCycleTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 10_000_000_000) // 10s
                 guard !Task.isCancelled, let self else { return }
+
+                // Pause while the player is open — no visible hero, no wasted
+                // network and CPU for image pre-warming.
+                guard !isPlayerPresented else { continue }
+
                 let allItems = homeRows.flatMap(\.items)
-                guard allItems.count > 1 else { return }
-                heroCycleIndex = (heroCycleIndex + 1) % allItems.count
-                withAnimation(.easeInOut(duration: 0.6)) {
-                    hero = allItems[heroCycleIndex]
+                guard allItems.count > 1 else { continue }
+
+                let nextIndex = (heroCycleIndex + 1) % allItems.count
+                let nextItem = allItems[nextIndex]
+
+                // Pre-warm: fetch the backdrop into the shared URL cache so
+                // AsyncImage sees it as already loaded when the hero updates.
+                // Fire-and-forget — if it fails the image just loads normally.
+                if let url = nextItem.backdropURL {
+                    await prewarmImage(url: url)
+                }
+
+                guard !Task.isCancelled, !isPlayerPresented else { continue }
+
+                heroCycleIndex = nextIndex
+                withAnimation(.easeInOut(duration: 0.8)) {
+                    hero = nextItem
                 }
             }
+        }
+    }
+
+    /// Downloads `url` into `URLCache.shared` if not already cached.
+    /// Uses a low-priority background task so it doesn't compete with
+    /// foreground requests (TMDB API calls, episode loads, etc.).
+    private func prewarmImage(url: URL) async {
+        let request = URLRequest(url: url, cachePolicy: .returnCacheDataElseLoad)
+        // Already cached — nothing to do.
+        if URLCache.shared.cachedResponse(for: request) != nil { return }
+        var bgRequest = URLRequest(url: url)
+        bgRequest.networkServiceType = .background
+        do {
+            let (data, response) = try await URLSession.shared.data(for: bgRequest)
+            let cached = CachedURLResponse(response: response, data: data)
+            URLCache.shared.storeCachedResponse(cached, for: URLRequest(url: url))
+        } catch {
+            // Network failure is fine — cycle still advances, image loads
+            // normally with a brief placeholder.
         }
     }
 

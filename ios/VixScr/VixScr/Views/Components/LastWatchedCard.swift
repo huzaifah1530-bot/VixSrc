@@ -55,7 +55,11 @@ struct LastWatchedCard: View {
             .frame(maxWidth: .infinity)
             .background { cardBackground }
         }
-        .buttonStyle(.plain)
+        // Apple-style press feedback: scale down slightly on press, spring
+        // back on release. Matches the feel of cells in Apple TV, App Store,
+        // and Springboard. .plain keeps the default tap highlight suppressed
+        // so only the scale effect shows.
+        .buttonStyle(SpringPressButtonStyle())
     }
 
     // MARK: - Poster thumbnail
@@ -108,5 +112,18 @@ struct LastWatchedCard: View {
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .stroke(Color.white.opacity(0.14), lineWidth: 1)
             )
+    }
+}
+
+// MARK: - Reusable press style
+
+/// Scales down to 96% on press and springs back on release — the same
+/// tactile feedback Apple uses on App Store cards, Apple TV rows, and
+/// Springboard app icons. Feels immediate without being jarring.
+struct SpringPressButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.96 : 1.0)
+            .animation(.spring(response: 0.3, dampingFraction: 0.6), value: configuration.isPressed)
     }
 }

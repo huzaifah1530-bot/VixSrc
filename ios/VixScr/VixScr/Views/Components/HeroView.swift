@@ -35,6 +35,9 @@ struct HeroView: View {
                         .padding(.vertical, 5)
                         .vixGlass(.regular, cornerRadius: 999)
                         .padding(12)
+                        // Tag text fades with the rest of the card content.
+                        .id(item?.id)
+                        .transition(.opacity)
                 }
 
             VStack(alignment: .leading, spacing: 10) {
@@ -44,12 +47,19 @@ struct HeroView: View {
                     .lineLimit(2)
                     .minimumScaleFactor(0.8)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    // Each distinct item gets its own identity so the title
+                    // cross-fades rather than animating a text content change
+                    // (which would look like a scramble, not a dissolve).
+                    .id(item?.id)
+                    .transition(.opacity)
 
                 Text(item?.description ?? "Add your TMDB API key or read access token to browse the live TMDB catalogue.")
                     .font(.subheadline)
                     .foregroundStyle(.white.opacity(0.75))
                     .lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .id(item?.id)
+                    .transition(.opacity)
 
                 // Button row: Play stretches to fill, fav circle is fixed 50pt.
                 HStack(spacing: 12) {
@@ -81,13 +91,15 @@ struct HeroView: View {
                         FavoriteButton(isFavorite: isFavorite, action: onToggleFavorite)
                     }
                 }
-                // Constrain the button row so it never exceeds the card width.
                 .frame(maxWidth: .infinity)
             }
-            // Full-width constraint on the content area is what prevents the
-            // card from sizing to its content when real TMDB data loads in.
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(16)
+            // Animate the whole text+button area as a unit when item changes.
+            // easeInOut(0.8) matches the backdrop dissolve duration so both
+            // layers finish at the same time — feels like a single cohesive
+            // transition rather than backdrop and text finishing separately.
+            .animation(.easeInOut(duration: 0.8), value: item?.id)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(white: 0.08))
@@ -105,10 +117,26 @@ struct HeroView: View {
             AsyncImage(url: url) { phase in
                 if let image = phase.image {
                     image.resizable().scaledToFill()
+                        // Fade the image in once loaded. Using .transition here
+                        // rather than on the AsyncImage itself means only the
+                        // image pixels dissolve — the card shape and layout
+                        // never re-render, so the corner-radius / clip never
+                        // flickers during a hero cycle.
+                        .transition(.opacity)
                 } else {
+                    // Placeholder shown while loading or on failure. Stable
+                    // dark surface — never transparent, so no shape flash.
                     Color(white: 0.04)
                 }
             }
+            // Give each URL its own identity. When the hero cycles, SwiftUI
+            // replaces the old AsyncImage with a new one, animating the
+            // cross-dissolve between the cached outgoing image and the
+            // incoming one — only the image layer dissolves, the card
+            // container stays put.
+            .id(url)
+            .transition(.opacity)
+            .animation(.easeInOut(duration: 0.8), value: url)
         } else {
             Color(white: 0.04)
         }

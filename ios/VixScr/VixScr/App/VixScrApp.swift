@@ -43,9 +43,17 @@ struct VelaApp: App {
 
                 if isLaunching {
                     LaunchView()
-                        .transition(.opacity)
                 }
             }
+            // Drive the launch fade entirely from the view tree.
+            // withAnimation() inside a .task on an App struct is not
+            // reliable — SwiftUI does not guarantee animated @State
+            // propagation from App-level tasks into child views.
+            // .animation(value:) on the ZStack is the correct pattern:
+            // when isLaunching flips to false, SwiftUI evaluates the ZStack
+            // body inside that animation context, LaunchView is removed, and
+            // its implicit .opacity transition fires cleanly.
+            .animation(.easeOut(duration: 0.5), value: isLaunching)
             // Propagates Performance / Ultra Performance mode to every glass
             // surface, the iOS analogue of toggling `body.perf-mode` /
             // `body.ultra-perf-mode` in index.html.
@@ -55,13 +63,11 @@ struct VelaApp: App {
             )
             .task {
                 guard isLaunching else { return }
-                // Wait for the first render pass to settle, then fade out
-                // the splash. 400ms total feels instant on fast devices
-                // while still giving slow devices time to draw the UI.
+                // Wait for the first render pass to settle before fading out.
                 try? await Task.sleep(nanoseconds: 400_000_000)
-                withAnimation(.easeOut(duration: 0.35)) {
-                    isLaunching = false
-                }
+                // Plain assignment — the ZStack's .animation(value:) above
+                // handles the easeOut transition automatically.
+                isLaunching = false
             }
             .onOpenURL { url in
                 handleDeepLink(url)

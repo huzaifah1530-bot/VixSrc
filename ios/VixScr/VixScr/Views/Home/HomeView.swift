@@ -157,9 +157,16 @@ struct HomeView: View {
 
     @ViewBuilder
     private func portraitContent(viewModel: CatalogViewModel) -> some View {
+        // Combine hero id + last-watched id into a single value so one
+        // animation context drives all card transitions. Two competing
+        // .animation(value:) modifiers on the same container fight each
+        // other and produce choppiness — one is always enough.
+        let animationAnchor = (viewModel.hero?.id ?? "") + (store.sortedRecents.first?.id ?? "")
+
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 28, pinnedViews: []) {
+            VStack(alignment: .leading, spacing: 0) {
                 if searchText.trimmingCharacters(in: .whitespaces).isEmpty {
+                    // Hero card — HeroView owns its own internal cross-fade.
                     HeroView(
                         item: viewModel.hero,
                         hasCredential: !store.credential.trimmingCharacters(in: .whitespaces).isEmpty,
@@ -171,14 +178,12 @@ struct HomeView: View {
                     .containerRelativeFrame(.horizontal) { width, _ in width - 40 }
                     .padding(.horizontal, 20)
                     .padding(.top, 8)
-                    // Cross-fade the hero content when the featured item changes.
-                    .animation(.easeInOut(duration: 0.35), value: viewModel.hero?.id)
 
-                    // LastWatchedCard — only shown when the most recent item is
-                    // not already the hero. When tapped it becomes the hero,
-                    // which removes this card; the .transition drives the
-                    // slide-up-and-fade-out, and the LazyVStack animation
-                    // springs all rows below upward at the same time.
+                    // LastWatchedCard — only visible when the most-recent item
+                    // is not already the hero. When tapped, open() sets hero to
+                    // that item, flipping this condition to false and removing
+                    // the card. The VStack (not LazyVStack) fully tracks the
+                    // height change so the collapse is smooth.
                     if let lastWatched = store.sortedRecents.first,
                        lastWatched.id != viewModel.hero?.id {
                         LastWatchedCard(
@@ -191,29 +196,39 @@ struct HomeView: View {
                         )
                         .containerRelativeFrame(.horizontal) { width, _ in width - 40 }
                         .padding(.horizontal, 20)
+                        .padding(.top, 12)
+                        // Apple-style card dismissal: fade + slight shrink.
+                        // .move(edge: .top) in an unclipped container causes
+                        // the card to visibly overlap the hero above it during
+                        // removal — looks broken. Opacity + scale is what
+                        // Apple Music and Apple TV use for card dismissal.
                         .transition(
                             .asymmetric(
-                                insertion: .move(edge: .bottom).combined(with: .opacity),
-                                removal: .move(edge: .top).combined(with: .opacity)
+                                insertion: .opacity.combined(with: .scale(scale: 0.96, anchor: .top)),
+                                removal:  .opacity.combined(with: .scale(scale: 0.96, anchor: .top))
                             )
                         )
                     }
 
                     FilterBar(selected: filterBinding(viewModel: viewModel))
                         .padding(.horizontal, 20)
+                        .padding(.top, 16)
                 }
-                statusOrRows(viewModel: viewModel)
+
+                // Rows sit in a LazyVStack inside the outer VStack so they
+                // still lazy-load but the animated top section is fully tracked.
+                LazyVStack(alignment: .leading, spacing: 28) {
+                    statusOrRows(viewModel: viewModel)
+                }
+                .padding(.top, 16)
             }
             .padding(.bottom, 40)
             .padding(.top, 12)
-            // Drive the card removal transition: animate when either the
-            // most-recent item changes (new watch) OR when the hero changes
-            // (user tapped the card, making it the hero — which causes the
-            // lastWatched.id == hero.id condition to flip and removes the card).
-            .animation(.spring(response: 0.42, dampingFraction: 0.78),
-                       value: store.sortedRecents.first?.id)
-            .animation(.spring(response: 0.42, dampingFraction: 0.78),
-                       value: viewModel.hero?.id)
+            // Single animation context. iOS spring with a slightly longer
+            // response (0.5) matches Apple's "standard" interactive spring
+            // used throughout SpringBoard, Springboard, and SwiftUI sheets.
+            .animation(.spring(response: 0.5, dampingFraction: 0.82),
+                       value: animationAnchor)
         }
         .overlay(alignment: .bottom) {
             if let toast = viewModel.toastMessage {
