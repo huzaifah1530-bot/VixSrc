@@ -11,10 +11,10 @@ struct MediaRowView: View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(row.title)
-                    .font(.system(size: 22, weight: .black))
+                    .font(.title3.weight(.bold))
                     .foregroundStyle(.white)
                 Text(row.subtitle)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.footnote.weight(.medium))
                     .foregroundStyle(.white.opacity(0.5))
             }
             .padding(.horizontal, 20)

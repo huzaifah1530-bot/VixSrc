@@ -1,77 +1,56 @@
 import SwiftUI
 
-/// Mirrors `#episodeHub` — season chips, an episode search field, and the
-/// scrolling list of episode rows.
+/// Season picker (native `Menu`), an episode search field, and the list of
+/// episode rows for the selected season.
 struct EpisodeHub: View {
     @Bindable var viewModel: CatalogViewModel
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("EPISODES")
-                        .font(.system(size: 11, weight: .black))
-                        .tracking(2)
-                        .foregroundStyle(.white.opacity(0.45))
-                    Text("Modern Season Hub")
-                        .font(.system(size: 18, weight: .black))
-                        .foregroundStyle(.white)
-                }
+                Text("Episodes")
+                    .font(.title3.weight(.bold))
+                    .foregroundStyle(.primary)
                 Spacer()
-                Image(systemName: "list.bullet")
-                    .foregroundStyle(.white.opacity(0.55))
-            }
-
-            if let details = viewModel.tvDetails {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
+                if let details = viewModel.tvDetails, let selectedSeason = viewModel.selectedSeason {
+                    Menu {
                         ForEach(details.usableSeasons) { season in
-                            let isActive = viewModel.selectedSeason?.seasonNumber == season.seasonNumber
-                            Button("Season \(season.seasonNumber)") {
+                            Button {
                                 Task { await viewModel.selectSeason(season.seasonNumber) }
+                            } label: {
+                                if season.seasonNumber == selectedSeason.seasonNumber {
+                                    Label("Season \(season.seasonNumber)", systemImage: "checkmark")
+                                } else {
+                                    Text("Season \(season.seasonNumber)")
+                                }
                             }
-                            .font(.system(size: 13, weight: .black))
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 12)
-                            .foregroundStyle(isActive ? .black : .white)
-                            .background(isActive ? Color.white : Color.white.opacity(0.1), in: Capsule())
-                            .overlay(Capsule().stroke(Color.white.opacity(isActive ? 0 : 0.2), lineWidth: 1))
                         }
+                    } label: {
+                        Label("Season \(selectedSeason.seasonNumber)", systemImage: "chevron.up.chevron.down")
+                            .font(.subheadline.weight(.semibold))
                     }
                 }
             }
 
             HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass").foregroundStyle(.white.opacity(0.45))
-                TextField("", text: $viewModel.episodeQuery, prompt: Text("Find episode in this season...").foregroundStyle(.white.opacity(0.35)))
-                    .foregroundStyle(.white)
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("Find episode in this season", text: $viewModel.episodeQuery)
             }
             .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            .background(Color.white.opacity(0.1), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.white.opacity(0.2), lineWidth: 1))
+            .padding(.vertical, 10)
+            .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
 
             if viewModel.isLoadingEpisodes {
-                Text("Loading episodes...")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.6))
-                    .padding(14)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                HStack {
+                    Spacer()
+                    ProgressView("Loading episodes")
+                    Spacer()
+                }
+                .padding(.vertical, 20)
             } else if let error = viewModel.episodeErrorMessage {
-                Text(error)
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.6))
-                    .padding(14)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                ContentUnavailableView("Couldn't load episodes", systemImage: "exclamationmark.triangle", description: Text(error))
             } else if viewModel.filteredEpisodes.isEmpty {
-                Text("No episodes match that search.")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.6))
-                    .padding(14)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                ContentUnavailableView.search
             } else {
                 VStack(spacing: 8) {
                     ForEach(viewModel.filteredEpisodes) { episode in
@@ -85,11 +64,10 @@ struct EpisodeHub: View {
                 }
             }
         }
-        .padding(16)
-        .vixGlass(.regular, cornerRadius: 28)
     }
 }
 
+/// Mirrors `#episodeHub`'s individual episode rows.
 private struct EpisodeRow: View {
     let episode: Episode
     let isActive: Bool
@@ -101,40 +79,38 @@ private struct EpisodeRow: View {
                 stillImage
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
-                        Text("EPISODE \(episode.episodeNumber)")
-                            .font(.system(size: 10, weight: .black))
-                            .tracking(1)
-                            .foregroundStyle(isActive ? .black.opacity(0.55) : .white.opacity(0.45))
+                        Text("Episode \(episode.episodeNumber)")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(isActive ? .black.opacity(0.6) : .secondary)
                         Spacer()
                         if let runtime = episode.runtime {
                             Text("\(runtime)m")
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundStyle(isActive ? .black.opacity(0.6) : .white.opacity(0.55))
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(isActive ? .black.opacity(0.6) : .secondary)
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 3)
-                                .background((isActive ? Color.black.opacity(0.06) : Color.white.opacity(0.1)), in: Capsule())
+                                .background((isActive ? Color.black.opacity(0.08) : Color.white.opacity(0.1)), in: Capsule())
                         }
                     }
                     Text(episode.name ?? "Untitled episode")
-                        .font(.system(size: 14, weight: .black))
-                        .foregroundStyle(isActive ? .black : .white)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(isActive ? .black : .primary)
                         .lineLimit(1)
                     Text(episode.overview ?? "No episode overview from TMDB.")
-                        .font(.system(size: 12))
-                        .foregroundStyle(isActive ? .black.opacity(0.55) : .white.opacity(0.5))
+                        .font(.footnote)
+                        .foregroundStyle(isActive ? .black.opacity(0.6) : .secondary)
                         .lineLimit(2)
                 }
             }
             .padding(10)
-            .background(isActive ? Color.white : Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(isActive ? Color.white : Color.white.opacity(0.16), lineWidth: 1))
+            .background(isActive ? Color.white : Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
         .buttonStyle(.plain)
     }
 
     @ViewBuilder
     private var stillImage: some View {
-        RoundedRectangle(cornerRadius: 12, style: .continuous)
+        RoundedRectangle(cornerRadius: 10, style: .continuous)
             .fill(Color.white.opacity(0.1))
             .frame(width: 96, height: 64)
             .overlay {
@@ -142,13 +118,12 @@ private struct EpisodeRow: View {
                     AsyncImage(url: url) { phase in
                         if let image = phase.image {
                             image.resizable().scaledToFill()
-                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                         }
                     }
                 } else {
-                    Text("NO STILL")
-                        .font(.system(size: 9, weight: .black))
-                        .foregroundStyle(.white.opacity(0.35))
+                    Image(systemName: "photo")
+                        .foregroundStyle(.tertiary)
                 }
             }
     }
