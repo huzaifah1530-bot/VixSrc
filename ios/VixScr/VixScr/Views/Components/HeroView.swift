@@ -41,51 +41,65 @@ struct HeroView: View {
                     .foregroundStyle(.white.opacity(0.78))
                     .lineLimit(3)
 
-                HStack(spacing: 10) {
-                    if item != nil {
-                        Button(action: onPlay) {
-                            Label("Play", systemImage: "play.fill")
-                                .font(.system(size: 14, weight: .black))
-                                .padding(.horizontal, 20)
-                                .padding(.vertical, 12)
+                // Horizontally scrollable instead of a plain HStack: on
+                // narrower screens (SE-size phones, or landscape where
+                // height is short but this row's *ideal* width can still
+                // exceed it) a fixed HStack does not wrap and instead grows
+                // past the available width, which forced this whole hero
+                // block wider than the screen and clipped its edges.
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        if item != nil {
+                            Button(action: onPlay) {
+                                Label("Play", systemImage: "play.fill")
+                                    .font(.system(size: 14, weight: .black))
+                                    .padding(.horizontal, 20)
+                                    .padding(.vertical, 12)
+                            }
+                            .foregroundStyle(.black)
+                            .background(.white, in: Capsule())
                         }
-                        .foregroundStyle(.black)
-                        .background(.white, in: Capsule())
-                    }
 
-                    if !hasCredential {
-                        Button(action: onSetup) {
-                            Label("Add TMDB Key", systemImage: "key.fill")
-                                .font(.system(size: 14, weight: .black))
-                                .padding(.horizontal, 20)
-                                .padding(.vertical, 12)
+                        if !hasCredential {
+                            Button(action: onSetup) {
+                                Label("Add TMDB Key", systemImage: "key.fill")
+                                    .font(.system(size: 14, weight: .black))
+                                    .padding(.horizontal, 20)
+                                    .padding(.vertical, 12)
+                            }
+                            .foregroundStyle(.black)
+                            .background(.white, in: Capsule())
                         }
-                        .foregroundStyle(.black)
-                        .background(.white, in: Capsule())
-                    }
 
-                    Button(action: onBrowse) {
-                        Label("Browse", systemImage: "rectangle.grid.1x3.fill")
-                            .font(.system(size: 14, weight: .black))
-                            .padding(.horizontal, 20)
-                            .padding(.vertical, 12)
-                    }
-                    .foregroundStyle(.white)
-                    .vixGlass(.regular, cornerRadius: 999)
-
-                    if item != nil {
-                        Button(action: onToggleFavorite) {
-                            Label(isFavorite ? "Favourited" : "Favourite", systemImage: isFavorite ? "heart.fill" : "heart")
+                        Button(action: onBrowse) {
+                            Label("Browse", systemImage: "rectangle.grid.1x3.fill")
                                 .font(.system(size: 14, weight: .black))
                                 .padding(.horizontal, 20)
                                 .padding(.vertical, 12)
                         }
                         .foregroundStyle(.white)
                         .vixGlass(.regular, cornerRadius: 999)
+
+                        if item != nil {
+                            Button(action: onToggleFavorite) {
+                                Label(isFavorite ? "Favourited" : "Favourite", systemImage: isFavorite ? "heart.fill" : "heart")
+                                    .font(.system(size: 14, weight: .black))
+                                    .padding(.horizontal, 20)
+                                    .padding(.vertical, 12)
+                            }
+                            .foregroundStyle(.white)
+                            .vixGlass(.regular, cornerRadius: 999)
+                        }
                     }
                 }
             }
             .padding(24)
+            // Clamp to the available width explicitly. Without this, an
+            // oversized child (like the button row above, before it was
+            // scrollable) can still push the whole VStack's ideal width
+            // past the screen, since ZStack sizes itself to the largest
+            // child rather than to its parent.
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(height: 460)
         .clipped()

@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Mirrors `#searchOverlay` — recent search chips + live/fuzzy result rows,
 /// shown below the search field while it has focus or text.
@@ -12,6 +13,12 @@ struct SearchOverlay: View {
     var onClearRecents: () -> Void
 
     var body: some View {
+        // Everything below the sticky header scrolls internally and is
+        // capped to a fraction of the screen height. Previously this was a
+        // plain VStack with no size limit: with up to 8 results it could be
+        // 600pt+ tall, which overflowed off-screen in landscape (where the
+        // whole display is often shorter than that) with no way to scroll
+        // or reach anything below it.
         VStack(alignment: .leading, spacing: 10) {
             Text(statusText.uppercased())
                 .font(.system(size: 11, weight: .black))
@@ -20,76 +27,85 @@ struct SearchOverlay: View {
                 .padding(.horizontal, 14)
                 .padding(.top, 12)
 
-            if !recentSearches.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text("RECENT SEARCHES")
-                            .font(.system(size: 10, weight: .black))
-                            .tracking(2)
-                            .foregroundStyle(.white.opacity(0.38))
-                        Spacer()
-                        Button("Clear", action: onClearRecents)
-                            .font(.system(size: 10, weight: .black))
-                            .foregroundStyle(.white.opacity(0.55))
-                    }
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            ForEach(recentSearches, id: \.self) { search in
-                                Button(search) { onSelectRecent(search) }
-                                    .font(.system(size: 12, weight: .black))
-                                    .foregroundStyle(.white.opacity(0.75))
-                                    .padding(.horizontal, 14)
-                                    .padding(.vertical, 10)
-                                    .background(Color.white.opacity(0.08), in: Capsule())
-                                    .overlay(Capsule().stroke(Color.white.opacity(0.16), lineWidth: 1))
-                            }
-                        }
-                    }
-                }
-                .padding(.horizontal, 14)
-            }
-
-            if items.isEmpty {
-                Text(query.trimmingCharacters(in: .whitespaces).isEmpty
-                     ? "Start typing, or pick a recent search above."
-                     : "No close TMDB matches yet. Try removing extra words, or adding a year like \u{201c}Batman 2022\u{201d}.")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.55))
-                    .padding(14)
-            } else {
-                VStack(spacing: 8) {
-                    ForEach(items.prefix(8)) { item in
-                        Button { onSelectItem(item) } label: {
-                            HStack(spacing: 12) {
-                                posterThumb(for: item)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(item.title)
-                                        .font(.system(size: 14, weight: .black))
-                                        .foregroundStyle(.white)
-                                        .lineLimit(1)
-                                    Text(item.description)
-                                        .font(.system(size: 12))
-                                        .foregroundStyle(.white.opacity(0.55))
-                                        .lineLimit(2)
-                                }
-                                Spacer()
-                                Text(item.typeLabel.uppercased())
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    if !recentSearches.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text("RECENT SEARCHES")
                                     .font(.system(size: 10, weight: .black))
-                                    .foregroundStyle(.white.opacity(0.6))
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 5)
-                                    .background(Color.white.opacity(0.1), in: Capsule())
+                                    .tracking(2)
+                                    .foregroundStyle(.white.opacity(0.38))
+                                Spacer()
+                                Button("Clear", action: onClearRecents)
+                                    .font(.system(size: 10, weight: .black))
+                                    .foregroundStyle(.white.opacity(0.55))
                             }
-                            .padding(8)
-                            .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 8) {
+                                    ForEach(recentSearches, id: \.self) { search in
+                                        Button(search) { onSelectRecent(search) }
+                                            .font(.system(size: 12, weight: .black))
+                                            .foregroundStyle(.white.opacity(0.75))
+                                            .padding(.horizontal, 14)
+                                            .padding(.vertical, 10)
+                                            .background(Color.white.opacity(0.08), in: Capsule())
+                                            .overlay(Capsule().stroke(Color.white.opacity(0.16), lineWidth: 1))
+                                    }
+                                }
+                            }
                         }
-                        .buttonStyle(.plain)
+                        .padding(.horizontal, 14)
+                    }
+
+                    if items.isEmpty {
+                        Text(query.trimmingCharacters(in: .whitespaces).isEmpty
+                             ? "Start typing, or pick a recent search above."
+                             : "No close TMDB matches yet. Try removing extra words, or adding a year like \u{201c}Batman 2022\u{201d}.")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.55))
+                            .padding(14)
+                    } else {
+                        VStack(spacing: 8) {
+                            ForEach(items.prefix(8)) { item in
+                                Button { onSelectItem(item) } label: {
+                                    HStack(spacing: 12) {
+                                        posterThumb(for: item)
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(item.title)
+                                                .font(.system(size: 14, weight: .black))
+                                                .foregroundStyle(.white)
+                                                .lineLimit(1)
+                                            Text(item.description)
+                                                .font(.system(size: 12))
+                                                .foregroundStyle(.white.opacity(0.55))
+                                                .lineLimit(2)
+                                        }
+                                        Spacer(minLength: 8)
+                                        Text(item.typeLabel.uppercased())
+                                            .font(.system(size: 10, weight: .black))
+                                            .foregroundStyle(.white.opacity(0.6))
+                                            .padding(.horizontal, 10)
+                                            .padding(.vertical, 5)
+                                            .background(Color.white.opacity(0.1), in: Capsule())
+                                            .fixedSize()
+                                    }
+                                    .padding(8)
+                                    .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.horizontal, 14)
                     }
                 }
-                .padding(.horizontal, 14)
+                .padding(.bottom, 14)
             }
         }
-        .padding(.bottom, 14)
+        // Cap height to a share of the screen rather than letting content
+        // dictate it, and never exceed a comfortable fixed max on large
+        // screens/landscape.
+        .frame(maxHeight: min(UIScreen.main.bounds.height * 0.6, 420))
         .vixGlass(.strong, cornerRadius: 28)
     }
 
