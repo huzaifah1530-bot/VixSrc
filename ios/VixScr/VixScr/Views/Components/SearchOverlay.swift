@@ -34,7 +34,10 @@ struct SearchOverlay: View {
     @State private var contentHeight: CGFloat = 0
 
     private var cappedHeight: CGFloat {
-        let cap = min(UIScreen.main.bounds.height * 0.6, 420)
+        // Uses the real window bounds (not `UIScreen.main.bounds`, which
+        // reports the physical device screen and is wrong in iPad Split
+        // View/Stage Manager where the app's window is smaller).
+        let cap = min(HeroView.windowBounds.height * 0.6, 420)
         return min(contentHeight, cap)
     }
 

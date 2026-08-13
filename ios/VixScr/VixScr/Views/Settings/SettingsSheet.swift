@@ -131,9 +131,12 @@ struct SettingsSheet: View {
         Button(title.uppercased(), action: action)
             .font(.system(size: 11, weight: .black))
             .padding(.horizontal, 14)
-            .padding(.vertical, 8)
             .foregroundStyle(isActive ? .black : .white.opacity(0.7))
+            // 44pt minimum tap target (Apple's documented minimum), while
+            // the pill itself still looks visually compact.
+            .frame(minHeight: 44)
             .background(isActive ? Color.white : Color.clear, in: Capsule())
+            .accessibilityAddTraits(isActive ? .isSelected : [])
     }
 
     private var searchHistorySection: some View {

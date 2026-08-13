@@ -47,6 +47,9 @@ struct PlayerSheet: View {
                     } label: {
                         Image(systemName: "xmark")
                             .foregroundStyle(.white)
+                            // 44x44 minimum tap target.
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
                     }
                     .accessibilityLabel("Close")
                 }
