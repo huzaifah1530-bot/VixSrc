@@ -18,8 +18,21 @@ struct StreamServer: Codable, Identifiable, Hashable {
     }
 
     static let defaults: [StreamServer] = [
-        StreamServer(name: "VixSrc", base: "https://vixsrc.to"),
-        StreamServer(name: "ApiPlayer", base: "https://apiplayer.ru/embed")
+        StreamServer(name: "VixSrc",       base: "https://vixsrc.to"),
+        StreamServer(name: "VidLink",      base: "https://vidlink.pro"),
+        StreamServer(name: "VidSrc.mov",   base: "https://vidsrc.mov/embed"),
+        StreamServer(name: "VidSrc.sbs",   base: "https://vidsrc.sbs/embed"),
+        StreamServer(name: "VidSrc.wiki",  base: "https://vidsrc.wiki/embed"),
+        StreamServer(name: "2Embed",       base: "https://www.2embed.stream/embed"),
+        StreamServer(name: "2Embed.cc",    base: "https://www.2embed.cc/embed"),
+        StreamServer(name: "MoviesApi",    base: "https://moviesapi.to"),
+        StreamServer(name: "AutoEmbed",    base: "https://autoembed.co/movie/tmdb"),
+        StreamServer(name: "NontonGo",     base: "https://nontongo.win/embed"),
+        StreamServer(name: "VidPhantom",   base: "https://vidphantom.com"),
+        StreamServer(name: "VidNest",      base: "https://vidnest.fun"),
+        StreamServer(name: "HnEmbed",      base: "https://hnembed.com/embed"),
+        StreamServer(name: "ApiPlayer",    base: "https://apiplayer.ru/embed"),
+        StreamServer(name: "MovCloud",     base: "https://movcloud.net/embed"),
     ]
 }
 
