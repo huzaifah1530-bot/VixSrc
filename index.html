@@ -1,0 +1,3045 @@
+<!DOCTYPE html>
+
+<html class="bg-black text-white" lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0, viewport-fit=cover" name="viewport"/>
+<meta content="#000000" name="theme-color"/>
+<title>vixsrc TMDB Live</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+<script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['-apple-system','BlinkMacSystemFont','SF Pro Display','SF Pro Text','Inter','Segoe UI','system-ui','sans-serif']
+          },
+          boxShadow: {
+            glass: '0 8px 32px rgba(0,0,0,.37)',
+            glow: '0 0 38px rgba(255,255,255,.13)'
+          }
+        }
+      }
+    };
+  </script>
+<style>
+    * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      min-height: 100vh;
+      overflow-x: hidden;
+      background:
+        radial-gradient(circle at 18% 0%, rgba(255,255,255,.12), transparent 28%),
+        radial-gradient(circle at 78% 12%, rgba(115,115,255,.13), transparent 30%),
+        linear-gradient(180deg, #030303 0%, #000 48%, #050505 100%);
+    }
+    button, input { font: inherit; }
+    .safe-top { padding-top: env(safe-area-inset-top); }
+    .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+    .scrollbar-none { scrollbar-width: none; -ms-overflow-style: none; }
+    .scrollbar-none::-webkit-scrollbar { display: none; }
+    .glass {
+      background: linear-gradient(135deg, rgba(255,255,255,.18), rgba(255,255,255,.045)), rgba(8,8,8,.58);
+      border: 1px solid rgba(255,255,255,.20);
+      box-shadow: 0 8px 32px rgba(0,0,0,.37), inset 0 1px 0 rgba(255,255,255,.15);
+      backdrop-filter: blur(32px) saturate(180%);
+      -webkit-backdrop-filter: blur(32px) saturate(180%);
+    }
+    .glass-strong {
+      background: linear-gradient(145deg, rgba(255,255,255,.23), rgba(255,255,255,.055) 46%, rgba(255,255,255,.13)), rgba(6,6,6,.78);
+      border: 1px solid rgba(255,255,255,.23);
+      box-shadow: 0 8px 32px rgba(0,0,0,.37), inset 0 1px 0 rgba(255,255,255,.22), inset 0 -1px 0 rgba(255,255,255,.08);
+      backdrop-filter: blur(42px) saturate(190%);
+      -webkit-backdrop-filter: blur(42px) saturate(190%);
+    }
+    .text-shadow { text-shadow: 0 4px 34px rgba(0,0,0,.95), 0 1px 2px rgba(0,0,0,.8); }
+    .line-clamp-1, .line-clamp-2, .line-clamp-3 { display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; }
+    .line-clamp-1 { -webkit-line-clamp: 1; }
+    .line-clamp-2 { -webkit-line-clamp: 2; }
+    .line-clamp-3 { -webkit-line-clamp: 3; }
+    .poster-card::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      z-index: 2;
+      pointer-events: none;
+      opacity: 0;
+      background: linear-gradient(115deg, rgba(255,255,255,.24), transparent 30%, transparent 64%, rgba(255,255,255,.08)), linear-gradient(to top, rgba(0,0,0,.88), transparent 52%);
+      transition: opacity .28s ease;
+    }
+    .poster-card:hover::before, .poster-card:focus-visible::before { opacity: 1; }
+    .modal-open { overflow: hidden; }
+    .player-shell { aspect-ratio: 16 / 9; }
+    .backdrop-blur-ultra { backdrop-filter: blur(52px) saturate(200%); -webkit-backdrop-filter: blur(52px) saturate(200%); }
+
+    .filter-chip.is-active {
+      background: #fff;
+      color: #000;
+      border-color: rgba(255,255,255,.95);
+    }
+    .favorite-glow {
+      box-shadow: 0 0 24px rgba(255,255,255,.16), inset 0 1px 0 rgba(255,255,255,.22);
+    }
+    .poster-favorite-badge {
+      position: absolute;
+      right: 10px;
+      top: 10px;
+      z-index: 12;
+      display: grid;
+      width: 30px;
+      height: 30px;
+      place-items: center;
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,.22);
+      background: rgba(0,0,0,.48);
+      backdrop-filter: blur(18px) saturate(160%);
+      -webkit-backdrop-filter: blur(18px) saturate(160%);
+    }
+    .resume-ribbon {
+      position: absolute;
+      left: 10px;
+      right: 10px;
+      bottom: 10px;
+      z-index: 13;
+      border: 1px solid rgba(255,255,255,.18);
+      border-radius: 999px;
+      padding: 6px 9px;
+      background: rgba(255,255,255,.13);
+      color: rgba(255,255,255,.86);
+      font-size: 10px;
+      font-weight: 900;
+      letter-spacing: .13em;
+      text-transform: uppercase;
+      backdrop-filter: blur(16px) saturate(160%);
+      -webkit-backdrop-filter: blur(16px) saturate(160%);
+    }
+
+    .tv-notice-card {
+      position: relative;
+      overflow: hidden;
+      border: 1px solid rgba(255,255,255,.18);
+      background:
+        linear-gradient(135deg, rgba(255,255,255,.16), rgba(255,255,255,.04)),
+        rgba(255,255,255,.075);
+      box-shadow: 0 8px 32px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.16);
+      backdrop-filter: blur(32px) saturate(180%);
+      -webkit-backdrop-filter: blur(32px) saturate(180%);
+    }
+    .ios-switch {
+      width: 68px;
+      height: 38px;
+      padding: 3px;
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,.22);
+      background: linear-gradient(145deg, rgba(255,255,255,.13), rgba(255,255,255,.045)), rgba(255,255,255,.08);
+      box-shadow: 0 8px 32px rgba(0,0,0,.32), inset 0 1px 0 rgba(255,255,255,.20);
+      backdrop-filter: blur(28px) saturate(180%);
+      -webkit-backdrop-filter: blur(28px) saturate(180%);
+    }
+    .ios-switch-knob {
+      width: 30px;
+      height: 30px;
+      border-radius: 999px;
+      background: linear-gradient(145deg, #fff, rgba(255,255,255,.78));
+      box-shadow: 0 5px 16px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.9);
+      transform: translateX(0);
+      transition: transform .28s cubic-bezier(.2,.9,.2,1), box-shadow .28s ease;
+    }
+    .ios-switch.is-on {
+      background: linear-gradient(145deg, rgba(255,255,255,.96), rgba(255,255,255,.62));
+      border-color: rgba(255,255,255,.85);
+    }
+    .ios-switch.is-on .ios-switch-knob {
+      transform: translateX(30px);
+      background: linear-gradient(145deg, #050505, #1b1b1b);
+      box-shadow: 0 5px 16px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.18);
+    }
+    .settings-option {
+      border: 1px solid rgba(255,255,255,.16);
+      background: linear-gradient(135deg, rgba(255,255,255,.12), rgba(255,255,255,.04)), rgba(255,255,255,.055);
+      box-shadow: 0 8px 28px rgba(0,0,0,.24), inset 0 1px 0 rgba(255,255,255,.13);
+      backdrop-filter: blur(28px) saturate(180%);
+      -webkit-backdrop-filter: blur(28px) saturate(180%);
+    }
+    .segmented-control {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,.16);
+      padding: 4px;
+      background: rgba(255,255,255,.075);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.11);
+    }
+    .segment-button.is-active {
+      background: #fff;
+      color: #000;
+      border-color: rgba(255,255,255,.95);
+      box-shadow: 0 5px 18px rgba(0,0,0,.28);
+    }
+    .recent-search-chip {
+      border: 1px solid rgba(255,255,255,.16);
+      background: rgba(255,255,255,.08);
+      box-shadow: 0 8px 24px rgba(0,0,0,.20), inset 0 1px 0 rgba(255,255,255,.10);
+      backdrop-filter: blur(18px) saturate(160%);
+      -webkit-backdrop-filter: blur(18px) saturate(160%);
+    }
+        .server-btn:disabled {
+      cursor: not-allowed;
+      pointer-events: none;
+    }
+    .server-btn.is-active:disabled {
+      opacity: 0.6;
+      background: rgba(255,255,255,0.15);
+      color: rgba(255,255,255,0.7);
+      border-color: rgba(255,255,255,0.3);
+    }
+    
+    /* ── Performance Mode: Zero Transparency ── */
+    body.perf-mode,
+    body.perf-mode .glass,
+    body.perf-mode .glass-strong,
+    body.perf-mode .settings-option,
+    body.perf-mode .tv-notice-card,
+    body.perf-mode .recent-search-chip,
+    body.perf-mode .ios-switch,
+    body.perf-mode nav,
+    body.perf-mode header nav,
+    body.perf-mode #searchOverlay > div,
+    body.perf-mode input,
+    body.perf-mode button[class*="glass"],
+    body.perf-mode .poster-card,
+    body.perf-mode .season-chip,
+    body.perf-mode .episode-button,
+    body.perf-mode .filter-chip,
+    body.perf-mode .segment-button,
+    body.perf-mode .server-btn,
+    body.perf-mode #toast,
+    body.perf-mode .poster-favorite-badge,
+    body.perf-mode .resume-ribbon,
+    body.perf-mode .filter-chip.is-active,
+    body.perf-mode .segment-button.is-active,
+    body.perf-mode .season-chip.is-active,
+    body.perf-mode .episode-button.is-active,
+    body.perf-mode .server-btn.is-active,
+    body.perf-mode .favorite-glow,
+    body.perf-mode #heroTag,
+    body.perf-mode #heroBrowseButton,
+    body.perf-mode #heroFavoriteButton,
+    body.perf-mode #heroSetupButton,
+    body.perf-mode #heroPlayButton,
+    body.perf-mode #refreshButton,
+    body.perf-mode #resultCount,
+    body.perf-mode #clearSearchButton,
+    body.perf-mode #settingsButton,
+    body.perf-mode #homeButton,
+    body.perf-mode #closeModalButton,
+    body.perf-mode #closeSettingsButton,
+    body.perf-mode #reloadPlayerButton,
+    body.perf-mode #resetPlayerButton,
+    body.perf-mode #copyEmbedButton,
+    body.perf-mode #favoriteButton,
+    body.perf-mode #saveCredentialButton,
+    body.perf-mode #cancelSettingsButton,
+    body.perf-mode #clearCredentialButton,
+    body.perf-mode #toggleCredentialVisibility,
+    body.perf-mode #openSettingsFromError,
+    body.perf-mode .recent-search-chip,
+    body.perf-mode #serverSelector .glass,
+    body.perf-mode .tv-notice-card,
+    body.perf-mode #episodeLoading,
+    body.perf-mode .rounded-2xl[class*="bg-white"],
+    body.perf-mode .rounded-full[class*="bg-white"],
+    body.perf-mode .rounded-\[1\.75rem\][class*="bg-white"],
+    body.perf-mode .rounded-\[1\.5rem\][class*="bg-white"],
+    body.perf-mode .rounded-\[2rem\][class*="bg-white"],
+    body.perf-mode .rounded-\[1\.25rem\][class*="bg-white"] {
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
+      background: #111111 !important;
+      background-color: #111111 !important;
+      background-image: none !important;
+      border-color: #333333 !important;
+      box-shadow: none !important;
+      opacity: 1 !important;
+    }
+    body.perf-mode .glass::before,
+    body.perf-mode .glass-strong::before,
+    body.perf-mode .settings-option::before,
+    body.perf-mode .poster-card::before,
+    body.perf-mode .poster-card:hover::before,
+    body.perf-mode .poster-card:focus-visible::before {
+      display: none !important;
+    }
+    body.perf-mode * {
+      transition: none !important;
+      animation: none !important;
+    }
+    body.perf-mode .player-shell {
+      box-shadow: none !important;
+    }
+    /* [MOVED TO ULTRA MODE] body.perf-mode #heroBackdrop { opacity: 0 !important; display: none !important; } */
+    body.perf-mode .backdrop-blur-ultra,
+    body.perf-mode [class*="backdrop-blur"] {
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
+    }
+    body.perf-mode input,
+    body.perf-mode [class*="backdrop-blur-2xl"],
+    body.perf-mode [class*="backdrop-blur-xl"] {
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
+    }
+    body.perf-mode body {
+      background: #050505 !important;
+    }
+    /* [MOVED TO ULTRA MODE] body.perf-mode .text-shadow { text-shadow: none !important; } */
+    /* [MOVED TO ULTRA MODE] body.perf-mode #hero .absolute[class*="bg-gradient"] { display: none !important; } */
+    body.perf-mode .shadow-glow,
+    body.perf-mode .shadow-glass {
+      box-shadow: none !important;
+    }
+    body.perf-mode .hover\:bg-white\/15:hover,
+    body.perf-mode .hover\:bg-white\/14:hover,
+    body.perf-mode .hover\:bg-white\/13:hover {
+      background: #111111 !important;
+    }
+    body.perf-mode .group-hover\:scale-105 {
+      transform: none !important;
+    }
+    body.perf-mode .hover\:-translate-y-1:hover {
+      transform: none !important;
+    }
+    body.perf-mode .is-active,
+    body.perf-mode .filter-chip.is-active,
+    body.perf-mode .segment-button.is-active {
+      background: #ffffff !important;
+      color: #000000 !important;
+      border-color: #ffffff !important;
+    }
+    /* [MOVED TO ULTRA MODE] body.perf-mode #hero { background: #050505 !important; } */
+    /* [MOVED TO ULTRA MODE] body.perf-mode #hero::before, body.perf-mode #hero::after { display: none !important; } */
+    body.perf-mode #app {
+      background: #050505 !important;
+    }
+    body.perf-mode section[id="hero"] {
+      background: #050505 !important;
+    }
+    /* [MOVED TO ULTRA MODE] body.perf-mode .absolute.inset-0[class*="bg-gradient"] { display: none !important; } */
+    /* [MOVED TO ULTRA MODE] body.perf-mode [style*="radial-gradient"], body.perf-mode [style*="linear-gradient"] { background-image: none !important; } */
+    /* ── Text color fixes for readability ── */
+    body.perf-mode,
+    body.perf-mode * {
+      color: #e0e0e0 !important;
+    }
+    body.perf-mode .is-active,
+    body.perf-mode .filter-chip.is-active,
+    body.perf-mode .segment-button.is-active,
+    body.perf-mode .season-chip.is-active,
+    body.perf-mode .episode-button.is-active {
+      color: #000000 !important;
+    }
+    body.perf-mode input::placeholder,
+    body.perf-mode [placeholder] {
+      color: #888888 !important;
+    }
+    body.perf-mode [class*="text-white/"] {
+      color: #aaaaaa !important;
+    }
+    body.perf-mode #heroTitle,
+    body.perf-mode #heroDescription,
+    body.perf-mode h1,
+    body.perf-mode h2,
+    body.perf-mode h3,
+    body.perf-mode h4 {
+      color: #ffffff !important;
+    }
+    body.perf-mode .text-shadow {
+      color: #ffffff !important;
+    }
+    body.perf-mode #modalTitle,
+    body.perf-mode #nowPlayingTitle {
+      color: #ffffff !important;
+    }
+    body.perf-mode .poster-card h3,
+    body.perf-mode .poster-card p {
+      color: #e0e0e0 !important;
+    }
+    body.perf-mode .line-clamp-1,
+    body.perf-mode .line-clamp-2 {
+      color: #cccccc !important;
+    }
+    body.perf-mode #searchStatus {
+      color: #888888 !important;
+    }
+    body.perf-mode .text-xs[class*="text-white/45"],
+    body.perf-mode .text-xs[class*="text-white/38"] {
+      color: #888888 !important;
+    }
+    body.perf-mode #credentialHint {
+      background: #0a0a0a !important;
+      color: #888888 !important;
+    }
+
+    
+    /* ── Ultra Performance Mode: Maximum Stripped-Down Mode ── */
+    /* Ultra mode does everything perf-mode does, PLUS removes images, shadows, gradients */
+    
+    body.ultra-perf-mode,
+    body.ultra-perf-mode .glass,
+    body.ultra-perf-mode .glass-strong,
+    body.ultra-perf-mode .settings-option,
+    body.ultra-perf-mode .tv-notice-card,
+    body.ultra-perf-mode .recent-search-chip,
+    body.ultra-perf-mode .ios-switch,
+    body.ultra-perf-mode nav,
+    body.ultra-perf-mode header nav,
+    body.ultra-perf-mode #searchOverlay > div,
+    body.ultra-perf-mode input,
+    body.ultra-perf-mode button[class*="glass"],
+    body.ultra-perf-mode .poster-card,
+    body.ultra-perf-mode .season-chip,
+    body.ultra-perf-mode .episode-button,
+    body.ultra-perf-mode .filter-chip,
+    body.ultra-perf-mode .segment-button,
+    body.ultra-perf-mode .server-btn,
+    body.ultra-perf-mode #toast,
+    body.ultra-perf-mode .poster-favorite-badge,
+    body.ultra-perf-mode .resume-ribbon,
+    body.ultra-perf-mode .filter-chip.is-active,
+    body.ultra-perf-mode .segment-button.is-active,
+    body.ultra-perf-mode .season-chip.is-active,
+    body.ultra-perf-mode .episode-button.is-active,
+    body.ultra-perf-mode .server-btn.is-active,
+    body.ultra-perf-mode .favorite-glow,
+    body.ultra-perf-mode #heroTag,
+    body.ultra-perf-mode #heroBrowseButton,
+    body.ultra-perf-mode #heroFavoriteButton,
+    body.ultra-perf-mode #heroSetupButton,
+    body.ultra-perf-mode #heroPlayButton,
+    body.ultra-perf-mode #refreshButton,
+    body.ultra-perf-mode #resultCount,
+    body.ultra-perf-mode #clearSearchButton,
+    body.ultra-perf-mode #settingsButton,
+    body.ultra-perf-mode #homeButton,
+    body.ultra-perf-mode #closeModalButton,
+    body.ultra-perf-mode #closeSettingsButton,
+    body.ultra-perf-mode #reloadPlayerButton,
+    body.ultra-perf-mode #resetPlayerButton,
+    body.ultra-perf-mode #copyEmbedButton,
+    body.ultra-perf-mode #favoriteButton,
+    body.ultra-perf-mode #saveCredentialButton,
+    body.ultra-perf-mode #cancelSettingsButton,
+    body.ultra-perf-mode #clearCredentialButton,
+    body.ultra-perf-mode #toggleCredentialVisibility,
+    body.ultra-perf-mode #openSettingsFromError,
+    body.ultra-perf-mode .recent-search-chip,
+    body.ultra-perf-mode #serverSelector .glass,
+    body.ultra-perf-mode .tv-notice-card,
+    body.ultra-perf-mode #episodeLoading,
+    body.ultra-perf-mode .rounded-2xl[class*="bg-white"],
+    body.ultra-perf-mode .rounded-full[class*="bg-white"],
+    body.ultra-perf-mode .rounded-\[1\.75rem\][class*="bg-white"],
+    body.ultra-perf-mode .rounded-\[1\.5rem\][class*="bg-white"],
+    body.ultra-perf-mode .rounded-\[2rem\][class*="bg-white"],
+    body.ultra-perf-mode .rounded-\[1\.25rem\][class*="bg-white"] {
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
+      background: #111111 !important;
+      background-color: #111111 !important;
+      background-image: none !important;
+      border-color: #333333 !important;
+      box-shadow: none !important;
+      opacity: 1 !important;
+    }
+    body.ultra-perf-mode .glass::before,
+    body.ultra-perf-mode .glass-strong::before,
+    body.ultra-perf-mode .settings-option::before,
+    body.ultra-perf-mode .poster-card::before,
+    body.ultra-perf-mode .poster-card:hover::before,
+    body.ultra-perf-mode .poster-card:focus-visible::before {
+      display: none !important;
+    }
+    body.ultra-perf-mode * {
+      transition: none !important;
+      animation: none !important;
+    }
+    body.ultra-perf-mode .player-shell {
+      box-shadow: none !important;
+    }
+    /* ULTRA: Hide hero backdrop completely (regular perf-mode keeps it) */
+    body.ultra-perf-mode #heroBackdrop {
+      opacity: 0 !important;
+      display: none !important;
+    }
+    body.ultra-perf-mode .backdrop-blur-ultra,
+    body.ultra-perf-mode [class*="backdrop-blur"] {
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
+    }
+    body.ultra-perf-mode input,
+    body.ultra-perf-mode [class*="backdrop-blur-2xl"],
+    body.ultra-perf-mode [class*="backdrop-blur-xl"] {
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
+    }
+    /* ULTRA: Remove text shadows from hero and now-playing (regular keeps them) */
+    body.ultra-perf-mode .text-shadow {
+      text-shadow: none !important;
+    }
+    /* ULTRA: Remove gradient overlays from hero for clean flat look */
+    body.ultra-perf-mode #hero .absolute[class*="bg-gradient"] {
+      display: none !important;
+    }
+    body.ultra-perf-mode .shadow-glow,
+    body.ultra-perf-mode .shadow-glass {
+      box-shadow: none !important;
+    }
+    body.ultra-perf-mode .hover\:bg-white\/15:hover,
+    body.ultra-perf-mode .hover\:bg-white\/14:hover,
+    body.ultra-perf-mode .hover\:bg-white\/13:hover {
+      background: #111111 !important;
+    }
+    body.ultra-perf-mode .group-hover\:scale-105 {
+      transform: none !important;
+    }
+    body.ultra-perf-mode .hover\:-translate-y-1:hover {
+      transform: none !important;
+    }
+    body.ultra-perf-mode .is-active,
+    body.ultra-perf-mode .filter-chip.is-active,
+    body.ultra-perf-mode .segment-button.is-active {
+      background: #ffffff !important;
+      color: #000000 !important;
+      border-color: #ffffff !important;
+    }
+    /* ULTRA: Flat hero background instead of gradient */
+    body.ultra-perf-mode #hero {
+      background: #050505 !important;
+    }
+    body.ultra-perf-mode #hero::before,
+    body.ultra-perf-mode #hero::after {
+      display: none !important;
+    }
+    body.ultra-perf-mode #app {
+      background: #050505 !important;
+    }
+    body.ultra-perf-mode section[id="hero"] {
+      background: #050505 !important;
+    }
+    body.ultra-perf-mode .absolute.inset-0[class*="bg-gradient"] {
+      display: none !important;
+    }
+    body.ultra-perf-mode [style*="radial-gradient"],
+    body.ultra-perf-mode [style*="linear-gradient"] {
+      background-image: none !important;
+    }
+    /* ── Ultra Mode: Text color fixes for readability (no backdrop image) ── */
+    body.ultra-perf-mode,
+    body.ultra-perf-mode * {
+      color: #e0e0e0 !important;
+    }
+    body.ultra-perf-mode .is-active,
+    body.ultra-perf-mode .filter-chip.is-active,
+    body.ultra-perf-mode .segment-button.is-active,
+    body.ultra-perf-mode .season-chip.is-active,
+    body.ultra-perf-mode .episode-button.is-active {
+      color: #000000 !important;
+    }
+    body.ultra-perf-mode input::placeholder,
+    body.ultra-perf-mode [placeholder] {
+      color: #888888 !important;
+    }
+    body.ultra-perf-mode #serverErrorMessage,
+    body.ultra-perf-mode [class*="text-white/"] {
+      color: #aaaaaa !important;
+    }
+    /* ULTRA: Hero text gets clean look, no shadow needed since no backdrop */
+    body.ultra-perf-mode #heroTitle,
+    body.ultra-perf-mode #heroDescription {
+      color: #ffffff !important;
+      text-shadow: none !important;
+    }
+    body.ultra-perf-mode h1,
+    body.ultra-perf-mode h2,
+    body.ultra-perf-mode h3,
+    body.ultra-perf-mode h4 {
+      color: #ffffff !important;
+    }
+    /* ULTRA: Now playing text - clean, no shadow */
+    body.ultra-perf-mode #modalTitle,
+    body.ultra-perf-mode #nowPlayingTitle {
+      color: #ffffff !important;
+      text-shadow: none !important;
+    }
+    body.ultra-perf-mode .poster-card h3,
+    body.ultra-perf-mode .poster-card p {
+      color: #e0e0e0 !important;
+    }
+    body.ultra-perf-mode .line-clamp-1,
+    body.ultra-perf-mode .line-clamp-2 {
+      color: #cccccc !important;
+    }
+    body.ultra-perf-mode #searchStatus {
+      color: #888888 !important;
+    }
+    body.ultra-perf-mode .text-xs[class*="text-white/45"],
+    body.ultra-perf-mode .text-xs[class*="text-white/38"] {
+      color: #888888 !important;
+    }
+    body.ultra-perf-mode #credentialHint {
+      background: #0a0a0a !important;
+      color: #888888 !important;
+    }
+    /* ULTRA: Now playing overlay - simplified, flat, no gradient */
+    body.ultra-perf-mode #playerOverlay {
+      background: rgba(0,0,0,0.85) !important;
+      background-image: none !important;
+    }
+    body.ultra-perf-mode #modalDescription {
+      color: #cccccc !important;
+      text-shadow: none !important;
+    }
+    body.ultra-perf-mode #nowPlayingEyebrow,
+    body.ultra-perf-mode #nowPlayingBadge {
+      color: #888888 !important;
+    }
+
+    
+    /* -- Cast Click-to-TMDB Feature -- */
+    .cast-card {
+      cursor: pointer;
+      transition: transform 0.2s ease, opacity 0.2s ease;
+    }
+    .cast-card:hover {
+      transform: scale(1.05);
+      opacity: 0.85;
+    }
+    .cast-card:active {
+      transform: scale(0.98);
+    }
+
+    @media (max-width: 640px) {
+      .hero-title { font-size: clamp(2.7rem, 16vw, 4.7rem); letter-spacing: -.075em; }
+      .mobile-sheet { height: min(94vh, 960px); }
+      .player-shell { aspect-ratio: 16 / 10; }
+    }
+  </style>
+<base target="_blank"/>
+</head>
+<body class="font-sans antialiased selection:bg-white selection:text-black">
+<div class="min-h-screen" id="app">
+<header class="safe-top fixed inset-x-0 top-0 z-40 px-3 pt-3 sm:px-6">
+<nav class="glass-strong mx-auto flex max-w-7xl items-center gap-3 rounded-[2rem] px-3 py-3 sm:px-5">
+<button aria-label="Home" class="flex shrink-0 items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-2 shadow-glass transition-all duration-300 ease-out hover:bg-white/15 active:scale-95" id="homeButton" type="button">
+<span class="grid size-8 place-items-center rounded-full bg-white text-black shadow-glow"><i class="size-4 fill-black" data-lucide="play"></i></span>
+<span class="hidden text-sm font-black tracking-tight sm:block">Screen House</span>
+</button>
+<div class="relative flex-1">
+<i class="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-white/55" data-lucide="search"></i>
+<input aria-label="Search TMDB database" autocomplete="off" class="w-full rounded-full border border-white/20 bg-white/10 py-3 pl-11 pr-12 text-sm font-bold text-white shadow-glass outline-none backdrop-blur-2xl transition-all duration-300 placeholder:text-white/42 focus:border-white/45 focus:bg-white/15" id="searchInput" placeholder="Search Screen House..." type="search"/>
+<button aria-label="Clear search" class="absolute right-2 top-1/2 hidden size-9 -translate-y-1/2 place-items-center rounded-full border border-white/15 bg-white/10 transition-all duration-300 hover:bg-white/15 active:scale-95" id="clearSearchButton" type="button">
+<i class="size-4" data-lucide="x"></i>
+</button>
+</div>
+<button aria-label="TMDB settings" class="grid size-11 shrink-0 place-items-center rounded-full border border-white/20 bg-white/10 shadow-glass transition-all duration-300 ease-out hover:bg-white/15 active:scale-95" id="settingsButton" type="button">
+<i class="size-5" data-lucide="key-round"></i>
+</button>
+</nav>
+<section class="pointer-events-none mx-auto mt-3 hidden max-w-4xl px-1 opacity-0 transition-all duration-200" id="searchOverlay">
+<div class="glass-strong max-h-[68vh] overflow-y-auto rounded-[1.75rem] p-3 scrollbar-none">
+<div class="px-3 py-2 text-xs font-black uppercase tracking-[.24em] text-white/45" id="searchStatus"></div>
+<div class="hidden px-3 pb-3" id="recentSearches"></div>
+<div class="grid gap-2" id="searchResults"></div>
+</div>
+</section>
+</header>
+<main>
+<section class="relative min-h-screen overflow-hidden" id="hero">
+<img alt="" class="absolute inset-0 size-full object-cover opacity-75" id="heroBackdrop" src=""/>
+<div class="absolute inset-0 bg-gradient-to-r from-black via-black/52 to-transparent"></div>
+<div class="absolute inset-0 bg-gradient-to-t from-black via-transparent to-transparent"></div>
+<div class="absolute inset-x-0 bottom-0 h-64 bg-gradient-to-t from-black via-black/72 to-transparent"></div>
+<div class="relative z-10 flex min-h-screen max-w-7xl flex-col justify-end px-5 pb-28 pt-36 sm:px-8 lg:px-12">
+<div class="max-w-3xl">
+<div class="glass mb-5 inline-flex items-center gap-2 rounded-full px-4 py-2 text-xs font-black uppercase tracking-[.24em] text-white/78" id="heroTag">
+<i class="size-4" data-lucide="sparkles"></i>
+              Live TMDB
+            </div>
+<h1 class="hero-title text-shadow text-6xl font-black tracking-[-.065em] sm:text-7xl lg:text-8xl" id="heroTitle">Connect TMDB</h1>
+<p class="text-shadow mt-5 max-w-2xl text-base leading-7 text-white/78 sm:text-lg" id="heroDescription">Add your TMDB API key or read access token to search the live TMDB database and load seasons dynamically.</p>
+<div class="mt-7 flex flex-wrap gap-3">
+<button class="hidden items-center gap-2 rounded-full border border-white bg-white px-6 py-3 text-sm font-black text-black shadow-glass transition-all duration-300 ease-out hover:bg-white/90 active:scale-95" id="heroPlayButton" type="button">
+<i class="size-5 fill-black" data-lucide="play"></i>
+                Play
+              </button>
+<button class="flex items-center gap-2 rounded-full border border-white bg-white px-6 py-3 text-sm font-black text-black shadow-glass transition-all duration-300 ease-out hover:bg-white/90 active:scale-95" id="heroSetupButton" type="button">
+<i class="size-5" data-lucide="key-round"></i>
+                Add TMDB Key
+              </button>
+<button class="glass flex items-center gap-2 rounded-full px-6 py-3 text-sm font-black text-white transition-all duration-300 ease-out hover:bg-white/15 active:scale-95" id="heroBrowseButton" type="button">
+<i class="size-5" data-lucide="rows-3"></i>
+                Browse
+              </button>
+<button class="glass hidden items-center gap-2 rounded-full px-6 py-3 text-sm font-black text-white transition-all duration-300 ease-out hover:bg-white/15 active:scale-95" id="heroFavoriteButton" type="button">
+<i class="size-5" data-lucide="heart"></i>
+                Favourite
+              </button>
+</div>
+</div>
+</div>
+</section>
+<section class="relative z-10 -mt-20 space-y-10 pb-28" id="workspace">
+<div class="px-5 sm:px-8 lg:px-12">
+<div class="glass-strong rounded-[2rem] p-4 sm:p-6">
+<div class="flex flex-wrap items-end justify-between gap-3">
+<div>
+<p class="text-xs font-black uppercase tracking-[.28em] text-white/45" id="workspaceEyebrow">TMDB Browser</p>
+<h2 class="mt-1 text-2xl font-black tracking-[-.04em] sm:text-3xl" id="workspaceTitle">Live catalogue</h2>
+</div>
+<div class="flex items-center gap-2">
+<button aria-label="Refresh catalogue" class="grid size-11 place-items-center rounded-full border border-white/20 bg-white/10 shadow-glass transition-all duration-300 ease-out hover:bg-white/15 active:scale-95" id="refreshButton" type="button">
+<i class="size-5" data-lucide="refresh-cw"></i>
+</button>
+<span class="rounded-full border border-white/20 bg-white/10 px-4 py-2 text-sm font-bold text-white/70 backdrop-blur-2xl" id="resultCount">0 titles</span>
+</div>
+</div>
+<div aria-label="Content filters" class="mt-5 flex gap-2 overflow-x-auto pb-1 scrollbar-none" id="filterBar">
+<button class="filter-chip is-active shrink-0 rounded-full border border-white/20 bg-white/10 px-4 py-2.5 text-xs font-black uppercase tracking-[.18em] text-white shadow-glass transition-all duration-300 ease-out hover:bg-white/15 active:scale-95" data-filter="all" type="button">All</button>
+<button class="filter-chip shrink-0 rounded-full border border-white/20 bg-white/10 px-4 py-2.5 text-xs font-black uppercase tracking-[.18em] text-white shadow-glass transition-all duration-300 ease-out hover:bg-white/15 active:scale-95" data-filter="movie" type="button">Movies</button>
+<button class="filter-chip shrink-0 rounded-full border border-white/20 bg-white/10 px-4 py-2.5 text-xs font-black uppercase tracking-[.18em] text-white shadow-glass transition-all duration-300 ease-out hover:bg-white/15 active:scale-95" data-filter="tv" type="button">TV</button>
+<button class="filter-chip shrink-0 rounded-full border border-white/20 bg-white/10 px-4 py-2.5 text-xs font-black uppercase tracking-[.18em] text-white shadow-glass transition-all duration-300 ease-out hover:bg-white/15 active:scale-95" data-filter="favorites" type="button">Favourites</button>
+</div>
+</div>
+</div>
+<div class="hidden px-5 sm:px-8 lg:px-12" id="loadingState">
+<div class="glass-strong mx-auto max-w-xl rounded-[2rem] p-8 text-center">
+<div class="mx-auto grid size-14 place-items-center rounded-full border border-white/20 bg-white/10 shadow-glass"><i class="size-7 animate-spin text-white/80" data-lucide="loader-circle"></i></div>
+<h3 class="mt-5 text-2xl font-black tracking-[-.04em]">Loading from TMDB</h3>
+<p class="mt-2 text-sm leading-6 text-white/58">Fetching live movies and shows.</p>
+</div>
+</div>
+<div class="hidden px-5 sm:px-8 lg:px-12" id="errorState">
+<div class="glass-strong mx-auto max-w-2xl rounded-[2rem] p-8 text-center">
+<div class="mx-auto grid size-14 place-items-center rounded-full border border-white/20 bg-white/10 shadow-glass"><i class="size-7 text-white/80" data-lucide="triangle-alert"></i></div>
+<h3 class="mt-5 text-2xl font-black tracking-[-.04em]">TMDB request failed</h3>
+<p class="mt-2 text-sm leading-6 text-white/58" id="errorMessage"></p>
+<button class="mt-5 rounded-full border border-white bg-white px-5 py-3 text-sm font-black text-black shadow-glass transition-all duration-300 active:scale-95" id="openSettingsFromError" type="button">Check API key</button>
+</div>
+</div>
+<div class="space-y-12" id="rowsRoot"></div>
+<div class="hidden px-5 sm:px-8 lg:px-12" id="emptyState">
+<div class="glass-strong mx-auto max-w-xl rounded-[2rem] p-8 text-center">
+<div class="mx-auto grid size-14 place-items-center rounded-full border border-white/20 bg-white/10 shadow-glass"><i class="size-7 text-white/75" data-lucide="search-x"></i></div>
+<h3 class="mt-5 text-2xl font-black tracking-[-.04em]">No matches found</h3>
+<p class="mt-2 text-sm leading-6 text-white/58">Try another title. TMDB search starts after 2 characters.</p>
+</div>
+</div>
+</section>
+</main>
+<section aria-labelledby="modalTitle" aria-modal="true" class="pointer-events-none fixed inset-0 z-50 hidden items-center justify-center bg-black/75 p-3 opacity-0 backdrop-blur-ultra transition-opacity duration-300 sm:p-6" id="playerModal" role="dialog">
+<div class="mobile-sheet safe-bottom glass-strong relative flex h-[92vh] w-full max-w-6xl translate-y-6 flex-col overflow-hidden rounded-[2rem] opacity-0 transition-all duration-300 ease-out sm:rounded-[2.4rem]" id="modalPanel">
+<div class="relative z-10 flex items-center justify-between gap-3 border-b border-white/10 px-4 py-4 sm:px-6">
+<div class="min-w-0">
+<p class="text-xs font-black uppercase tracking-[.28em] text-white/45" id="modalType"></p>
+<h2 class="truncate text-xl font-black tracking-[-.04em] sm:text-3xl" id="modalTitle"></h2>
+</div>
+<button aria-label="Close player" class="grid size-11 shrink-0 place-items-center rounded-full border border-white/20 bg-white/10 shadow-glass transition-all duration-300 ease-out hover:bg-white/15 active:scale-95" id="closeModalButton" type="button">
+<i class="size-5" data-lucide="x"></i>
+</button>
+</div>
+<div class="relative z-10 flex-1 overflow-y-auto px-4 pb-6 pt-4 scrollbar-none sm:px-6">
+<div class="player-shell overflow-hidden rounded-[1.45rem] border border-white/20 bg-black shadow-[0_18px_70px_rgba(0,0,0,.7)] sm:rounded-[2rem] relative">
+<iframe allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen="" class="size-full bg-black" frameborder="0" id="streamFrame" scrolling="no" src="about:blank" title="vixsrc streaming player"></iframe>
+<div class="absolute inset-0 pointer-events-none flex flex-col justify-end bg-gradient-to-t from-black/95 via-black/40 to-transparent p-6 z-20 transition-opacity" id="playerOverlay"><div class="min-w-0 mb-2"><p class="text-xs font-black uppercase tracking-[.28em] text-white/45" id="nowPlayingEyebrow"></p><h3 class="mt-1 text-2xl font-black tracking-[-.04em]" id="nowPlayingTitle"></h3></div><span class="rounded-full border border-white/20 bg-white/10 px-3 py-2 text-xs font-bold text-white/70 mb-3 w-max" id="nowPlayingBadge"></span><p class="mt-4 text-sm leading-7 text-white/80 line-clamp-3 max-w-3xl text-shadow" id="modalDescription"></p><div class="mt-4 flex flex-wrap gap-2" id="metaLine"></div></div></div>
+<!-- Server Selector -->
+<div class="mt-4 hidden" id="serverSelector">
+<div class="glass rounded-[1.5rem] p-4">
+<div class="flex flex-wrap items-center justify-between gap-3">
+<div>
+<p class="text-xs font-black uppercase tracking-[.28em] text-white/45">Streaming Server</p>
+<h3 class="mt-1 text-base font-black tracking-[-.02em]">Choose a server</h3>
+</div>
+</div>
+<div class="mt-3 flex flex-wrap gap-2" id="serverButtons"></div>
+</div>
+</div>
+<div class="mt-5 gap-5 flex flex-col lg:flex-row">
+<div class="flex-1 min-w-0 w-full flex flex-col gap-5"><section class="glass rounded-[1.75rem] p-5"><div class="flex flex-wrap justify-center gap-4 w-full">
+<button class="glass flex items-center gap-2 rounded-full px-4 py-3 text-sm font-black transition-all duration-300 ease-out hover:bg-white/15 active:scale-95" id="reloadPlayerButton" type="button"><i class="size-4" data-lucide="rotate-ccw"></i>Reload Player</button>
+<button class="glass flex items-center gap-2 rounded-full px-4 py-3 text-sm font-black transition-all duration-300 ease-out hover:bg-white/15 active:scale-95" id="resetPlayerButton" type="button"><i class="size-4" data-lucide="power"></i>Reset Player</button>
+<button class="glass flex items-center gap-2 rounded-full px-4 py-3 text-sm font-black transition-all duration-300 ease-out hover:bg-white/15 active:scale-95" id="copyEmbedButton" type="button"><i class="size-4" data-lucide="copy"></i>Copy URL</button>
+<button aria-pressed="false" class="glass flex items-center gap-2 rounded-full px-4 py-3 text-sm font-black transition-all duration-300 ease-out hover:bg-white/15 active:scale-95" id="favoriteButton" type="button"><i class="size-4" data-lucide="heart"></i><span>Favourite</span></button>
+</div></section>
+<section class="glass rounded-[1.75rem] p-5 hidden" id="castHub">
+<p class="text-xs font-black uppercase tracking-[.28em] text-white/45 mb-4">Cast</p>
+<div class="flex gap-4 overflow-x-auto pb-2 scrollbar-none snap-x" id="castList">
+</div>
+</section>
+</div>
+<aside class="glass hidden rounded-[1.75rem] p-5 w-full lg:w-[390px] shrink-0" id="episodeHub">
+<div class="flex items-center justify-between gap-3">
+<div>
+<p class="text-xs font-black uppercase tracking-[.28em] text-white/45">Episodes</p>
+<h3 class="mt-1 text-xl font-black tracking-[-.04em]">Modern Season Hub</h3>
+</div>
+<i class="size-6 text-white/55" data-lucide="list-video"></i>
+</div>
+<div class="mt-5 flex snap-x gap-2 overflow-x-auto pb-2 scrollbar-none" id="seasonChips"></div>
+<div class="relative mt-3">
+<i class="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-white/45" data-lucide="search"></i>
+<input aria-label="Search episodes in selected season" autocomplete="off" class="w-full rounded-2xl border border-white/20 bg-white/10 py-3 pl-11 pr-4 text-sm font-bold text-white shadow-glass outline-none transition-all duration-300 placeholder:text-white/35 focus:border-white/45 focus:bg-white/15" id="episodeSearchInput" placeholder="Find episode in this season..." type="search"/>
+</div>
+<div class="mt-4 hidden rounded-[1.25rem] border border-white/15 bg-white/8 p-4 text-sm font-bold text-white/60" id="episodeLoading">
+                Loading episodes...
+              </div>
+<div class="mt-4 max-h-[470px] space-y-2 overflow-y-auto pr-1 scrollbar-none" id="episodeList"></div>
+</aside>
+</div>
+</div>
+</div>
+</section>
+<section aria-labelledby="settingsTitle" aria-modal="true" class="pointer-events-none fixed inset-0 z-[70] hidden items-start justify-center bg-black/75 p-4 pt-16 opacity-0 backdrop-blur-ultra transition-opacity duration-300 sm:pt-20" id="settingsModal" role="dialog">
+<div class="glass-strong max-h-[calc(100vh-5rem)] w-full max-w-xl translate-y-4 overflow-y-auto rounded-[2rem] p-5 opacity-0 transition-all duration-300 scrollbar-none sm:p-7" id="settingsPanel">
+<div class="flex items-start justify-between gap-3">
+<div>
+<p class="text-xs font-black uppercase tracking-[.28em] text-white/45">Setup</p>
+<h2 class="mt-1 text-2xl font-black tracking-[-.04em]" id="settingsTitle">Screen House settings.</h2>
+</div>
+<button aria-label="Close settings" class="grid size-11 shrink-0 place-items-center rounded-full border border-white/20 bg-white/10 transition-all duration-300 active:scale-95" id="closeSettingsButton" type="button"><i class="size-5" data-lucide="x"></i></button>
+</div>
+<p class="mt-4 text-sm leading-7 text-white/62">Manage settings below.</p>
+<label class="mt-5 block text-xs font-black uppercase tracking-[.24em] text-white/45" for="tmdbCredential">API key / Read token</label>
+<input autocomplete="off" class="mt-2 w-full rounded-2xl border border-white/20 bg-white/10 px-4 py-4 text-sm font-bold text-white shadow-glass outline-none transition-all duration-300 placeholder:text-white/35 focus:border-white/45 focus:bg-white/15" id="tmdbCredential" placeholder="Paste TMDB credential here" spellcheck="false" type="password"/>
+<div class="mt-3 flex flex-wrap items-center gap-2">
+<button class="glass flex items-center gap-2 rounded-full px-4 py-2.5 text-xs font-black transition-all duration-300 active:scale-95" id="toggleCredentialVisibility" type="button"><i class="size-4" data-lucide="eye"></i>Show</button>
+<button class="glass flex items-center gap-2 rounded-full px-4 py-2.5 text-xs font-black transition-all duration-300 active:scale-95" id="clearCredentialButton" type="button"><i class="size-4" data-lucide="trash-2"></i>Clear</button>
+</div>
+<div class="mt-4 rounded-2xl border border-white/15 bg-white/8 p-4 text-sm leading-6 text-white/58" id="credentialHint">VixSrc is currently the only API we've tested that doesn't display ads. You can add your own APIs below. The app will attempt to block pop-ups, but this may not work with untested APIs</div>
+<div class="mt-5 grid gap-3">
+<div class="settings-option rounded-[1.5rem] p-4" id="updateSection">
+<div class="flex flex-wrap items-center justify-between gap-4">
+<div class="min-w-0">
+<p class="text-xs font-black uppercase tracking-[.24em] text-white/45">Updates</p>
+<h3 class="mt-1 text-base font-black tracking-[-.02em]" id="updateTitle">You're up to date</h3>
+<p class="mt-1 text-xs leading-5 text-white/52" id="updateSubtitle">Checked automatically on launch.</p>
+</div>
+<button class="glass hidden shrink-0 items-center gap-2 rounded-full px-4 py-3 text-xs font-black uppercase tracking-[.16em] transition-all duration-300 active:scale-95" id="updateActionButton" type="button">
+<i class="size-4" data-lucide="download"></i>Update
+</button>
+</div>
+<div class="mt-3 hidden" id="updateProgressWrap">
+<div class="h-2 w-full overflow-hidden rounded-full bg-white/10">
+<div class="h-full w-0 rounded-full bg-white transition-all duration-200" id="updateProgressBar"></div>
+</div>
+</div>
+</div>
+<div class="settings-option rounded-[1.5rem] p-4">
+<div class="flex flex-wrap items-center justify-between gap-4">
+<div>
+<p class="text-xs font-black uppercase tracking-[.24em] text-white/45">Performance</p>
+<h3 class="mt-1 text-base font-black tracking-[-.02em]">Performance mode</h3>
+<p class="mt-1 text-xs leading-5 text-white/52">Disables blur, glass effects, transitions and animations. Use on low-end hardware.</p>
+</div>
+<button aria-checked="false" aria-label="Toggle performance mode" class="ios-switch" id="perfModeToggle" role="switch" type="button">
+<div class="ios-switch-knob"></div>
+</button>
+</div>
+</div>
+<div class="settings-option rounded-[1.5rem] p-4">
+<div class="flex flex-wrap items-center justify-between gap-4">
+<div>
+<p class="text-xs font-black uppercase tracking-[.24em] text-white/45">Performance</p>
+<h3 class="mt-1 text-base font-black tracking-[-.02em]">Ultra Performance mode</h3>
+<p class="mt-1 text-xs leading-5 text-white/52">Maximum performance. Hides backdrop images, removes all shadows and gradient overlays. For very low-end hardware or maximum battery saving.</p>
+</div>
+<button aria-checked="false" aria-label="Toggle ultra performance mode" class="ios-switch" id="perfModeUltraToggle" role="switch" type="button">
+<div class="ios-switch-knob"></div>
+</button>
+</div>
+</div>
+
+<div class="settings-option rounded-[1.5rem] p-4">
+<div class="mb-3">
+<p class="text-xs font-black uppercase tracking-[.24em] text-white/45">Streaming servers</p>
+<h3 class="mt-1 text-base font-black tracking-[-.02em]">Manage backends</h3>
+<p class="mt-1 text-xs leading-5 text-white/52">Add, edit or remove streaming API backends. Each is tested with movie ID 157336 before saving.</p>
+</div>
+<!-- Add new server row -->
+<div class="mt-3 flex flex-wrap items-end gap-2">
+<div class="flex-1 min-w-[120px]">
+<label class="block text-[10px] font-black uppercase tracking-[.2em] text-white/40 mb-1">Name</label>
+<input class="w-full rounded-xl border border-white/20 bg-white/10 px-3 py-2.5 text-sm font-bold text-white outline-none placeholder:text-white/30 focus:border-white/45" id="newServerName" placeholder="Server 2" type="text"/>
+</div>
+<div class="flex-[2] min-w-[180px]">
+<label class="block text-[10px] font-black uppercase tracking-[.2em] text-white/40 mb-1">Link</label>
+<input class="w-full rounded-xl border border-white/20 bg-white/10 px-3 py-2.5 text-sm font-bold text-white outline-none placeholder:text-white/30 focus:border-white/45" id="newServerUrl" placeholder="https://your-api.com" type="text"/>
+</div>
+<button class="glass flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-black transition-all duration-300 hover:bg-white/15 active:scale-95" id="addServerButton" type="button">
+<i class="size-4" data-lucide="plus"></i>Submit
+              </button>
+</div>
+<div class="mt-2 hidden text-xs font-bold" id="addServerStatus"></div>
+<!-- Server list -->
+<div class="mt-4 space-y-2" id="serverList"></div>
+</div>
+<div class="settings-option rounded-[1.5rem] p-4">
+<div class="flex flex-wrap items-center justify-between gap-4">
+<div>
+<p class="text-xs font-black uppercase tracking-[.24em] text-white/45">Poster size</p>
+<h3 class="mt-1 text-base font-black tracking-[-.02em]">Card density</h3>
+<p class="mt-1 text-xs leading-5 text-white/52">Compact fits more posters on mobile. Large keeps the Netflix-style feel.</p>
+</div>
+<div aria-label="Poster card size" class="segmented-control" role="group">
+<button class="segment-button rounded-full border border-transparent px-4 py-2 text-xs font-black uppercase tracking-[.16em] text-white/70 transition-all duration-300 active:scale-95" data-card-size="compact" id="cardSizeCompactButton" type="button">Compact</button>
+<button class="segment-button rounded-full border border-transparent px-4 py-2 text-xs font-black uppercase tracking-[.16em] text-white/70 transition-all duration-300 active:scale-95" data-card-size="large" id="cardSizeLargeButton" type="button">Large</button>
+</div>
+</div>
+</div>
+<div class="settings-option rounded-[1.5rem] p-4">
+<div class="flex flex-wrap items-center justify-between gap-4">
+<div>
+<p class="text-xs font-black uppercase tracking-[.24em] text-white/45">Local data</p>
+<h3 class="mt-1 text-base font-black tracking-[-.02em]">Recent searches</h3>
+<p class="mt-1 text-xs leading-5 text-white/52">Clear the search chips that appear under the live search panel.</p>
+</div>
+<button class="glass flex items-center gap-2 rounded-full px-4 py-3 text-xs font-black uppercase tracking-[.16em] transition-all duration-300 active:scale-95" id="clearSearchHistoryButton" type="button">
+<i class="size-4" data-lucide="eraser"></i>Clear
+              </button>
+</div>
+</div>
+</div>
+<div class="mt-6 flex flex-wrap gap-3">
+<button class="rounded-full border border-white bg-white px-5 py-3 text-sm font-black text-black shadow-glass transition-all duration-300 active:scale-95" id="saveCredentialButton" type="button">Save</button>
+<button class="glass rounded-full px-5 py-3 text-sm font-black transition-all duration-300 active:scale-95" id="cancelSettingsButton" type="button">Cancel</button>
+</div>
+</div>
+</section>
+<div aria-live="polite" class="pointer-events-none fixed bottom-5 left-1/2 z-[90] hidden -translate-x-1/2 rounded-full border border-white/20 bg-white px-5 py-3 text-sm font-black text-black opacity-0 shadow-glass transition-all duration-300" id="toast" role="status"></div>
+</div>
+<script>
+    const TMDB_BASE = 'https://api.themoviedb.org/3';
+    const IMG_W500 = 'https://image.tmdb.org/t/p/w500';
+    const IMG_W780 = 'https://image.tmdb.org/t/p/w780';
+    const IMG_ORIGINAL = 'https://image.tmdb.org/t/p/original';
+    // ═══════════════════════════════════════════════════════════════
+// BACKEND API CONFIGURATION — ADD YOUR SERVERS HERE
+// ═══════════════════════════════════════════════════════════════
+// Each entry: { name: "Server N", base: "https://your-domain.com" }
+// The app auto-detects how many entries you add.
+// Only uncomment/add lines — do NOT delete the array itself.
+//
+// HOW IT WORKS:
+// • Server 1, 2, 3… buttons appear automatically based on count
+// • Each server is health-checked when you open a movie/episode
+// • If ALL servers return errors, a "No Available Servers" message shows
+// • For TV: it tells you to try a different episode/season
+// • For Movies: it tells you to pick a different title
+// ═══════════════════════════════════════════════════════════════
+const DEFAULT_SERVERS = [
+  { name: "VixSrc", base: "https://vixsrc.to" },
+  { name: "ApiPlayer", base: "https://apiplayer.ru/embed" }
+];
+const SERVERS_KEY = 'vixsrc_live_servers';
+
+function getServers() {
+  const stored = localStorage.getItem(SERVERS_KEY);
+  if (stored) {
+    try {
+      const parsed = JSON.parse(stored);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    } catch (_) {}
+  }
+  return [...DEFAULT_SERVERS];
+}
+
+function saveServers(servers) {
+  localStorage.setItem(SERVERS_KEY, JSON.stringify(servers));
+}
+
+const BACKEND_APIS = getServers();
+    // Optional: paste your TMDB v3 API key or read access token between the quotes.
+    const HARDCODED_TMDB_CREDENTIAL = 'ce5e1892fe2fdf9006a6b4dfabe1fea4';
+    const STORAGE_KEY = 'vixsrc_live_tmdb_credential';
+    const FAVORITES_KEY = 'vixsrc_live_favorites';
+    const RECENTS_KEY = 'vixsrc_live_recents';
+    const CONTENT_FILTER_KEY = 'vixsrc_live_content_filter';
+    const SEARCH_HISTORY_KEY = 'vixsrc_live_search_history';
+    const CARD_SIZE_KEY = 'vixsrc_live_card_size';
+    const PERF_MODE_KEY = 'vixsrc_live_perf_mode';
+    const ULTRA_PERF_MODE_KEY = 'vixsrc_live_ultra_perf_mode';
+
+    const state = {
+      credential: '',
+      homeRows: [],
+      searchItems: [],
+      searchQuery: '',
+      selected: null,
+      selectedTvDetails: null,
+      selectedSeason: null,
+      selectedEpisode: null,
+      currentEmbedUrl: '',
+      currentServerIndex: 0,
+      contentFilter: 'all',
+      favorites: [],
+      recents: [],
+      searchHistory: [],
+      cardSize: 'large',
+      performanceMode: false,
+      ultraPerformanceMode: false,
+      episodeQuery: '',
+      searchController: null,
+      homeLoaded: false,
+      searchTimer: null
+    };
+
+    const els = {
+      homeButton: document.getElementById('homeButton'),
+      settingsButton: document.getElementById('settingsButton'),
+      updateSection: document.getElementById('updateSection'),
+      updateTitle: document.getElementById('updateTitle'),
+      updateSubtitle: document.getElementById('updateSubtitle'),
+      updateActionButton: document.getElementById('updateActionButton'),
+      updateProgressWrap: document.getElementById('updateProgressWrap'),
+      updateProgressBar: document.getElementById('updateProgressBar'),
+      searchInput: document.getElementById('searchInput'),
+      clearSearchButton: document.getElementById('clearSearchButton'),
+      searchOverlay: document.getElementById('searchOverlay'),
+      searchStatus: document.getElementById('searchStatus'),
+      recentSearches: document.getElementById('recentSearches'),
+      searchResults: document.getElementById('searchResults'),
+      heroBackdrop: document.getElementById('heroBackdrop'),
+      heroTag: document.getElementById('heroTag'),
+      heroTitle: document.getElementById('heroTitle'),
+      heroDescription: document.getElementById('heroDescription'),
+      heroPlayButton: document.getElementById('heroPlayButton'),
+      heroSetupButton: document.getElementById('heroSetupButton'),
+      heroBrowseButton: document.getElementById('heroBrowseButton'),
+      heroFavoriteButton: document.getElementById('heroFavoriteButton'),
+      workspace: document.getElementById('workspace'),
+      filterBar: document.getElementById('filterBar'),
+      workspaceEyebrow: document.getElementById('workspaceEyebrow'),
+      workspaceTitle: document.getElementById('workspaceTitle'),
+      refreshButton: document.getElementById('refreshButton'),
+      resultCount: document.getElementById('resultCount'),
+      loadingState: document.getElementById('loadingState'),
+      errorState: document.getElementById('errorState'),
+      errorMessage: document.getElementById('errorMessage'),
+      openSettingsFromError: document.getElementById('openSettingsFromError'),
+      rowsRoot: document.getElementById('rowsRoot'),
+      emptyState: document.getElementById('emptyState'),
+      playerModal: document.getElementById('playerModal'),
+      modalPanel: document.getElementById('modalPanel'),
+      closeModalButton: document.getElementById('closeModalButton'),
+      modalType: document.getElementById('modalType'),
+      modalTitle: document.getElementById('modalTitle'),
+      streamFrame: document.getElementById('streamFrame'),
+      serverSelector: document.getElementById('serverSelector'),
+      serverButtons: document.getElementById('serverButtons'),
+      nowPlayingEyebrow: document.getElementById('nowPlayingEyebrow'),
+      nowPlayingTitle: document.getElementById('nowPlayingTitle'),
+      nowPlayingBadge: document.getElementById('nowPlayingBadge'),
+      modalDescription: document.getElementById('modalDescription'),
+      metaLine: document.getElementById('metaLine'),
+      reloadPlayerButton: document.getElementById('reloadPlayerButton'),
+      resetPlayerButton: document.getElementById('resetPlayerButton'),
+      copyEmbedButton: document.getElementById('copyEmbedButton'),
+      favoriteButton: document.getElementById('favoriteButton'),
+      episodeHub: document.getElementById('episodeHub'),
+      seasonChips: document.getElementById('seasonChips'),
+      episodeLoading: document.getElementById('episodeLoading'),
+      episodeSearchInput: document.getElementById('episodeSearchInput'),
+      episodeList: document.getElementById('episodeList'),
+      settingsModal: document.getElementById('settingsModal'),
+      settingsPanel: document.getElementById('settingsPanel'),
+      closeSettingsButton: document.getElementById('closeSettingsButton'),
+      cancelSettingsButton: document.getElementById('cancelSettingsButton'),
+      saveCredentialButton: document.getElementById('saveCredentialButton'),
+      tmdbCredential: document.getElementById('tmdbCredential'),
+      toggleCredentialVisibility: document.getElementById('toggleCredentialVisibility'),
+      clearCredentialButton: document.getElementById('clearCredentialButton'),
+      credentialHint: document.getElementById('credentialHint'),
+      cardSizeCompactButton: document.getElementById('cardSizeCompactButton'),
+      cardSizeLargeButton: document.getElementById('cardSizeLargeButton'),
+      perfModeToggle: document.getElementById('perfModeToggle'),
+      perfModeUltraToggle: document.getElementById('perfModeUltraToggle'),
+      newServerName: document.getElementById('newServerName'),
+      newServerUrl: document.getElementById('newServerUrl'),
+      addServerButton: document.getElementById('addServerButton'),
+      addServerStatus: document.getElementById('addServerStatus'),
+      serverList: document.getElementById('serverList'),
+      clearSearchHistoryButton: document.getElementById('clearSearchHistoryButton'),
+      toast: document.getElementById('toast')
+    };
+
+    function escapeHtml(value) {
+      return String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;');
+    }
+
+    function iconRefresh() {
+      if (window.lucide) window.lucide.createIcons();
+    }
+
+    // ── Intersection Observer for lazy-loading images ──
+    let imageObserver = null;
+    function initImageObserver() {
+      if (imageObserver) imageObserver.disconnect();
+      if (state.performanceMode) {
+        // In perf mode, load everything immediately (no observer overhead)
+        document.querySelectorAll('img[data-src]').forEach(img => {
+          img.src = img.dataset.src;
+          img.removeAttribute('data-src');
+        });
+        return;
+      }
+      const options = { root: null, rootMargin: '200px', threshold: 0 };
+      imageObserver = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting) {
+            const img = entry.target;
+            if (img.dataset.src) {
+              img.src = img.dataset.src;
+              img.removeAttribute('data-src');
+            }
+            imageObserver.unobserve(img);
+          }
+        });
+      }, options);
+      document.querySelectorAll('img[data-src]').forEach(img => imageObserver.observe(img));
+    }
+
+    function observeNewImages() {
+      if (state.performanceMode) {
+        document.querySelectorAll('img[data-src]').forEach(img => {
+          img.src = img.dataset.src;
+          img.removeAttribute('data-src');
+        });
+        return;
+      }
+      if (!imageObserver) { initImageObserver(); return; }
+      document.querySelectorAll('img[data-src]').forEach(img => imageObserver.observe(img));
+    }
+
+    function clearPlayerFrame() {
+      els.streamFrame.removeAttribute('srcdoc');
+      els.streamFrame.removeAttribute('sandbox');
+      els.streamFrame.src = 'about:blank';
+    }
+
+
+    function safeJsonParse(value, fallback) {
+      try {
+        const parsed = JSON.parse(value);
+        return parsed ?? fallback;
+      } catch (_) {
+        return fallback;
+      }
+    }
+
+    function contentKey(item) {
+      if (!item) return '';
+      return item.type + ':' + item.tmdbId;
+    }
+
+    function storedSnapshot(item) {
+      if (!item) return null;
+      return {
+        id: Number(item.tmdbId || item.id),
+        tmdbId: String(item.tmdbId || item.id),
+        type: item.type,
+        title: item.title,
+        description: item.description || 'No overview is available from TMDB for this title.',
+        poster: item.poster || '',
+        backdrop: item.backdrop || '',
+        posterPath: item.posterPath || '',
+        backdropPath: item.backdropPath || '',
+        rating: item.rating ?? null,
+        year: item.year || '',
+        popularity: item.popularity || 0
+      };
+    }
+
+    function saveFavorites() {
+      localStorage.setItem(FAVORITES_KEY, JSON.stringify(state.favorites.slice(0, 100)));
+    }
+
+    function saveRecents() {
+      localStorage.setItem(RECENTS_KEY, JSON.stringify(state.recents.slice(0, 24)));
+    }
+
+    function saveSearchHistory() {
+      localStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(state.searchHistory.slice(0, 12)));
+    }
+
+    function addSearchHistory(query) {
+      const clean = String(query || '').trim().replace(/\s+/g, ' ');
+      if (compactForMatch(clean).length < 2) return;
+      state.searchHistory = [clean, ...state.searchHistory.filter(item => item.toLowerCase() !== clean.toLowerCase())].slice(0, 12);
+      saveSearchHistory();
+      renderSearchHistory();
+    }
+
+    function clearSearchHistory() {
+      state.searchHistory = [];
+      localStorage.removeItem(SEARCH_HISTORY_KEY);
+      renderSearchHistory();
+      showToast('Recent searches cleared');
+    }
+
+    function isFavorite(item) {
+      const key = contentKey(item);
+      return !!key && state.favorites.some(saved => contentKey(saved) === key);
+    }
+
+    function toggleFavorite(item) {
+      if (!item) return;
+      const snapshot = storedSnapshot(item);
+      const key = contentKey(snapshot);
+      if (!key) return;
+
+      if (isFavorite(snapshot)) {
+        state.favorites = state.favorites.filter(saved => contentKey(saved) !== key);
+        showToast('Removed from favourites');
+      } else {
+        state.favorites = [snapshot, ...state.favorites.filter(saved => contentKey(saved) !== key)].slice(0, 100);
+        showToast('Added to favourites');
+      }
+
+      saveFavorites();
+      updateFavoriteButtons();
+      refreshCurrentRows();
+    }
+
+    function updateFavoriteButtons() {
+      const active = isFavorite(state.selected);
+      if (els.favoriteButton) {
+        els.favoriteButton.setAttribute('aria-pressed', active ? 'true' : 'false');
+        els.favoriteButton.innerHTML = active
+          ? '<i data-lucide="heart" class="size-4 fill-white"></i><span>Favourited</span>'
+          : '<i data-lucide="heart" class="size-4"></i><span>Favourite</span>';
+        els.favoriteButton.classList.toggle('favorite-glow', active);
+      }
+      if (els.heroFavoriteButton) {
+        els.heroFavoriteButton.classList.toggle('hidden', !state.selected);
+        els.heroFavoriteButton.classList.toggle('flex', !!state.selected);
+        els.heroFavoriteButton.innerHTML = active
+          ? '<i data-lucide="heart" class="size-5 fill-white"></i>Favourited'
+          : '<i data-lucide="heart" class="size-5"></i>Favourite';
+        els.heroFavoriteButton.classList.toggle('favorite-glow', active);
+      }
+      iconRefresh();
+    }
+
+    function addRecent(item, options = {}) {
+      const snapshot = storedSnapshot(item);
+      if (!snapshot) return;
+      const key = contentKey(snapshot);
+      const recent = {
+        ...snapshot,
+        resumeSeason: options.seasonNumber || item.resumeSeason || null,
+        resumeEpisode: options.episodeNumber || item.resumeEpisode || null,
+        resumeTitle: options.episodeTitle || item.resumeTitle || '',
+        updatedAt: Date.now()
+      };
+      state.recents = [recent, ...state.recents.filter(saved => contentKey(saved) !== key)].slice(0, 24);
+      saveRecents();
+    }
+
+    function getFavoriteItems() {
+      return dedupe(state.favorites.map(item => ({ ...item })));
+    }
+
+    function getRecentItems() {
+      return dedupe(state.recents
+        .slice()
+        .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+        .map(item => ({ ...item })));
+    }
+
+    function passesContentFilter(item) {
+      if (state.contentFilter === 'movie') return item.type === 'movie';
+      if (state.contentFilter === 'tv') return item.type === 'tv';
+      if (state.contentFilter === 'favorites') return isFavorite(item);
+      return true;
+    }
+
+    function applyContentFilterToRows(rows) {
+      return rows
+        .map(row => ({ ...row, items: dedupe((row.items || []).filter(passesContentFilter)) }))
+        .filter(row => row.items.length);
+    }
+
+    function decorateHomeRows(rows) {
+      const isHomeView = rows === state.homeRows && !state.searchQuery.trim();
+      if (!isHomeView) return rows;
+
+      const inserts = [];
+      const recents = getRecentItems();
+      if (recents.length) inserts.push({ title: 'Continue watching', subtitle: 'Saved on this browser', items: recents });
+      return [...inserts, ...rows];
+    }
+
+    function setCardSize(size) {
+      state.cardSize = size === 'compact' ? 'compact' : 'large';
+      localStorage.setItem(CARD_SIZE_KEY, state.cardSize);
+      updateSettingsControls();
+      refreshCurrentRows();
+      showToast(state.cardSize === 'compact' ? 'Compact cards enabled' : 'Large cards enabled');
+    }
+
+    function getPosterCardClass() {
+      const width = state.cardSize === 'compact' ? 'w-[124px] sm:w-[150px]' : 'w-[154px] sm:w-[190px]';
+      const radius = state.cardSize === 'compact' ? 'rounded-[1.15rem]' : 'rounded-[1.4rem]';
+      return 'poster-card group relative ' + width + ' shrink-0 snap-start overflow-hidden ' + radius + ' border border-white/20 bg-white/10 text-left shadow-glass backdrop-blur-2xl transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-glow active:scale-95';
+    }
+
+    function updateSegmentButton(button, active) {
+      if (!button) return;
+      button.classList.toggle('is-active', active);
+      button.classList.toggle('text-white/70', !active);
+      button.setAttribute('aria-pressed', active ? 'true' : 'false');
+    }
+
+    function setPerformanceMode(enabled) {
+      state.performanceMode = !!enabled;
+      localStorage.setItem(PERF_MODE_KEY, state.performanceMode ? '1' : '0');
+      document.body.classList.toggle('perf-mode', state.performanceMode);
+      updatePerfToggleUI();
+      // When toggling perf mode, immediately load all deferred images
+      if (state.performanceMode) {
+        document.querySelectorAll('img[data-src]').forEach(img => {
+          img.src = img.dataset.src;
+          img.removeAttribute('data-src');
+        });
+        if (imageObserver) imageObserver.disconnect();
+      } else {
+        initImageObserver();
+      }
+      showToast(state.performanceMode ? 'Performance mode ON' : 'Performance mode OFF');
+    }
+
+    function setUltraPerformanceMode(enabled) {
+      state.ultraPerformanceMode = !!enabled;
+      localStorage.setItem(ULTRA_PERF_MODE_KEY, state.ultraPerformanceMode ? '1' : '0');
+      document.body.classList.toggle('ultra-perf-mode', state.ultraPerformanceMode);
+      updateUltraPerfToggleUI();
+      // When enabling ultra mode, also enable regular perf mode for consistency
+      if (state.ultraPerformanceMode && !state.performanceMode) {
+        setPerformanceMode(true);
+      }
+      // When disabling ultra mode, keep regular perf mode as-is (user can toggle separately)
+      if (state.ultraPerformanceMode) {
+        document.querySelectorAll('img[data-src]').forEach(img => {
+          img.src = img.dataset.src;
+          img.removeAttribute('data-src');
+        });
+        if (imageObserver) imageObserver.disconnect();
+      }
+      showToast(state.ultraPerformanceMode ? 'Ultra Performance mode ON' : 'Ultra Performance mode OFF');
+    }
+
+    function updateUltraPerfToggleUI() {
+      if (!els.perfModeUltraToggle) return;
+      els.perfModeUltraToggle.classList.toggle('is-on', state.ultraPerformanceMode);
+      els.perfModeUltraToggle.setAttribute('aria-checked', state.ultraPerformanceMode ? 'true' : 'false');
+    }
+
+
+    function updatePerfToggleUI() {
+      if (!els.perfModeToggle) return;
+      els.perfModeToggle.classList.toggle('is-on', state.performanceMode);
+      els.perfModeToggle.setAttribute('aria-checked', state.performanceMode ? 'true' : 'false');
+    }
+
+    // ── Server Management ──
+    async function testServerUrl(baseUrl) {
+      const testUrl = baseUrl.replace(/\/$/, '') + '/movie/157336';
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 8000);
+        await fetch(testUrl, { method: 'HEAD', mode: 'no-cors', signal: controller.signal });
+        clearTimeout(timeout);
+        return { ok: true };
+      } catch (error) {
+        return { ok: false, error: error.message };
+      }
+    }
+
+    function renderServerList() {
+      if (!els.serverList) return;
+      const servers = getServers();
+      els.serverList.innerHTML = '';
+
+      servers.forEach((server, index) => {
+        const row = document.createElement('div');
+        row.className = 'flex flex-wrap items-center gap-2 rounded-xl border border-white/15 bg-white/8 p-3';
+        row.innerHTML = `
+          <div class="flex-1 min-w-[100px]">
+            <p class="text-[10px] font-black uppercase tracking-[.2em] text-white/40">Name</p>
+            <p class="text-sm font-bold text-white">${escapeHtml(server.name)}</p>
+          </div>
+          <div class="flex-[2] min-w-[160px]">
+            <p class="text-[10px] font-black uppercase tracking-[.2em] text-white/40">Link</p>
+            <p class="text-xs font-bold text-white/70 truncate">${escapeHtml(server.base)}</p>
+          </div>
+          <div class="flex gap-2">
+            <button type="button" data-edit-index="${index}" class="server-edit-btn glass flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-black transition-all hover:bg-white/15 active:scale-95">
+              <i data-lucide="pencil" class="size-3.5"></i>Edit
+            </button>
+            <button type="button" data-remove-index="${index}" class="server-remove-btn glass flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-black text-red-300 transition-all hover:bg-red-400/15 active:scale-95">
+              <i data-lucide="trash-2" class="size-3.5"></i>Remove
+            </button>
+          </div>
+        `;
+        els.serverList.appendChild(row);
+      });
+
+      // Bind edit/remove buttons
+      els.serverList.querySelectorAll('.server-edit-btn').forEach(btn => {
+        btn.addEventListener('click', () => startEditServer(parseInt(btn.dataset.editIndex)));
+      });
+      els.serverList.querySelectorAll('.server-remove-btn').forEach(btn => {
+        btn.addEventListener('click', () => removeServer(parseInt(btn.dataset.removeIndex)));
+      });
+
+      iconRefresh();
+    }
+
+    let editingServerIndex = null;
+
+    function startEditServer(index) {
+      const servers = getServers();
+      const server = servers[index];
+      if (!server) return;
+      editingServerIndex = index;
+      els.newServerName.value = server.name;
+      els.newServerUrl.value = server.base;
+      els.addServerButton.innerHTML = '<i data-lucide="check" class="size-4"></i>Update';
+      els.addServerStatus.classList.remove('hidden');
+      els.addServerStatus.textContent = 'Editing ' + server.name + ' — change fields and click Update';
+      els.addServerStatus.className = 'mt-2 text-xs font-bold text-amber-300';
+      iconRefresh();
+      els.newServerName.focus();
+    }
+
+    function cancelEditServer() {
+      editingServerIndex = null;
+      els.newServerName.value = '';
+      els.newServerUrl.value = '';
+      els.addServerButton.innerHTML = '<i data-lucide="plus" class="size-4"></i>Submit';
+      els.addServerStatus.classList.add('hidden');
+      iconRefresh();
+    }
+
+    async function addOrUpdateServer() {
+      const name = els.newServerName.value.trim();
+      let url = els.newServerUrl.value.trim();
+      if (!name || !url) {
+        showAddServerStatus('Enter both a name and a URL', 'error');
+        return;
+      }
+      if (!url.startsWith('http://') && !url.startsWith('https://')) {
+        url = 'https://' + url;
+      }
+
+      showAddServerStatus('Testing server with movie ID 157336...', 'info');
+      const test = await testServerUrl(url);
+
+      if (!test.ok) {
+        showAddServerStatus('That URL does not seem quite right. The server did not respond.', 'error');
+        return;
+      }
+
+      const servers = getServers();
+      if (editingServerIndex !== null && editingServerIndex >= 0 && editingServerIndex < servers.length) {
+        servers[editingServerIndex] = { name, base: url.replace(/\/$/, '') };
+        showAddServerStatus('Server updated successfully', 'success');
+      } else {
+        servers.push({ name, base: url.replace(/\/$/, '') });
+        showAddServerStatus('Server added and tested successfully', 'success');
+      }
+      saveServers(servers);
+      renderServerList();
+      cancelEditServer();
+      showToast('Servers updated');
+    }
+
+    function removeServer(index) {
+      const servers = getServers();
+      if (index < 0 || index >= servers.length) return;
+      const removed = servers[index].name;
+      servers.splice(index, 1);
+      saveServers(servers);
+      renderServerList();
+      if (editingServerIndex === index) cancelEditServer();
+      showToast(removed + ' removed');
+    }
+
+    function showAddServerStatus(message, type) {
+      if (!els.addServerStatus) return;
+      els.addServerStatus.classList.remove('hidden');
+      els.addServerStatus.textContent = message;
+      if (type === 'error') els.addServerStatus.className = 'mt-2 text-xs font-bold text-red-400';
+      else if (type === 'success') els.addServerStatus.className = 'mt-2 text-xs font-bold text-emerald-400';
+      else els.addServerStatus.className = 'mt-2 text-xs font-bold text-amber-300';
+    }
+
+    function updateSettingsControls() {
+      updateSegmentButton(els.cardSizeCompactButton, state.cardSize === 'compact');
+      updateSegmentButton(els.cardSizeLargeButton, state.cardSize !== 'compact');
+      updatePerfToggleUI();
+      updateUltraPerfToggleUI();
+      iconRefresh();
+    }
+
+    function updateFilterButtons() {
+      if (!els.filterBar) return;
+      els.filterBar.querySelectorAll('[data-filter]').forEach(button => {
+        const active = button.dataset.filter === state.contentFilter;
+        button.classList.toggle('is-active', active);
+        button.setAttribute('aria-pressed', active ? 'true' : 'false');
+        if (button.dataset.filter === 'tv') button.title = 'Show only TV results';
+      });
+    }
+
+    function refreshCurrentRows() {
+      updateFilterButtons();
+      if (state.searchQuery.trim()) {
+        renderRows([{ title: 'Search results', subtitle: 'Live and fuzzy TMDB matches', items: state.searchItems }]);
+      } else {
+        renderRows(state.homeRows);
+      }
+    }
+
+    function loadPlayerUrl(embedUrl) {
+      if (!embedUrl) return;
+      state.currentEmbedUrl = embedUrl;
+      clearPlayerFrame();
+      els.streamFrame.setAttribute('src', embedUrl);
+      els.streamFrame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-presentation');
+    }
+
+    function buildMoviePlayerUrl(tmdbId, serverIndex = 0) {
+      const servers = getServers(); const api = servers[serverIndex] || servers[0];
+      if (!api) return '';
+      return api.base + '/movie/' + encodeURIComponent(tmdbId);
+    }
+
+    function buildTvPlayerUrl(tmdbId, seasonNumber, episodeNumber, serverIndex = 0) {
+      const servers = getServers(); const api = servers[serverIndex] || servers[0];
+      if (!api) return '';
+      return api.base + '/tv/' + encodeURIComponent(tmdbId) + '/' + encodeURIComponent(String(seasonNumber)) + '/' + encodeURIComponent(String(episodeNumber));
+    }
+
+    function getCredentialType(value) {
+      const trimmed = value.trim();
+      if (trimmed.startsWith('eyJ') || trimmed.length > 60) return 'bearer';
+      return 'api_key';
+    }
+
+    async function tmdbFetch(path, params = {}, options = {}) {
+      const credential = state.credential.trim();
+      if (!credential) throw new Error('Missing TMDB API key or read access token.');
+
+      const url = new URL(TMDB_BASE + path);
+      Object.entries(params).forEach(([key, value]) => {
+        if (value !== undefined && value !== null && value !== '') url.searchParams.set(key, String(value));
+      });
+      if (!url.searchParams.has('language')) url.searchParams.set('language', 'en-GB');
+
+      const headers = { accept: 'application/json' };
+      if (getCredentialType(credential) === 'bearer') {
+        headers.Authorization = 'Bearer ' + credential;
+      } else {
+        url.searchParams.set('api_key', credential);
+      }
+
+      const response = await fetch(url.toString(), {
+        method: 'GET',
+        headers,
+        signal: options.signal
+      });
+
+      if (!response.ok) {
+        let detail = '';
+        try {
+          const json = await response.json();
+          detail = json.status_message ? ' — ' + json.status_message : '';
+        } catch (_) {}
+        throw new Error('TMDB ' + response.status + detail);
+      }
+
+      return response.json();
+    }
+
+    function img(path, size = 'w500') {
+      if (!path) return '';
+      if (size === 'original') return IMG_ORIGINAL + path;
+      if (size === 'w780') return IMG_W780 + path;
+      return IMG_W500 + path;
+    }
+
+    function getYear(item) {
+      const date = item.release_date || item.first_air_date || '';
+      return date ? date.slice(0, 4) : '';
+    }
+
+    function normalizeItem(item, forcedType) {
+      const mediaType = forcedType || item.media_type;
+      if (mediaType !== 'movie' && mediaType !== 'tv') return null;
+      if (!item.id) return null;
+
+      const title = mediaType === 'movie' ? item.title : item.name;
+      if (!title) return null;
+
+      return {
+        id: item.id,
+        tmdbId: String(item.id),
+        type: mediaType,
+        title,
+        description: item.overview || 'No overview is available from TMDB for this title.',
+        poster: img(item.poster_path, 'w500'),
+        backdrop: img(item.backdrop_path || item.poster_path, 'original'),
+        posterPath: item.poster_path || '',
+        backdropPath: item.backdrop_path || '',
+        rating: typeof item.vote_average === 'number' ? item.vote_average : null,
+        year: getYear(item),
+        popularity: item.popularity || 0
+      };
+    }
+
+    function dedupe(items) {
+      const seen = new Set();
+      const out = [];
+      for (const item of items) {
+        if (!item) continue;
+        const key = item.type + '-' + item.tmdbId;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(item);
+      }
+      return out;
+    }
+
+
+    function getAllKnownItems() {
+      return dedupe([
+        ...state.homeRows.flatMap(row => row.items || []),
+        ...state.searchItems
+      ]);
+    }
+
+    function getFirstVisibleHomeItem() {
+      return dedupe(state.homeRows.flatMap(row => row.items || []))[0] || null;
+    }
+
+    function normalizeForMatch(value) {
+      return String(value || '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/&/g, ' and ')
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim();
+    }
+
+    function compactForMatch(value) {
+      return normalizeForMatch(value).replace(/\s+/g, '');
+    }
+
+    function levenshteinDistance(a, b) {
+      a = normalizeForMatch(a);
+      b = normalizeForMatch(b);
+      if (a === b) return 0;
+      if (!a.length) return b.length;
+      if (!b.length) return a.length;
+      if (a.length > b.length) [a, b] = [b, a];
+
+      let previous = Array.from({ length: a.length + 1 }, (_, i) => i);
+      for (let j = 1; j <= b.length; j++) {
+        const current = [j];
+        for (let i = 1; i <= a.length; i++) {
+          const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+          current[i] = Math.min(
+            current[i - 1] + 1,
+            previous[i] + 1,
+            previous[i - 1] + cost
+          );
+        }
+        previous = current;
+      }
+      return previous[a.length];
+    }
+
+    function editSimilarity(a, b) {
+      const aa = normalizeForMatch(a);
+      const bb = normalizeForMatch(b);
+      if (!aa || !bb) return 0;
+      if (aa === bb) return 1;
+      return 1 - Math.min(levenshteinDistance(aa, bb) / Math.max(aa.length, bb.length, 1), 1);
+    }
+
+    function bestWindowEditSimilarity(query, target) {
+      const q = compactForMatch(query);
+      const t = compactForMatch(target);
+      if (!q || !t) return 0;
+      if (t.includes(q)) return 1;
+      if (q.includes(t) && t.length >= 4) return Math.min(0.92, t.length / q.length);
+
+      if (q.length > t.length) {
+        return 1 - Math.min(levenshteinDistance(q, t) / Math.max(q.length, t.length, 1), 1);
+      }
+
+      let best = 0;
+      const minLen = Math.max(2, Math.floor(q.length * 0.72));
+      const maxLen = Math.min(t.length, Math.ceil(q.length * 1.35));
+      for (let len = minLen; len <= maxLen; len++) {
+        for (let i = 0; i <= t.length - len; i++) {
+          const sub = t.slice(i, i + len);
+          const sim = 1 - Math.min(levenshteinDistance(q, sub) / Math.max(q.length, sub.length, 1), 1);
+          if (sim > best) best = sim;
+          if (best >= 0.98) return best;
+        }
+      }
+      return best;
+    }
+
+    function ngramDice(a, b, n = 2) {
+      const aa = compactForMatch(a);
+      const bb = compactForMatch(b);
+      if (aa.length < n || bb.length < n) return 0;
+      const make = value => {
+        const out = new Map();
+        for (let i = 0; i <= value.length - n; i++) {
+          const key = value.slice(i, i + n);
+          out.set(key, (out.get(key) || 0) + 1);
+        }
+        return out;
+      };
+      const A = make(aa);
+      const B = make(bb);
+      let intersection = 0;
+      let total = 0;
+      A.forEach(count => total += count);
+      B.forEach(count => total += count);
+      A.forEach((count, key) => {
+        if (B.has(key)) intersection += Math.min(count, B.get(key));
+      });
+      return total ? (2 * intersection) / total : 0;
+    }
+
+    function queryConfidenceThreshold(query) {
+      const compact = compactForMatch(query);
+      if (compact.length <= 2) return 1.1;
+      if (compact.length <= 3) return 0.86;
+      if (compact.length <= 5) return 0.68;
+      if (compact.length <= 8) return 0.57;
+      return 0.52;
+    }
+
+    function titleTokenScore(query, title) {
+      const qTokens = normalizeForMatch(query).split(' ').filter(Boolean);
+      const titleTokens = normalizeForMatch(title).split(' ').filter(Boolean);
+      if (!qTokens.length || !titleTokens.length) return 0;
+
+      let total = 0;
+      for (const qToken of qTokens) {
+        let best = 0;
+        for (const titleToken of titleTokens) {
+          if (qToken === titleToken) best = Math.max(best, 1);
+          if (titleToken.startsWith(qToken) && qToken.length >= 2) best = Math.max(best, 0.94);
+          if (titleToken.includes(qToken) && qToken.length >= 3) best = Math.max(best, 0.88);
+          if (qToken.includes(titleToken) && titleToken.length >= 4) best = Math.max(best, 0.78);
+          if (qToken.length >= 4 || titleToken.length >= 4) best = Math.max(best, bestWindowEditSimilarity(qToken, titleToken) * 0.96);
+        }
+        total += best;
+      }
+      return total / qTokens.length;
+    }
+
+    function fuzzyScore(query, item) {
+      const q = normalizeForMatch(query);
+      const title = normalizeForMatch(item.title);
+      if (!q || !title) return 0;
+
+      const qCompact = compactForMatch(q);
+      const titleCompact = compactForMatch(title);
+      if (title === q || titleCompact === qCompact) return 1.25;
+      if (title.startsWith(q)) return 1.14;
+      if (title.includes(q) && qCompact.length >= 3) return 1.04;
+      if (titleCompact.includes(qCompact) && qCompact.length >= 3) return 1.02;
+
+      const variants = [
+        title,
+        title.split(':')[0],
+        title.split('-')[0]
+      ].filter(Boolean);
+
+      let best = 0;
+      for (const variant of variants) {
+        const compactSimilarity = editSimilarity(qCompact, compactForMatch(variant));
+        const windowSimilarity = bestWindowEditSimilarity(q, variant);
+        const tokenSimilarity = titleTokenScore(q, variant);
+        const bigramSimilarity = ngramDice(q, variant, 2);
+        const trigramSimilarity = ngramDice(q, variant, 3);
+        best = Math.max(
+          best,
+          compactSimilarity * 0.72,
+          windowSimilarity * 0.98,
+          tokenSimilarity * 0.95,
+          bigramSimilarity * 0.82,
+          trigramSimilarity * 0.9
+        );
+      }
+
+      return best;
+    }
+
+    function rankItemsForQuery(items, query) {
+      return [...items]
+        .map(item => ({ item, score: fuzzyScore(query, item) }))
+        .sort((a, b) => {
+          const scoreDiff = b.score - a.score;
+          if (Math.abs(scoreDiff) > 0.04) return scoreDiff;
+          return (b.item.popularity || 0) - (a.item.popularity || 0);
+        })
+        .map(entry => entry.item);
+    }
+
+    function rankAndFilterItemsForQuery(items, query, options = {}) {
+      const threshold = options.threshold ?? queryConfidenceThreshold(query);
+      const qCompact = compactForMatch(query);
+      if (!qCompact || qCompact.length < 2) return [];
+
+      return [...items]
+        .map(item => ({ item, score: yearAdjustedScore(query, item, options) }))
+        .filter(entry => entry.score >= threshold)
+        .sort((a, b) => {
+          const scoreDiff = b.score - a.score;
+          if (Math.abs(scoreDiff) > 0.04) return scoreDiff;
+          return (b.item.popularity || 0) - (a.item.popularity || 0);
+        })
+        .map(entry => entry.item);
+    }
+
+    function getLocalFuzzyItems(query, limit = 12, options = {}) {
+      const q = normalizeForMatch(query);
+      if (compactForMatch(q).length < 3) return [];
+      return rankAndFilterItemsForQuery(getAllKnownItems(), q, options)
+        .slice(0, limit);
+    }
+
+    function parseSearchQuery(query) {
+      const raw = String(query || '').trim().replace(/\s+/g, ' ');
+      const yearMatch = raw.match(/(?:^|\s)((?:19|20)\d{2})(?:\s|$)/);
+      const year = yearMatch ? yearMatch[1] : '';
+      const titleQuery = year ? raw.replace(yearMatch[1], ' ').replace(/\s+/g, ' ').trim() : raw;
+      return { raw, year, titleQuery: titleQuery || raw };
+    }
+
+    function yearAdjustedScore(query, item, options = {}) {
+      let score = fuzzyScore(query, item);
+      const wantedYear = options.year ? String(options.year) : '';
+      if (wantedYear) {
+        if (item.year === wantedYear) score += 0.32;
+        else if (item.year) score -= 0.18;
+      }
+      return score;
+    }
+
+    function searchSubtitleFor(parsed, fallback) {
+      return parsed.year ? fallback + ' · boosted for ' + parsed.year : fallback;
+    }
+
+    function previewHeroFromSearchInput(value) {
+      const query = value.trim();
+      if (!query) {
+        const firstHomeItem = getFirstVisibleHomeItem();
+        if (firstHomeItem) setHero(firstHomeItem);
+        return;
+      }
+      if (compactForMatch(query).length < 3) return;
+
+      const localMatch = getLocalFuzzyItems(query, 1)[0];
+      if (localMatch) setHero(localMatch);
+    }
+
+    function setBusy(isBusy) {
+      els.loadingState.classList.toggle('hidden', !isBusy);
+      if (isBusy) {
+        els.errorState.classList.add('hidden');
+        els.emptyState.classList.add('hidden');
+      }
+      iconRefresh();
+    }
+
+    function setError(message) {
+      els.errorMessage.textContent = message;
+      els.errorState.classList.remove('hidden');
+      els.loadingState.classList.add('hidden');
+      els.rowsRoot.innerHTML = '';
+      els.emptyState.classList.add('hidden');
+      iconRefresh();
+    }
+
+    function setHero(item) {
+      state.selected = item;
+      if (item && item.backdrop) {
+        els.heroBackdrop.src = item.backdrop;
+      } else {
+        els.heroBackdrop.removeAttribute('src');
+      }
+      els.heroBackdrop.alt = item ? item.title + ' backdrop' : '';
+      els.heroTitle.textContent = item ? item.title : 'Connect TMDB';
+      els.heroDescription.textContent = item ? item.description : 'Add your TMDB API key or read access token to search the live TMDB database and load seasons dynamically.';
+      els.heroTag.innerHTML = item ? '<i data-lucide="sparkles" class="size-4"></i>' + (item.type === 'movie' ? 'Movie' : 'TV Show') + (item.year ? ' · ' + item.year : '') : '<i data-lucide="sparkles" class="size-4"></i>Live TMDB';
+      els.heroPlayButton.classList.toggle('hidden', !item);
+      els.heroPlayButton.classList.toggle('flex', !!item);
+      els.heroSetupButton.classList.toggle('hidden', !!state.credential);
+      els.heroSetupButton.classList.toggle('flex', !state.credential);
+      updateFavoriteButtons();
+      updateSettingsControls();
+      renderSearchHistory();
+      iconRefresh();
+    }
+
+    async function loadHome() {
+      if (!state.credential.trim()) {
+        setHero(null);
+        els.workspaceTitle.textContent = 'Add a TMDB key first';
+        els.workspaceEyebrow.textContent = 'Setup needed';
+        els.resultCount.textContent = '0 titles';
+        els.rowsRoot.innerHTML = '';
+        els.emptyState.classList.add('hidden');
+        els.errorState.classList.add('hidden');
+        return;
+      }
+
+      setBusy(true);
+      els.workspaceEyebrow.textContent = 'TMDB Browser';
+      els.workspaceTitle.textContent = 'Live catalogue';
+      els.rowsRoot.innerHTML = '';
+
+      try {
+        const [trending, moviePopular, tvPopular, movieTop, tvTop] = await Promise.all([
+          tmdbFetch('/trending/all/week'),
+          tmdbFetch('/movie/popular', { page: 1 }),
+          tmdbFetch('/tv/popular', { page: 1 }),
+          tmdbFetch('/movie/top_rated', { page: 1 }),
+          tmdbFetch('/tv/top_rated', { page: 1 })
+        ]);
+
+        const trendingItems = dedupe((trending.results || []).map(x => normalizeItem(x)).filter(Boolean));
+        const moviePopularItems = dedupe((moviePopular.results || []).map(x => normalizeItem(x, 'movie')).filter(Boolean));
+        const tvPopularItems = dedupe((tvPopular.results || []).map(x => normalizeItem(x, 'tv')).filter(Boolean));
+        const movieTopItems = dedupe((movieTop.results || []).map(x => normalizeItem(x, 'movie')).filter(Boolean));
+        const tvTopItems = dedupe((tvTop.results || []).map(x => normalizeItem(x, 'tv')).filter(Boolean));
+
+        state.homeRows = [
+          { title: 'Trending this week', subtitle: 'Live from TMDB trending', items: trendingItems },
+          { title: 'Popular movies', subtitle: 'Current TMDB movie results', items: moviePopularItems },
+          { title: 'Popular TV shows', subtitle: 'Current TMDB show results', items: tvPopularItems },
+          { title: 'Top rated movies', subtitle: 'Highly rated TMDB films', items: movieTopItems },
+          { title: 'Top rated TV', subtitle: 'Highly rated TMDB series', items: tvTopItems }
+        ].filter(row => row.items.length);
+
+        const all = dedupe(state.homeRows.flatMap(row => row.items));
+        if (all.length) setHero(all[0]);
+        renderRows(state.homeRows);
+        state.homeLoaded = true;
+        setBusy(false);
+      } catch (error) {
+        setBusy(false);
+        setError(error.message || 'Unknown TMDB error.');
+      }
+    }
+
+    function renderRows(rows) {
+      els.rowsRoot.innerHTML = '';
+      const preparedRows = applyContentFilterToRows(decorateHomeRows(rows));
+      const total = dedupe(preparedRows.flatMap(row => row.items)).length;
+      els.resultCount.textContent = total + ' title' + (total === 1 ? '' : 's');
+      els.emptyState.classList.toggle('hidden', total !== 0);
+      els.errorState.classList.add('hidden');
+      updateFilterButtons();
+
+      preparedRows.forEach(row => {
+        const section = document.createElement('section');
+        section.className = 'space-y-4';
+
+        const header = document.createElement('div');
+        header.className = 'px-5 sm:px-8 lg:px-12';
+        header.innerHTML = `
+          <div class="flex items-end justify-between gap-4">
+            <div>
+              <h2 class="text-2xl font-black tracking-[-.045em] sm:text-3xl">${escapeHtml(row.title)}</h2>
+              <p class="mt-1 text-sm font-medium text-white/50">${escapeHtml(row.subtitle)}</p>
+            </div>
+            <span class="hidden rounded-full border border-white/20 bg-white/10 px-3 py-2 text-xs font-bold text-white/55 backdrop-blur-2xl sm:block">${row.items.length} found</span>
+          </div>
+        `;
+
+        const scroller = document.createElement('div');
+        scroller.className = 'mx-5 flex snap-x gap-4 overflow-x-auto pb-4 pr-12 pt-1 scrollbar-none sm:mx-8 sm:pr-16 lg:mx-12 lg:pr-24';
+        row.items.forEach(item => scroller.appendChild(createPosterCard(item)));
+
+        section.appendChild(header);
+        section.appendChild(scroller);
+        els.rowsRoot.appendChild(section);
+      });
+
+      iconRefresh();
+      observeNewImages();
+    }
+
+    function createPosterCard(item) {
+      const card = document.createElement('button');
+      card.type = 'button';
+      card.className = getPosterCardClass();
+      card.setAttribute('aria-label', 'Open ' + item.title);
+      const posterHtml = item.poster
+        ? `<img data-src="${escapeHtml(item.poster)}" alt="${escapeHtml(item.title)} poster" class="size-full object-cover transition-transform duration-500 ease-out group-hover:scale-105" loading="lazy" />`
+        : `<div class="grid size-full place-items-center bg-white/8 text-center text-xs font-black uppercase tracking-[.2em] text-white/35">No poster</div>`;
+      card.innerHTML = `
+        <div class="relative aspect-[2/3] overflow-hidden">
+          ${posterHtml}
+          <div class="absolute left-3 top-3 z-10 rounded-full border border-white/20 bg-black/45 px-3 py-1 text-[10px] font-black uppercase tracking-[.18em] text-white/85 backdrop-blur-2xl">${item.type === 'movie' ? 'Movie' : 'TV'}</div>
+          ${isFavorite(item) ? '<div class="poster-favorite-badge"><i data-lucide="heart" class="size-4 fill-white text-white"></i></div>' : ''}
+          ${item.resumeSeason && item.resumeEpisode ? '<div class="resume-ribbon">Resume S' + escapeHtml(item.resumeSeason) + ' E' + escapeHtml(item.resumeEpisode) + '</div>' : ''}
+          <div class="absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-black via-black/72 to-transparent p-3 pt-16">
+            <h3 class="line-clamp-2 text-sm font-black tracking-[-.02em]">${escapeHtml(item.title)}</h3>
+            <p class="mt-1 line-clamp-2 text-xs leading-5 text-white/56">${escapeHtml(item.year || 'TMDB')}</p>
+          </div>
+        </div>
+      `;
+      card.addEventListener('click', () => openContent(item));
+      return card;
+    }
+
+    function showSearchOverlay() {
+      els.searchOverlay.classList.remove('hidden');
+      requestAnimationFrame(() => {
+        els.searchOverlay.classList.remove('pointer-events-none', 'opacity-0');
+        els.searchOverlay.classList.add('opacity-100');
+      });
+    }
+
+    function hideSearchOverlay() {
+      els.searchOverlay.classList.add('pointer-events-none', 'opacity-0');
+      els.searchOverlay.classList.remove('opacity-100');
+      setTimeout(() => els.searchOverlay.classList.add('hidden'), 180);
+    }
+
+    function renderSearchHistory() {
+      if (!els.recentSearches) return;
+      const searches = state.searchHistory.slice(0, 8);
+      if (!searches.length) {
+        els.recentSearches.classList.add('hidden');
+        els.recentSearches.innerHTML = '';
+        return;
+      }
+      els.recentSearches.classList.remove('hidden');
+      els.recentSearches.innerHTML = `
+        <div class="mb-2 flex items-center justify-between gap-3">
+          <p class="text-[10px] font-black uppercase tracking-[.22em] text-white/38">Recent searches</p>
+          <button id="clearRecentSearchesInline" type="button" class="text-[10px] font-black uppercase tracking-[.18em] text-white/45 transition hover:text-white">Clear</button>
+        </div>
+        <div class="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
+          ${searches.map(query => '<button type="button" data-recent-search="' + escapeHtml(query) + '" class="recent-search-chip shrink-0 rounded-full px-3 py-2 text-xs font-black text-white/75 transition-all duration-300 hover:bg-white/13 active:scale-95">' + escapeHtml(query) + '</button>').join('')}
+        </div>
+      `;
+      els.recentSearches.querySelectorAll('[data-recent-search]').forEach(button => {
+        button.addEventListener('click', () => {
+          const query = button.dataset.recentSearch || '';
+          els.searchInput.value = query;
+          previewHeroFromSearchInput(query);
+          runSearch(query);
+          els.searchInput.focus();
+        });
+      });
+      const clearButton = document.getElementById('clearRecentSearchesInline');
+      if (clearButton) clearButton.addEventListener('click', clearSearchHistory);
+    }
+
+    function renderSearchOverlay(items, status) {
+      els.searchStatus.textContent = status;
+      els.searchResults.innerHTML = '';
+      renderSearchHistory();
+
+      if (!items.length) {
+        const message = state.searchQuery.trim() ? 'No close TMDB matches yet. Try pressing Enter, removing extra words, or adding a year like “Batman 2022”.' : 'Start typing, or pick a recent search below.';
+        els.searchResults.innerHTML = '<div class="rounded-2xl border border-white/15 bg-white/8 p-4 text-sm font-bold text-white/55">' + escapeHtml(message) + '</div>';
+        iconRefresh();
+        return;
+      }
+
+      items.slice(0, 8).forEach(item => {
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.className = 'grid grid-cols-[58px_1fr_auto] items-center gap-3 rounded-2xl border border-white/15 bg-white/8 p-2 text-left transition-all duration-300 hover:bg-white/14 active:scale-[.98]';
+        row.innerHTML = `
+          <div class="aspect-[2/3] overflow-hidden rounded-xl bg-white/10">${item.poster ? `<img src="${escapeHtml(item.poster)}" alt="" class="size-full object-cover" />` : ''}</div>
+          <div class="min-w-0">
+            <h3 class="line-clamp-1 text-sm font-black">${escapeHtml(item.title)}</h3>
+            <p class="line-clamp-2 text-xs leading-5 text-white/55">${escapeHtml(item.description)}</p>
+          </div>
+          <span class="rounded-full border border-white/15 bg-white/10 px-3 py-1 text-[10px] font-black uppercase tracking-[.18em] text-white/60">${item.type === 'movie' ? 'Movie' : 'TV'}</span>
+        `;
+        row.addEventListener('click', () => {
+          addSearchHistory(state.searchQuery || item.title);
+          hideSearchOverlay();
+          els.searchInput.blur();
+          openContent(item);
+        });
+        els.searchResults.appendChild(row);
+      });
+
+      iconRefresh();
+    }
+
+    async function runSearch(query) {
+      state.searchQuery = query.trim();
+      els.clearSearchButton.classList.toggle('hidden', state.searchQuery.length === 0);
+      els.clearSearchButton.classList.toggle('grid', state.searchQuery.length > 0);
+
+      if (!state.searchQuery) {
+        hideSearchOverlay();
+        els.workspaceEyebrow.textContent = 'TMDB Browser';
+        els.workspaceTitle.textContent = 'Live catalogue';
+        renderRows(state.homeRows);
+        const firstHomeItem = getFirstVisibleHomeItem();
+        if (firstHomeItem) setHero(firstHomeItem);
+        return [];
+      }
+
+      const parsedSearch = parseSearchQuery(state.searchQuery);
+      const tmdbQuery = parsedSearch.titleQuery;
+
+      showSearchOverlay();
+      previewHeroFromSearchInput(tmdbQuery);
+
+      if (!state.credential.trim()) {
+        renderSearchOverlay([], 'Add TMDB key first');
+        return [];
+      }
+
+      if (compactForMatch(tmdbQuery).length < 2) {
+        renderSearchOverlay([], 'Type 2+ characters');
+        return [];
+      }
+
+      if (state.searchController) state.searchController.abort();
+      state.searchController = new AbortController();
+      renderSearchOverlay([], 'Searching TMDB...');
+
+      try {
+        const data = await tmdbFetch('/search/multi', {
+          query: tmdbQuery,
+          include_adult: 'false',
+          page: 1
+        }, { signal: state.searchController.signal });
+
+        const rawTmdbItems = dedupe((data.results || [])
+          .filter(x => x.media_type === 'movie' || x.media_type === 'tv')
+          .map(x => normalizeItem(x))
+          .filter(Boolean));
+
+        let items = rankAndFilterItemsForQuery(rawTmdbItems, tmdbQuery, { year: parsedSearch.year });
+        let status = items.length ? (parsedSearch.year ? 'Live TMDB results · year boosted' : 'Live TMDB results') : 'No close TMDB title match';
+        let subtitle = searchSubtitleFor(parsedSearch, 'Live from TMDB /search/multi');
+
+        if (!items.length) {
+          const localFuzzyItems = getLocalFuzzyItems(tmdbQuery, 12, { year: parsedSearch.year });
+          const bestLocal = localFuzzyItems[0];
+
+          if (bestLocal) {
+            try {
+              const fuzzyData = await tmdbFetch('/search/multi', {
+                query: bestLocal.title,
+                include_adult: 'false',
+                page: 1
+              }, { signal: state.searchController.signal });
+
+              const fuzzyRemoteItems = dedupe((fuzzyData.results || [])
+                .filter(x => x.media_type === 'movie' || x.media_type === 'tv')
+                .map(x => normalizeItem(x))
+                .filter(Boolean));
+
+              const cleanRemoteMatches = rankAndFilterItemsForQuery(fuzzyRemoteItems, bestLocal.title, { threshold: 0.72, year: parsedSearch.year });
+              items = dedupe([...localFuzzyItems, ...cleanRemoteMatches]);
+              status = 'Typo-corrected title matches';
+              subtitle = 'Fuzzy title matches from your loaded TMDB catalogue';
+            } catch (fuzzyError) {
+              if (fuzzyError.name === 'AbortError') return;
+              items = localFuzzyItems;
+              status = 'Typo-corrected local matches';
+              subtitle = 'Fuzzy title matches from loaded TMDB rows';
+            }
+          }
+        }
+
+        state.searchItems = items;
+
+        if (items.length) setHero(items[0]);
+        renderSearchOverlay(items, items.length ? status : 'No close title matches');
+        els.workspaceEyebrow.textContent = items.length && status.includes('Typo') ? 'Fuzzy Search' : 'Search';
+        els.workspaceTitle.textContent = 'Results for “' + state.searchQuery + '”';
+        renderRows([{ title: 'Search results', subtitle, items }]);
+        return items;
+      } catch (error) {
+        if (error.name === 'AbortError') return;
+        const parsedSearch = parseSearchQuery(state.searchQuery);
+        const localFuzzyItems = getLocalFuzzyItems(parsedSearch.titleQuery, 12, { year: parsedSearch.year });
+        if (localFuzzyItems.length) {
+          state.searchItems = localFuzzyItems;
+          setHero(localFuzzyItems[0]);
+          renderSearchOverlay(localFuzzyItems, 'TMDB failed · typo-corrected local matches');
+          els.workspaceEyebrow.textContent = 'Fuzzy Search';
+          els.workspaceTitle.textContent = 'Results for “' + state.searchQuery + '”';
+          renderRows([{ title: 'Search results', subtitle: error.message || 'TMDB failed, showing close local title matches', items: localFuzzyItems }]);
+          return localFuzzyItems;
+        }
+        renderSearchOverlay([], error.message || 'Search failed');
+        els.workspaceEyebrow.textContent = 'Search error';
+        els.workspaceTitle.textContent = 'TMDB search failed';
+        renderRows([{ title: 'Search results', subtitle: error.message || 'Search failed', items: [] }]);
+        return [];
+      }
+    }
+
+    function debounceSearch(value) {
+      clearTimeout(state.searchTimer);
+      state.searchTimer = setTimeout(() => runSearch(value), 260);
+    }
+
+    async function openContent(item) {
+        loadCast(item.type, item.tmdbId);
+      setHero(item);
+      state.selected = item;
+      state.selectedTvDetails = null;
+      state.selectedSeason = null;
+      state.selectedEpisode = null;
+      state.currentEmbedUrl = '';
+      state.currentServerIndex = 0;
+
+      openModalShell();
+      els.modalType.textContent = item.type === 'movie' ? 'Movie' : 'TV Show';
+      els.modalTitle.textContent = item.title;
+      els.nowPlayingEyebrow.textContent = item.type === 'movie' ? 'Now Playing Movie' : 'Preparing TV Show';
+      els.nowPlayingTitle.textContent = item.title;
+      els.nowPlayingBadge.textContent = item.year || 'TMDB ' + item.tmdbId;
+      els.modalDescription.textContent = item.description;
+      renderMeta(item);
+      updateFavoriteButtons();
+      els.episodeHub.classList.toggle('hidden', item.type !== 'tv');
+      els.serverSelector.classList.toggle('hidden', getServers().length <= 1);
+      clearPlayerFrame();
+
+      if (getServers().length > 0) {
+        renderServerButtons();
+      }
+
+      if (item.type === 'movie') {
+        addRecent(item);
+        refreshCurrentRows();
+        loadPlayerUrl(buildMoviePlayerUrl(item.tmdbId, state.currentServerIndex));
+        return;
+      }
+
+      try {
+        els.episodeLoading.classList.remove('hidden');
+        els.seasonChips.innerHTML = '';
+        els.episodeList.innerHTML = '';
+        const details = await tmdbFetch('/tv/' + encodeURIComponent(item.tmdbId));
+        state.selectedTvDetails = details;
+        renderTvDetails(details);
+        const seasons = getUsableSeasons(details);
+        if (!seasons.length) throw new Error('TMDB returned no seasons for this show.');
+        const resumeSeason = item.resumeSeason || seasons[0].season_number;
+        await selectSeason(resumeSeason, item.resumeEpisode || null);
+      } catch (error) {
+        els.episodeLoading.classList.add('hidden');
+        els.episodeList.innerHTML = '<div class="rounded-2xl border border-white/15 bg-white/8 p-4 text-sm font-bold text-white/58">' + escapeHtml(error.message || 'Could not load seasons.') + '</div>';
+      }
+
+      iconRefresh();
+    }
+
+    function renderMeta(item) {
+      const chips = [];
+      chips.push(item.type === 'movie' ? 'Movie' : 'TV Show');
+      if (item.year) chips.push(item.year);
+      if (typeof item.rating === 'number' && item.rating > 0) chips.push('★ ' + item.rating.toFixed(1));
+      chips.push('TMDB ' + item.tmdbId);
+      els.metaLine.innerHTML = chips.map(chip => '<span class="rounded-full border border-white/15 bg-white/8 px-3 py-1.5 text-xs font-bold text-white/58">' + escapeHtml(chip) + '</span>').join('');
+    }
+
+    function renderTvDetails(details) {
+      if (details.overview) els.modalDescription.textContent = details.overview;
+      if (details.name) els.modalTitle.textContent = details.name;
+      const chips = [];
+      chips.push('TV Show');
+      if (details.first_air_date) chips.push(details.first_air_date.slice(0, 4));
+      if (details.number_of_seasons) chips.push(details.number_of_seasons + ' seasons');
+      if (details.number_of_episodes) chips.push(details.number_of_episodes + ' episodes');
+      if (typeof details.vote_average === 'number' && details.vote_average > 0) chips.push('★ ' + details.vote_average.toFixed(1));
+      els.metaLine.innerHTML = chips.map(chip => '<span class="rounded-full border border-white/15 bg-white/8 px-3 py-1.5 text-xs font-bold text-white/58">' + escapeHtml(chip) + '</span>').join('');
+      renderSeasonChips(details);
+    }
+
+    function getUsableSeasons(details) {
+      return (details.seasons || [])
+        .filter(season => typeof season.season_number === 'number' && season.season_number > 0 && season.episode_count > 0)
+        .sort((a, b) => a.season_number - b.season_number);
+    }
+
+    function renderSeasonChips(details) {
+      const seasons = getUsableSeasons(details);
+      els.seasonChips.innerHTML = '';
+      seasons.forEach(season => {
+        const active = state.selectedSeason && state.selectedSeason.season_number === season.season_number;
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'season-chip shrink-0 snap-start rounded-full border px-4 py-3 text-sm font-black shadow-glass transition-all duration-300 ease-out active:scale-95 ' + (active ? 'border-white bg-white text-black' : 'border-white/20 bg-white/10 text-white hover:bg-white/15');
+        button.textContent = 'Season ' + season.season_number;
+        button.addEventListener('click', () => selectSeason(season.season_number));
+        els.seasonChips.appendChild(button);
+      });
+      iconRefresh();
+    }
+
+    async function selectSeason(seasonNumber, preferredEpisodeNumber = null) {
+      if (!state.selected || state.selected.type !== 'tv') return;
+      const details = state.selectedTvDetails;
+      const seasonMeta = getUsableSeasons(details).find(s => s.season_number === Number(seasonNumber));
+      if (!seasonMeta) return;
+
+      const previousSeasonNumber = state.selectedSeason && state.selectedSeason.season_number;
+      state.selectedSeason = seasonMeta;
+      if (previousSeasonNumber !== seasonMeta.season_number) {
+        state.episodeQuery = '';
+        if (els.episodeSearchInput) els.episodeSearchInput.value = '';
+      }
+      renderSeasonChips(details);
+      els.episodeLoading.classList.remove('hidden');
+      els.episodeList.innerHTML = '';
+      iconRefresh();
+
+      try {
+        const seasonDetails = await tmdbFetch('/tv/' + encodeURIComponent(state.selected.tmdbId) + '/season/' + encodeURIComponent(String(seasonNumber)));
+        const episodes = seasonDetails.episodes || [];
+        state.selectedSeason = { ...seasonMeta, details: seasonDetails, episodes };
+        els.episodeLoading.classList.add('hidden');
+        renderSeasonChips(details);
+        renderEpisodes(episodes);
+
+        if (episodes.length) {
+          const targetEpisode = episodes.find(ep => ep.episode_number === Number(preferredEpisodeNumber)) || episodes[0];
+          selectEpisode(targetEpisode, false);
+        } else {
+          els.episodeList.innerHTML = '<div class="rounded-2xl border border-white/15 bg-white/8 p-4 text-sm font-bold text-white/58">No episodes returned by TMDB for this season.</div>';
+        }
+      } catch (error) {
+        els.episodeLoading.classList.add('hidden');
+        els.episodeList.innerHTML = '<div class="rounded-2xl border border-white/15 bg-white/8 p-4 text-sm font-bold text-white/58">' + escapeHtml(error.message || 'Season load failed.') + '</div>';
+      }
+    }
+
+    function renderEpisodes(episodes) {
+      els.episodeList.innerHTML = '';
+      const query = normalizeForMatch(state.episodeQuery || '');
+      const visibleEpisodes = query
+        ? episodes.filter(episode => {
+            const haystack = normalizeForMatch([
+              String(episode.episode_number || ''),
+              episode.name || '',
+              episode.overview || ''
+            ].join(' '));
+            return haystack.includes(query) || fuzzyScore(query, { title: episode.name || '' }) >= 0.62;
+          })
+        : episodes;
+
+      if (!visibleEpisodes.length) {
+        els.episodeList.innerHTML = '<div class="rounded-2xl border border-white/15 bg-white/8 p-4 text-sm font-bold text-white/58">No episodes match that search.</div>';
+        iconRefresh();
+        return;
+      }
+
+      visibleEpisodes.forEach(episode => {
+        const active = state.selectedEpisode && state.selectedEpisode.episode_number === episode.episode_number;
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'episode-button w-full rounded-2xl border p-3 text-left shadow-glass backdrop-blur-2xl transition-all duration-300 ease-out active:scale-95 ' + (active ? 'border-white bg-white text-black' : 'border-white/20 bg-white/10 text-white hover:bg-white/15');
+        const still = episode.still_path ? '<img src="' + escapeHtml(img(episode.still_path, 'w780')) + '" alt="" class="h-16 w-24 shrink-0 rounded-xl object-cover" />' : '<div class="grid h-16 w-24 shrink-0 place-items-center rounded-xl bg-white/10 text-[10px] font-black uppercase tracking-[.16em] text-white/35">No still</div>';
+        const runtime = episode.runtime ? episode.runtime + 'm' : 'Runtime N/A';
+        button.innerHTML = `
+          <div class="flex gap-3">
+            ${still}
+            <div class="min-w-0 flex-1">
+              <div class="flex items-start justify-between gap-2">
+                <p class="${active ? 'text-black/55' : 'text-white/45'} text-[10px] font-black uppercase tracking-[.2em]">Episode ${episode.episode_number}</p>
+                <span class="${active ? 'border-black/15 bg-black/5 text-black/60' : 'border-white/15 bg-white/10 text-white/55'} shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-bold">${escapeHtml(runtime)}</span>
+              </div>
+              <h4 class="mt-1 line-clamp-1 text-sm font-black tracking-[-.02em]">${escapeHtml(episode.name || 'Untitled episode')}</h4>
+              <p class="mt-1 line-clamp-2 text-xs leading-5 ${active ? 'text-black/55' : 'text-white/50'}">${escapeHtml(episode.overview || 'No episode overview from TMDB.')}</p>
+            </div>
+          </div>
+        `;
+        button.addEventListener('click', () => selectEpisode(episode, true));
+        els.episodeList.appendChild(button);
+      });
+      iconRefresh();
+    }
+
+    async function selectEpisode(episode, rerender) {
+      state.selectedEpisode = episode;
+      const seasonNumber = state.selectedSeason.season_number;
+      const episodeNumber = episode.episode_number;
+      state.currentServerIndex = 0;
+
+      if (getServers().length > 0) {
+        renderServerButtons();
+      }
+
+      loadPlayerUrl(buildTvPlayerUrl(state.selected.tmdbId, seasonNumber, episodeNumber, state.currentServerIndex));
+      els.nowPlayingEyebrow.textContent = 'Now Playing Episode';
+      els.nowPlayingTitle.textContent = episode.name || state.selected.title;
+      els.nowPlayingBadge.textContent = 'S' + seasonNumber + ' E' + episodeNumber + (episode.runtime ? ' · ' + episode.runtime + 'm' : '');
+      addRecent(state.selected, { seasonNumber, episodeNumber, episodeTitle: episode.name || '' });
+      refreshCurrentRows();
+      if (rerender && state.selectedSeason.episodes) renderEpisodes(state.selectedSeason.episodes);
+    }
+
+    function renderServerButtons() {
+      if (!els.serverButtons) return;
+      els.serverButtons.innerHTML = '';
+      const activeIndex = state.currentServerIndex;
+
+      getServers().forEach((api, index) => {
+        const isActive = index === activeIndex;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'server-btn shrink-0 rounded-full border px-4 py-2.5 text-xs font-black uppercase tracking-[.16em] shadow-glass transition-all duration-300 ease-out active:scale-95 ' +
+          (isActive ? 'border-white bg-white text-black' : 'border-white/20 bg-white/10 text-white hover:bg-white/15');
+        btn.textContent = api.name;
+        btn.addEventListener('click', () => switchServer(index));
+        els.serverButtons.appendChild(btn);
+      });
+
+      iconRefresh();
+    }
+
+    function switchServer(index) {
+      if (index < 0 || index >= getServers().length) return;
+      state.currentServerIndex = index;
+      const item = state.selected;
+      if (!item) return;
+      let url = '';
+      if (item.type === 'movie') {
+        url = buildMoviePlayerUrl(item.tmdbId, index);
+      } else if (state.selectedSeason && state.selectedEpisode) {
+        url = buildTvPlayerUrl(item.tmdbId, state.selectedSeason.season_number, state.selectedEpisode.episode_number, index);
+      }
+      if (url) {
+        loadPlayerUrl(url);
+        showToast('Switched to ' + getServers()[index].name);
+      }
+      renderServerButtons();
+    }
+
+    function openModalShell() {
+      els.playerModal.classList.remove('hidden');
+      els.playerModal.classList.add('flex');
+      document.body.classList.add('modal-open');
+      requestAnimationFrame(() => {
+        els.playerModal.classList.remove('pointer-events-none', 'opacity-0');
+        els.playerModal.classList.add('opacity-100');
+        els.modalPanel.classList.remove('translate-y-6', 'opacity-0');
+        els.modalPanel.classList.add('translate-y-0', 'opacity-100');
+      });
+      iconRefresh();
+    }
+
+    function closePlayer() {
+      els.playerModal.classList.add('pointer-events-none', 'opacity-0');
+      els.playerModal.classList.remove('opacity-100');
+      els.modalPanel.classList.add('translate-y-6', 'opacity-0');
+      els.modalPanel.classList.remove('translate-y-0', 'opacity-100');
+      document.body.classList.remove('modal-open');
+      setTimeout(() => {
+        els.playerModal.classList.add('hidden');
+        els.playerModal.classList.remove('flex');
+        clearPlayerFrame();
+      }, 280);
+    }
+
+    function reloadPlayer() {
+      if (!state.currentEmbedUrl) return;
+      const url = state.currentEmbedUrl;
+      clearPlayerFrame();
+      setTimeout(() => { loadPlayerUrl(url); }, 80);
+    }
+
+    function resetPlayer() {
+      clearPlayerFrame();
+      showToast('Player reset');
+    }
+
+    async function commitSearch(openBest = false) {
+      const query = els.searchInput.value.trim();
+      clearTimeout(state.searchTimer);
+      if (!query) {
+        await runSearch('');
+        return;
+      }
+      addSearchHistory(query);
+      showSearchOverlay();
+      const results = await runSearch(query);
+      if (openBest) {
+        const best = (Array.isArray(results) && results[0]) || state.searchItems[0];
+        if (best) {
+          hideSearchOverlay();
+          els.searchInput.blur();
+          openContent(best);
+        } else {
+          showToast('No result to open');
+        }
+      }
+    }
+
+    async function copyEmbedUrl() {
+      if (!state.currentEmbedUrl) return;
+      try {
+        await navigator.clipboard.writeText(state.currentEmbedUrl);
+        showToast('Embed URL copied');
+      } catch (_) {
+        showToast('Copy failed');
+      }
+    }
+
+    function openSettings() {
+      els.tmdbCredential.value = state.credential;
+      updateSettingsControls();
+      renderServerList();
+      cancelEditServer();
+      els.settingsModal.classList.remove('hidden');
+      els.settingsModal.classList.add('flex');
+      requestAnimationFrame(() => {
+        els.settingsModal.classList.remove('pointer-events-none', 'opacity-0');
+        els.settingsModal.classList.add('opacity-100');
+        els.settingsPanel.classList.remove('translate-y-4', 'opacity-0');
+        els.settingsPanel.classList.add('translate-y-0', 'opacity-100');
+      });
+      setTimeout(() => els.tmdbCredential.focus(), 120);
+      iconRefresh();
+    }
+
+    function closeSettings() {
+      els.settingsModal.classList.add('pointer-events-none', 'opacity-0');
+      els.settingsModal.classList.remove('opacity-100');
+      els.settingsPanel.classList.add('translate-y-4', 'opacity-0');
+      els.settingsPanel.classList.remove('translate-y-0', 'opacity-100');
+      setTimeout(() => {
+        els.settingsModal.classList.add('hidden');
+        els.settingsModal.classList.remove('flex');
+      }, 250);
+    }
+
+    function saveCredential() {
+      const value = els.tmdbCredential.value.trim();
+      if (!value) {
+        showToast('Paste a TMDB key first');
+        return;
+      }
+      localStorage.setItem(STORAGE_KEY, value);
+      state.credential = value;
+      showToast('TMDB key saved');
+      closeSettings();
+      loadHome();
+      if (pendingDeepLinkTmdbId) consumePendingDeepLink();
+    }
+
+    function clearCredential() {
+      localStorage.removeItem(STORAGE_KEY);
+      state.credential = '';
+      els.tmdbCredential.value = '';
+      state.homeRows = [];
+      state.homeLoaded = false;
+      showToast('TMDB key cleared');
+      loadHome();
+    }
+
+    function showToast(message) {
+      els.toast.textContent = message;
+      els.toast.classList.remove('hidden');
+      requestAnimationFrame(() => {
+        els.toast.classList.remove('opacity-0');
+        els.toast.classList.add('opacity-100');
+      });
+      setTimeout(() => {
+        els.toast.classList.add('opacity-0');
+        els.toast.classList.remove('opacity-100');
+        setTimeout(() => els.toast.classList.add('hidden'), 280);
+      }, 1550);
+    }
+
+    function bindEvents() {
+      els.homeButton.addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }));
+      els.heroBrowseButton.addEventListener('click', () => els.workspace.scrollIntoView({ behavior: 'smooth' }));
+      els.heroFavoriteButton.addEventListener('click', () => state.selected && toggleFavorite(state.selected));
+      els.heroSetupButton.addEventListener('click', openSettings);
+      els.settingsButton.addEventListener('click', openSettings);
+      els.openSettingsFromError.addEventListener('click', openSettings);
+      els.closeSettingsButton.addEventListener('click', closeSettings);
+      els.cancelSettingsButton.addEventListener('click', closeSettings);
+      els.saveCredentialButton.addEventListener('click', saveCredential);
+      els.clearCredentialButton.addEventListener('click', clearCredential);
+      if (els.cardSizeCompactButton) els.cardSizeCompactButton.addEventListener('click', () => setCardSize('compact'));
+      if (els.cardSizeLargeButton) els.cardSizeLargeButton.addEventListener('click', () => setCardSize('large'));
+      if (els.clearSearchHistoryButton) els.clearSearchHistoryButton.addEventListener('click', clearSearchHistory);
+      if (els.perfModeToggle) els.perfModeToggle.addEventListener('click', () => setPerformanceMode(!state.performanceMode));
+      if (els.perfModeUltraToggle) els.perfModeUltraToggle.addEventListener('click', () => setUltraPerformanceMode(!state.ultraPerformanceMode));
+      if (els.updateActionButton) els.updateActionButton.addEventListener('click', applyUpdate);
+      if (els.addServerButton) els.addServerButton.addEventListener('click', addOrUpdateServer);
+      if (els.newServerUrl) els.newServerUrl.addEventListener('keydown', e => { if (e.key === 'Enter') addOrUpdateServer(); });
+      els.toggleCredentialVisibility.addEventListener('click', () => {
+        const hidden = els.tmdbCredential.type === 'password';
+        els.tmdbCredential.type = hidden ? 'text' : 'password';
+        els.toggleCredentialVisibility.innerHTML = hidden ? '<i data-lucide="eye-off" class="size-4"></i>Hide' : '<i data-lucide="eye" class="size-4"></i>Show';
+        iconRefresh();
+      });
+      els.tmdbCredential.addEventListener('keydown', event => {
+        if (event.key === 'Enter') saveCredential();
+      });
+
+      if (els.filterBar) {
+        els.filterBar.addEventListener('click', event => {
+          const button = event.target.closest('[data-filter]');
+          if (!button) return;
+          const nextFilter = button.dataset.filter || 'all';
+          state.contentFilter = nextFilter;
+          localStorage.setItem(CONTENT_FILTER_KEY, state.contentFilter);
+          refreshCurrentRows();
+        });
+      }
+
+      els.refreshButton.addEventListener('click', loadHome);
+      els.heroPlayButton.addEventListener('click', () => state.selected && openContent(state.selected));
+      els.searchInput.addEventListener('input', event => {
+        previewHeroFromSearchInput(event.target.value);
+        debounceSearch(event.target.value);
+      });
+      els.searchInput.addEventListener('focus', () => {
+        showSearchOverlay();
+        if (els.searchInput.value.trim()) {
+          renderSearchHistory();
+        } else {
+          state.searchQuery = '';
+          renderSearchOverlay([], state.searchHistory.length ? 'Recent searches' : 'Search Screen House');
+        }
+      });
+      els.searchInput.addEventListener('keydown', event => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          commitSearch(true);
+        }
+      });
+      els.clearSearchButton.addEventListener('click', () => {
+        els.searchInput.value = '';
+        runSearch('');
+        els.searchInput.focus();
+      });
+
+      els.closeModalButton.addEventListener('click', closePlayer);
+      els.playerModal.addEventListener('click', event => { if (event.target === els.playerModal) closePlayer(); });
+      els.reloadPlayerButton.addEventListener('click', reloadPlayer);
+      if (els.resetPlayerButton) els.resetPlayerButton.addEventListener('click', resetPlayer);
+      els.copyEmbedButton.addEventListener('click', copyEmbedUrl);
+      els.favoriteButton.addEventListener('click', () => state.selected && toggleFavorite(state.selected));
+      els.episodeSearchInput.addEventListener('input', event => {
+        state.episodeQuery = event.target.value.trim();
+        if (state.selectedSeason && state.selectedSeason.episodes) renderEpisodes(state.selectedSeason.episodes);
+      });
+      document.addEventListener('keydown', event => {
+        const targetTag = (event.target && event.target.tagName || '').toLowerCase();
+        const typing = targetTag === 'input' || targetTag === 'textarea' || event.target?.isContentEditable;
+        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+          event.preventDefault();
+          els.searchInput.focus();
+          els.searchInput.select();
+          showSearchOverlay();
+          return;
+        }
+        if (!typing && event.key === '/') {
+          event.preventDefault();
+          els.searchInput.focus();
+          showSearchOverlay();
+          return;
+        }
+        if (event.key === 'Escape') {
+          if (!els.settingsModal.classList.contains('hidden')) closeSettings();
+          else if (!els.playerModal.classList.contains('hidden')) closePlayer();
+          else hideSearchOverlay();
+        }
+      });
+      document.addEventListener('click', event => {
+        const insideSearch = els.searchOverlay.contains(event.target) || els.searchInput.contains(event.target);
+        if (!insideSearch && els.searchInput.value.trim()) hideSearchOverlay();
+      });
+    }
+
+    // Opens a title directly from a TMDB id, e.g. when the desktop app is
+    // launched with a vixscr://<id> deep link or a command-line argument.
+    async function openContentByTmdbId(tmdbId) {
+      const id = String(tmdbId || '').trim();
+      if (!id) return;
+      if (!state.credential.trim()) {
+        pendingDeepLinkTmdbId = id;
+        return;
+      }
+      try {
+        let details = null;
+        let type = 'movie';
+        try {
+          details = await tmdbFetch('/movie/' + encodeURIComponent(id));
+          type = 'movie';
+        } catch (movieError) {
+          details = await tmdbFetch('/tv/' + encodeURIComponent(id));
+          type = 'tv';
+        }
+        const item = normalizeItem(details, type);
+        if (!item) {
+          showToast('Could not find TMDB title ' + id);
+          return;
+        }
+        openContent(item);
+      } catch (error) {
+        showToast(error.message || 'Failed to open TMDB id ' + id);
+      }
+    }
+
+    let pendingDeepLinkTmdbId = null;
+
+    function consumePendingDeepLink() {
+      const id = pendingDeepLinkTmdbId || (window.__pendingTmdbId ?? null);
+      pendingDeepLinkTmdbId = null;
+      window.__pendingTmdbId = null;
+      if (id) openContentByTmdbId(id);
+    }
+
+    window.addEventListener('vixscr:open-tmdb-id', event => {
+      openContentByTmdbId(event.detail);
+    });
+
+    // ── Auto-update (Settings panel) ──
+    // The main process scans the public GitHub repo's version.json on every
+    // launch and pushes the result here. Applying an update downloads the
+    // new portable exe and hands off to main.js to swap it in and relaunch;
+    // localStorage (favorites/recents/settings) lives outside the app files
+    // so it is untouched by the swap.
+    let latestUpdateInfo = null;
+
+    function renderUpdateState(result) {
+      if (!els.updateSection) return;
+      if (!result || result.error) {
+        els.updateTitle.textContent = "You're up to date";
+        els.updateSubtitle.textContent = result && result.error ? result.error : 'Checked automatically on launch.';
+        els.updateActionButton.classList.add('hidden');
+        els.updateActionButton.classList.remove('flex');
+        return;
+      }
+
+      latestUpdateInfo = result;
+
+      if (result.updateAvailable) {
+        els.updateTitle.textContent = 'Update available: v' + result.latestVersion;
+        els.updateSubtitle.textContent = result.notes || ('You have v' + result.currentVersion + '.');
+        els.updateActionButton.classList.remove('hidden');
+        els.updateActionButton.classList.add('flex');
+        showToast('VixScr v' + result.latestVersion + ' is available');
+      } else {
+        els.updateTitle.textContent = "You're up to date";
+        els.updateSubtitle.textContent = 'Running the latest version (v' + result.currentVersion + ').';
+        els.updateActionButton.classList.add('hidden');
+        els.updateActionButton.classList.remove('flex');
+      }
+    }
+
+    async function applyUpdate() {
+      if (!window.vixscrUpdater || !latestUpdateInfo || !latestUpdateInfo.updateAvailable) return;
+      els.updateActionButton.disabled = true;
+      els.updateActionButton.innerHTML = '<i data-lucide="loader-circle" class="size-4 animate-spin"></i>Downloading...';
+      els.updateProgressWrap.classList.remove('hidden');
+      els.updateProgressBar.style.width = '0%';
+      iconRefresh();
+
+      const result = await window.vixscrUpdater.apply(latestUpdateInfo.exeName);
+      if (result && result.error) {
+        showToast('Update failed: ' + result.error);
+        els.updateActionButton.disabled = false;
+        els.updateActionButton.innerHTML = '<i data-lucide="download" class="size-4"></i>Update';
+        iconRefresh();
+        return;
+      }
+      els.updateActionButton.innerHTML = '<i data-lucide="check" class="size-4"></i>Restarting...';
+      iconRefresh();
+      // main.js quits the app itself once the swap script is launched.
+    }
+
+    window.addEventListener('vixscr:update-check-result', event => {
+      renderUpdateState(event.detail);
+    });
+
+    window.addEventListener('vixscr:update-download-progress', event => {
+      const fraction = Number(event.detail) || 0;
+      if (els.updateProgressBar) els.updateProgressBar.style.width = Math.round(fraction * 100) + '%';
+    });
+
+    async function checkForUpdateNow() {
+      if (!window.vixscrUpdater) return;
+      try {
+        const result = await window.vixscrUpdater.check();
+        renderUpdateState(result);
+      } catch (error) {
+        renderUpdateState({ error: error.message || 'Update check failed.' });
+      }
+    }
+
+    function init() {
+      state.credential = HARDCODED_TMDB_CREDENTIAL.trim() || localStorage.getItem(STORAGE_KEY) || '';
+      state.favorites = safeJsonParse(localStorage.getItem(FAVORITES_KEY), []);
+      state.recents = safeJsonParse(localStorage.getItem(RECENTS_KEY), []);
+      state.searchHistory = safeJsonParse(localStorage.getItem(SEARCH_HISTORY_KEY), []);
+      state.cardSize = localStorage.getItem(CARD_SIZE_KEY) === 'compact' ? 'compact' : 'large';
+      state.performanceMode = localStorage.getItem(PERF_MODE_KEY) === '1';
+      state.ultraPerformanceMode = localStorage.getItem(ULTRA_PERF_MODE_KEY) === '1';
+      state.contentFilter = localStorage.getItem(CONTENT_FILTER_KEY) || 'all';
+      document.body.classList.toggle('perf-mode', state.performanceMode);
+      bindEvents();
+      updateFilterButtons();
+      updateSettingsControls();
+      updateFavoriteButtons();
+      iconRefresh();
+      initImageObserver();
+      loadHome();
+      if (!state.credential) setTimeout(openSettings, 350);
+      consumePendingDeepLink();
+      checkForUpdateNow();
+    }
+
+    init();
+  
+
+    
+
+            
+
+            
+    
+
+
+    async function loadCast(type, tmdbId) {
+        const castHub = document.getElementById('castHub');
+        const castList = document.getElementById('castList');
+        if (!castHub || !castList) return;
+
+        try {
+            const data = await tmdbFetch(`/${type}/${tmdbId}/credits`);
+            const cast = data?.cast || [];
+
+            if (cast.length === 0) {
+                castHub.classList.add('hidden');
+                return;
+            }
+
+            castList.innerHTML = cast.slice(0, 15).map(actor => {
+                const name = escapeHtml(actor.name);
+                const character = escapeHtml(actor.character || '');
+                const personId = actor.id || '';
+                
+                const initials = actor.name
+                    .split(' ')
+                    .map(n => n[0])
+                    .join('')
+                    .substring(0, 2)
+                    .toUpperCase();
+
+                const avatarHTML = actor.profile_path
+                    ? `<img src="https://image.tmdb.org/t/p/w185${actor.profile_path}" alt="${name}" class="w-20 h-20 rounded-full object-cover border border-white/20 mb-2 shadow-md pointer-events-none" />`
+                    : `<div class="w-20 h-20 rounded-full bg-white/10 border border-white/20 mb-2 flex items-center justify-center text-white/50 font-black text-sm tracking-wider shadow-inner pointer-events-none">${initials}</div>`;
+
+                return `
+                    <div class="cast-card flex flex-col items-center shrink-0 w-24 text-center snap-start" data-person-id="${personId}" title="View ${name} on TMDB">
+                        ${avatarHTML}
+                        <p class="text-xs font-black truncate w-full pointer-events-none">${name}</p>
+                        <p class="text-[10px] text-white/50 truncate w-full pointer-events-none">${character}</p>
+                    </div>
+                `;
+            }).join('');
+
+            castList.querySelectorAll('.cast-card').forEach(card => {
+                card.addEventListener('click', () => {
+                    const personId = card.dataset.personId;
+                    if (personId) {
+                        window.open(`https://www.themoviedb.org/person/${personId}`, '_blank');
+                    }
+                });
+            });
+
+            castHub.classList.remove('hidden');
+        } catch (err) {
+            console.error('Failed to load cast:', err);
+            castHub.classList.add('hidden');
+        }
+    }
+    
+</script>
+<script>
+    document.addEventListener("DOMContentLoaded", () => {
+        const titleEl = document.getElementById('nowPlayingTitle');
+        const castHub = document.getElementById('castHub');
+        const castList = document.getElementById('castList');
+
+        // Observe the title changing to fetch the new cast
+        if(titleEl && castHub) {
+            const observer = new MutationObserver((mutations) => {
+                mutations.forEach((mutation) => {
+                    if (mutation.type === 'childList' && titleEl.textContent.trim() !== '') {
+                        updateCast();
+                    }
+                });
+            });
+            observer.observe(titleEl, { childList: true });
+        }
+
+        async function updateCast() {
+            if(!window.state || !window.state.selected) return;
+            const item = window.state.selected;
+            castHub.classList.remove('hidden');
+            castList.innerHTML = '<p class="text-xs text-white/50">Loading cast...</p>';
+
+            try {
+                // Utilizing your existing tmdbFetch function
+                const path = item.type === 'movie' ? '/movie/' + item.tmdbId + '/credits' : '/tv/' + item.tmdbId + '/credits';
+                const data = await window.tmdbFetch(path);
+                
+                if(data && data.cast && data.cast.length > 0) {
+                    castList.innerHTML = '';
+                    const topCast = data.cast.slice(0, 15);
+                    
+                    topCast.forEach(actor => {
+                        const imgUrl = actor.profile_path ? 'https://image.tmdb.org/t/p/w185' + actor.profile_path : 'data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'185\' height=\'278\' fill=\'%23222\'%3E%3Crect width=\'100%25\' height=\'100%25\'/%3E%3C/svg%3E';
+                        
+                        const castCard = document.createElement('div');
+                        castCard.className = 'flex flex-col items-center gap-2 shrink-0 w-[85px] snap-start text-center';
+                        castCard.innerHTML = `
+                            <img src="${imgUrl}" alt="${actor.name}" class="w-16 h-16 rounded-full object-cover border border-white/20 shadow-glass" />
+                            <div>
+                                <p class="text-xs font-bold leading-tight text-white line-clamp-1">${actor.name}</p>
+                                <p class="text-[10px] font-medium leading-tight text-white/50 line-clamp-2 mt-1">${actor.character}</p>
+                            </div>
+                        `;
+                        castList.appendChild(castCard);
+                    });
+                } else {
+                    castHub.classList.add('hidden');
+                }
+            } catch (e) {
+                console.error("Cast fetch failed:", e);
+                castHub.classList.add('hidden');
+            }
+        }
+    });
+    </script>
+<script>
+    (function() {
+        function initCastSystem() {
+            const castHub = document.getElementById('castHub');
+            const castList = document.getElementById('castList');
+            if (!castHub || !castList) return;
+
+            // Global trigger function
+            window.loadCastForCurrentTitle = async function() {
+                // Find selected item from state or fallback
+                const item = window.state?.selected;
+                if (!item) return;
+
+                const tmdbId = item.tmdbId || item.id || item.tmdb_id;
+                const type = item.type || (item.first_air_date || item.number_of_seasons ? 'tv' : 'movie');
+
+                if (!tmdbId) return;
+
+                // Force section visible & set loading indicator
+                castHub.classList.remove('hidden');
+                castList.innerHTML = '<p class="text-xs font-bold text-white/60 py-2">Loading cast...</p>';
+
+                try {
+                    let data = null;
+                    
+                    // Try native site fetcher first
+                    if (typeof window.tmdbFetch === 'function') {
+                        data = await window.tmdbFetch(`/${type}/${tmdbId}/credits`);
+                    } else {
+                        // Fallback: Read key stored in localStorage
+                        const savedKey = localStorage.getItem('tmdb_api_key') || localStorage.getItem('tmdb_key');
+                        if (savedKey) {
+                            const res = await fetch(`https://api.themoviedb.org/3/${type}/${tmdbId}/credits?api_key=${savedKey}`);
+                            data = await res.json();
+                        }
+                    }
+
+                    if (data && data.cast && data.cast.length > 0) {
+                        castList.innerHTML = '';
+                        const topCast = data.cast.slice(0, 15);
+
+                        topCast.forEach(actor => {
+                            const imgUrl = actor.profile_path
+                                ? 'https://image.tmdb.org/t/p/w185' + actor.profile_path
+                                : 'data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'185\' height=\'278\' fill=\'%23222\'%3E%3Crect width=\'100%25\' height=\'100%25\'/%3E%3C/svg%3E';
+
+                            const castCard = document.createElement('div');
+                            castCard.className = 'flex flex-col items-center gap-2 shrink-0 w-[85px] snap-start text-center';
+                            castCard.innerHTML = `
+                                <img src="${imgUrl}" alt="${actor.name}" class="w-16 h-16 rounded-full object-cover border border-white/20 shadow-glass" />
+                                <div>
+                                    <p class="text-xs font-bold leading-tight text-white line-clamp-1">${actor.name}</p>
+                                    <p class="text-[10px] font-medium leading-tight text-white/50 line-clamp-2 mt-1">${actor.character || ''}</p>
+                                </div>
+                            `;
+                            castList.appendChild(castCard);
+                        });
+                    } else {
+                        castList.innerHTML = '<p class="text-xs text-white/40">No cast information available.</p>';
+                    }
+                } catch (err) {
+                    console.error("Cast load error:", err);
+                    castHub.classList.add('hidden');
+                }
+            };
+
+            // Catch poster clicks globally across the page
+            document.addEventListener('click', (e) => {
+                const card = e.target.closest('.poster-card, [data-tmdb-id], button');
+                if (card) {
+                    // Small delay to let the site's own click handler update window.state.selected first
+                    setTimeout(() => {
+                        window.loadCastForCurrentTitle();
+                    }, 150);
+                }
+            });
+        }
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initCastSystem);
+        } else {
+            initCastSystem();
+        }
+    })();
+    </script></body>
+</html>

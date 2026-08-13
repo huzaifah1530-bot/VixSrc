@@ -1,0 +1,101 @@
+import SwiftUI
+
+/// Mirrors `createPosterCard()` — a poster thumbnail with type badge,
+/// favourite badge, resume ribbon, and a title/year caption gradient.
+struct PosterCard: View {
+    let item: MediaItem
+    var isFavorite: Bool
+    var compact: Bool
+    var onTap: () -> Void
+
+    private var width: CGFloat { compact ? 124 : 154 }
+    private var cornerRadius: CGFloat { compact ? 18 : 22 }
+
+    var body: some View {
+        Button(action: onTap) {
+            ZStack(alignment: .bottom) {
+                posterImage
+
+                LinearGradient(colors: [.black.opacity(0.85), .clear], startPoint: .bottom, endPoint: .center)
+                    .frame(height: 90)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(item.title)
+                        .font(.system(size: 13, weight: .black))
+                        .lineLimit(2)
+                        .foregroundStyle(.white)
+                    Text(item.year.isEmpty ? "TMDB" : item.year)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.56))
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                VStack {
+                    HStack {
+                        Text(item.typeLabel.uppercased())
+                            .font(.system(size: 9, weight: .black))
+                            .tracking(1)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(.black.opacity(0.45), in: Capsule())
+                            .foregroundStyle(.white.opacity(0.85))
+                        Spacer()
+                        if isFavorite {
+                            Image(systemName: "heart.fill")
+                                .font(.system(size: 13))
+                                .foregroundStyle(.white)
+                                .padding(6)
+                                .background(.black.opacity(0.48), in: Circle())
+                        }
+                    }
+                    Spacer()
+                    if let season = item.resumeSeason, let episode = item.resumeEpisode {
+                        Text("RESUME S\(season) E\(episode)")
+                            .font(.system(size: 10, weight: .black))
+                            .tracking(1)
+                            .padding(.horizontal, 9)
+                            .padding(.vertical, 6)
+                            .frame(maxWidth: .infinity)
+                            .background(.white.opacity(0.13), in: Capsule())
+                            .foregroundStyle(.white.opacity(0.86))
+                    }
+                }
+                .padding(8)
+            }
+            .frame(width: width, height: width * 1.5)
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .stroke(Color.white.opacity(0.2), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private var posterImage: some View {
+        if let url = item.posterURL {
+            AsyncImage(url: url, transaction: Transaction(animation: .easeOut(duration: 0.3))) { phase in
+                if let image = phase.image {
+                    image.resizable().scaledToFill()
+                } else {
+                    placeholder
+                }
+            }
+        } else {
+            placeholder
+        }
+    }
+
+    private var placeholder: some View {
+        Rectangle()
+            .fill(Color.white.opacity(0.08))
+            .overlay(
+                Text("NO POSTER")
+                    .font(.system(size: 10, weight: .black))
+                    .tracking(2)
+                    .foregroundStyle(.white.opacity(0.35))
+            )
+    }
+}

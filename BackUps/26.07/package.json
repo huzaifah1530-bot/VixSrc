@@ -1,0 +1,32 @@
+{
+  "name": "vixscr",
+  "version": "1.0.0",
+  "description": "VixScr Desktop App",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win portable"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@ghostery/adblocker-electron": "^1.0.0",
+    "cross-fetch": "^4.0.0"
+  },
+  "devDependencies": {
+    "electron": "^30.0.0",
+    "electron-builder": "^24.0.0"
+  },
+  "build": {
+    "appId": "com.vixscr.app",
+    "productName": "VixScr",
+    "win": {
+      "target": "portable"
+    },
+    "files": [
+      "**/*"
+    ]
+  }
+}

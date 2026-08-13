@@ -1,0 +1,111 @@
+import SwiftUI
+
+/// Mirrors the `#hero` section — a full-bleed backdrop with title,
+/// description, and action buttons (Play / Add TMDB Key / Browse /
+/// Favourite).
+struct HeroView: View {
+    let item: MediaItem?
+    let hasCredential: Bool
+    var onPlay: () -> Void
+    var onSetup: () -> Void
+    var onBrowse: () -> Void
+    var onToggleFavorite: () -> Void
+    var isFavorite: Bool
+
+    var body: some View {
+        ZStack(alignment: .bottomLeading) {
+            backdrop
+
+            LinearGradient(colors: [.black.opacity(0.9), .black.opacity(0.2), .clear], startPoint: .bottom, endPoint: .top)
+
+            VStack(alignment: .leading, spacing: 16) {
+                Label(tagText, systemImage: "sparkles")
+                    .font(.system(size: 12, weight: .black))
+                    .tracking(2)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .vixGlass(.regular, cornerRadius: 999)
+                    .foregroundStyle(.white.opacity(0.8))
+
+                Text(item?.title ?? "Connect TMDB")
+                    .font(.system(size: 42, weight: .black))
+                    .tracking(-1)
+                    .foregroundStyle(.white)
+                    .shadow(radius: 12)
+                    .lineLimit(3)
+
+                Text(item?.description ?? "Add your TMDB API key or read access token to search the live TMDB database and load seasons dynamically.")
+                    .font(.system(size: 15))
+                    .foregroundStyle(.white.opacity(0.78))
+                    .lineLimit(3)
+
+                HStack(spacing: 10) {
+                    if item != nil {
+                        Button(action: onPlay) {
+                            Label("Play", systemImage: "play.fill")
+                                .font(.system(size: 14, weight: .black))
+                                .padding(.horizontal, 20)
+                                .padding(.vertical, 12)
+                        }
+                        .foregroundStyle(.black)
+                        .background(.white, in: Capsule())
+                    }
+
+                    if !hasCredential {
+                        Button(action: onSetup) {
+                            Label("Add TMDB Key", systemImage: "key.fill")
+                                .font(.system(size: 14, weight: .black))
+                                .padding(.horizontal, 20)
+                                .padding(.vertical, 12)
+                        }
+                        .foregroundStyle(.black)
+                        .background(.white, in: Capsule())
+                    }
+
+                    Button(action: onBrowse) {
+                        Label("Browse", systemImage: "rectangle.grid.1x3.fill")
+                            .font(.system(size: 14, weight: .black))
+                            .padding(.horizontal, 20)
+                            .padding(.vertical, 12)
+                    }
+                    .foregroundStyle(.white)
+                    .vixGlass(.regular, cornerRadius: 999)
+
+                    if item != nil {
+                        Button(action: onToggleFavorite) {
+                            Label(isFavorite ? "Favourited" : "Favourite", systemImage: isFavorite ? "heart.fill" : "heart")
+                                .font(.system(size: 14, weight: .black))
+                                .padding(.horizontal, 20)
+                                .padding(.vertical, 12)
+                        }
+                        .foregroundStyle(.white)
+                        .vixGlass(.regular, cornerRadius: 999)
+                    }
+                }
+            }
+            .padding(24)
+        }
+        .frame(height: 460)
+        .clipped()
+    }
+
+    private var tagText: String {
+        guard let item else { return "Live TMDB" }
+        return item.typeLabel + (item.year.isEmpty ? "" : " · \(item.year)")
+    }
+
+    @ViewBuilder
+    private var backdrop: some View {
+        if let url = item?.backdropURL {
+            AsyncImage(url: url) { phase in
+                if let image = phase.image {
+                    image.resizable().scaledToFill()
+                } else {
+                    Color(white: 0.04)
+                }
+            }
+        } else {
+            Color(white: 0.04)
+        }
+    }
+}

@@ -1,0 +1,14 @@
+node_modules/
+dist/
+dist2/
+dist3/
+dist4/
+*.exe
+*.log
+.DS_Store
+
+# iOS
+ios/**/*.xcodeproj/
+ios/**/DerivedData/
+ios/**/build/
+ios/**/*.ipa
