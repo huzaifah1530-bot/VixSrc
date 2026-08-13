@@ -31,8 +31,8 @@ struct StreamServer: Codable, Identifiable, Hashable {
         StreamServer(name: "VidPhantom",   base: "https://vidphantom.com"),
         StreamServer(name: "VidNest",      base: "https://vidnest.fun"),
         StreamServer(name: "HnEmbed",      base: "https://hnembed.com/embed"),
-        StreamServer(name: "ApiPlayer",    base: "https://apiplayer.ru/embed"),
         StreamServer(name: "MovCloud",     base: "https://movcloud.net/embed"),
+        StreamServer(name: "SmashyStream", base: "https://embed.smashystream.com/playere.php?tmdb"),
     ]
 }
 
