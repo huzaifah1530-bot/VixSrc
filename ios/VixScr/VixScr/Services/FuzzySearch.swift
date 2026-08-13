@@ -220,10 +220,11 @@ enum FuzzySearch {
             .map { ($0, yearAdjustedScore(query: query, item: $0, wantedYear: year)) }
             .filter { $0.1 >= effectiveThreshold }
             .sorted { a, b in
-                // diff = b.score - a.score; positive means b scores higher.
-                // Return true when a should sort before b, i.e. a.score > b.score.
+                // diff = b.score - a.score.
+                // Return true to put a before b, i.e. when a.score > b.score,
+                // which means diff < 0 (b is lower than a).
                 let diff = b.1 - a.1
-                if abs(diff) > 0.04 { return diff > 0 }   // was diff < 0 — inverted, best results were last
+                if abs(diff) > 0.04 { return diff < 0 }
                 return a.0.popularity > b.0.popularity
             }
             .map(\.0)

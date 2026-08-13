@@ -52,8 +52,6 @@ struct HeroView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 // Button row: Play stretches to fill, fav circle is fixed 50pt.
-                // Using GeometryReader-free layout: HStack lets Play take all
-                // remaining space via .frame(maxWidth: .infinity).
                 HStack(spacing: 12) {
                     if item != nil {
                         Button(action: onPlay) {
@@ -80,11 +78,15 @@ struct HeroView: View {
                     }
 
                     if item != nil {
-                        // Fixed-size circle — never pushes the card edge.
                         FavoriteButton(isFavorite: isFavorite, action: onToggleFavorite)
                     }
                 }
+                // Constrain the button row so it never exceeds the card width.
+                .frame(maxWidth: .infinity)
             }
+            // Full-width constraint on the content area is what prevents the
+            // card from sizing to its content when real TMDB data loads in.
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(16)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
