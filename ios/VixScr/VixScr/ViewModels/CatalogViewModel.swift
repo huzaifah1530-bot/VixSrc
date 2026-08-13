@@ -19,6 +19,10 @@ final class CatalogViewModel {
     private(set) var homeLoaded = false
     private var searchTask: Task<[MediaItem], Never>?
     private var searchDebounceTask: Task<Void, Never>?
+    /// Incremented at the start of every `runSearch` call. Lets us discard
+    /// results from a superseded search without needing reference equality
+    /// on Task (which is a struct in Swift 6 and doesn't support ===).
+    private var searchGeneration = 0
 
     // Hero / currently previewed item on the home screen.
     private(set) var hero: MediaItem?
@@ -194,6 +198,8 @@ final class CatalogViewModel {
     func runSearch(_ query: String) async {
         searchTask?.cancel()
         searchQuery = query
+        searchGeneration += 1
+        let generation = searchGeneration
 
         let trimmed = query.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else {
@@ -242,11 +248,9 @@ final class CatalogViewModel {
         }
         searchTask = task
         let result = await task.value
-        // Guard against stale results: if `searchTask` was replaced by a newer
-        // call while we were awaiting, discard this result. Using reference
-        // identity on the Task value is the correct check here — NOT
-        // Task.isCancelled, which checks the *calling* task's state, not `task`'s.
-        guard searchTask === task else { return }
+        // Discard stale results: if searchGeneration advanced while we were
+        // awaiting, a newer runSearch call has already taken over.
+        guard searchGeneration == generation else { return }
         searchItems = result
         if let first = result.first { hero = first }
     }
