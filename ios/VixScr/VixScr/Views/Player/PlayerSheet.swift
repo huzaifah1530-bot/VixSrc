@@ -45,15 +45,24 @@ struct PlayerSheet: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 playerFrame
+                    .padding(.horizontal, 20)
                 nextEpisodeButton
+                    .padding(.horizontal, 20)
                 serverSelectorView
+                    .padding(.horizontal, 20)
                 actionRow
+                    .padding(.horizontal, 20)
                 descriptionView
+                    .padding(.horizontal, 20)
                 metaLine
+                    .padding(.horizontal, 20)
+                // CastRow manages its own horizontal padding internally
+                // so it can scroll edge-to-edge without being clipped.
                 castSection
                 episodeSection
+                    .padding(.horizontal, 20)
             }
-            .padding(20)
+            .padding(.vertical, 20)
         }
     }
 
@@ -335,6 +344,9 @@ struct CastRow: View {
             Text("Cast")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.secondary)
+                // Header has the same left indent as the scroll content's first item
+                .padding(.horizontal, 20)
+
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 16) {
                     ForEach(cast) { actor in
@@ -371,7 +383,12 @@ struct CastRow: View {
                         .buttonStyle(.plain)
                     }
                 }
+                // Horizontal padding on the HStack, not the outer container,
+                // so the scroll view bleeds edge-to-edge without black clipping.
+                .padding(.horizontal, 20)
             }
         }
+        // Remove horizontal padding here — the header and HStack each carry
+        // their own 20pt indent so nothing clips at the screen edge.
     }
 }
