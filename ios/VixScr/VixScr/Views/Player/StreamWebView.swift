@@ -109,7 +109,7 @@ struct StreamWebView: UIViewRepresentable {
         /// Ad/tracker pages sometimes use `beforeunload`, `alert`, or
         /// `confirm` dialogs to trap navigation. Auto-dismiss instead of
         /// presenting them.
-        func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping @MainActor @Sendable () -> Void) {
+        func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping @Sendable () -> Void) {
             completionHandler()
         }
 

@@ -118,12 +118,19 @@ final class CatalogViewModel {
         isLoadingHome = true
         homeErrorMessage = nil
 
+        // Snapshot into a local before the async let block. `store` is a
+        // non-Sendable, MainActor-only type; reading `store.credential`
+        // directly inside `async let`'s initializer expression counts as
+        // sending main-actor state across an isolation boundary under
+        // Swift 6.2's stricter checking.
+        let credential = store.credential
+
         do {
-            async let trending = client.list("/trending/all/week", credential: store.credential)
-            async let moviePopular = client.list("/movie/popular", credential: store.credential, query: ["page": "1"])
-            async let tvPopular = client.list("/tv/popular", credential: store.credential, query: ["page": "1"])
-            async let movieTop = client.list("/movie/top_rated", credential: store.credential, query: ["page": "1"])
-            async let tvTop = client.list("/tv/top_rated", credential: store.credential, query: ["page": "1"])
+            async let trending = client.list("/trending/all/week", credential: credential)
+            async let moviePopular = client.list("/movie/popular", credential: credential, query: ["page": "1"])
+            async let tvPopular = client.list("/tv/popular", credential: credential, query: ["page": "1"])
+            async let movieTop = client.list("/movie/top_rated", credential: credential, query: ["page": "1"])
+            async let tvTop = client.list("/tv/top_rated", credential: credential, query: ["page": "1"])
 
             let (trendingItems, moviePopularItems, tvPopularItems, movieTopItems, tvTopItems) = try await (
                 trending.compactMap { $0.normalized() },
