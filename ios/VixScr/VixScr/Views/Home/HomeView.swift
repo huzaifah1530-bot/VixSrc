@@ -11,7 +11,6 @@ struct HomeView: View {
     @Environment(TabRouter.self) private var router
     @Environment(\.horizontalSizeClass) private var hSizeClass
     @Environment(\.verticalSizeClass) private var vSizeClass
-    @Environment(\.glassFidelity) private var glassFidelity
     @State private var viewModel: CatalogViewModel?
     @State private var searchText = ""
     @State private var isSearchActive = false
@@ -29,16 +28,6 @@ struct HomeView: View {
             .background(VixTheme.background.ignoresSafeArea())
             .navigationTitle("Vela")
             .navigationBarTitleDisplayMode(.large)
-            // When Liquid Glass is off, give the nav bar an explicit opaque
-            // background so it doesn't float glassily over the content.
-            .toolbarBackground(
-                glassFidelity == .full ? .automatic : .visible,
-                for: .navigationBar
-            )
-            .toolbarBackground(
-                glassFidelity == .full ? Color.clear : Color.black,
-                for: .navigationBar
-            )
         }
         .searchable(text: $searchText, isPresented: $isSearchActive, prompt: "Movies, TV shows...")
         .onChange(of: searchText) { _, newValue in
@@ -217,9 +206,14 @@ struct HomeView: View {
             }
             .padding(.bottom, 40)
             .padding(.top, 12)
-            // Drive the stagger: content below the last-watched card
-            // animates with the same spring as the card removal.
-            .animation(.spring(response: 0.42, dampingFraction: 0.78), value: store.sortedRecents.first?.id)
+            // Drive the card removal transition: animate when either the
+            // most-recent item changes (new watch) OR when the hero changes
+            // (user tapped the card, making it the hero — which causes the
+            // lastWatched.id == hero.id condition to flip and removes the card).
+            .animation(.spring(response: 0.42, dampingFraction: 0.78),
+                       value: store.sortedRecents.first?.id)
+            .animation(.spring(response: 0.42, dampingFraction: 0.78),
+                       value: viewModel.hero?.id)
         }
         .overlay(alignment: .bottom) {
             if let toast = viewModel.toastMessage {

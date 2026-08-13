@@ -99,39 +99,95 @@ extension Notification.Name {
 /// on iOS 17-25, with no extra drawing code from us either way.
 struct RootView: View {
     @Environment(TabRouter.self) private var router
+    @Environment(\.glassFidelity) private var glassFidelity
 
     var body: some View {
         @Bindable var router = router
-        if #available(iOS 18.0, *) {
-            // The `Tab(value:)` initialiser and `.sidebarAdaptable` style are
-            // iOS 18+ only (the latter is what lets the bar collapse into a
-            // sidebar on iPad and, on iOS 26, adopt the floating glass tab
-            // bar treatment). Older OSes fall through to the classic
-            // `.tag()`-based TabView below, which has worked since iOS 13.
-            TabView(selection: $router.selection) {
-                Tab("Home", systemImage: "house.fill", value: AppTab.home) {
+        let tabs: some View = Group {
+            if #available(iOS 18.0, *) {
+                // The `Tab(value:)` initialiser and `.sidebarAdaptable` style are
+                // iOS 18+ only (the latter is what lets the bar collapse into a
+                // sidebar on iPad and, on iOS 26, adopt the floating glass tab
+                // bar treatment). Older OSes fall through to the classic
+                // `.tag()`-based TabView below, which has worked since iOS 13.
+                TabView(selection: $router.selection) {
+                    Tab("Home", systemImage: "house.fill", value: AppTab.home) {
+                        HomeView()
+                    }
+                    Tab("Favourites", systemImage: "heart.fill", value: AppTab.favorites) {
+                        FavoritesView()
+                    }
+                    Tab("Settings", systemImage: "gearshape.fill", value: AppTab.settings) {
+                        SettingsView()
+                    }
+                }
+                .tabViewStyle(.sidebarAdaptable)
+            } else {
+                TabView(selection: $router.selection) {
                     HomeView()
-                }
-                Tab("Favourites", systemImage: "heart.fill", value: AppTab.favorites) {
+                        .tabItem { Label("Home", systemImage: "house.fill") }
+                        .tag(AppTab.home)
                     FavoritesView()
-                }
-                Tab("Settings", systemImage: "gearshape.fill", value: AppTab.settings) {
+                        .tabItem { Label("Favourites", systemImage: "heart.fill") }
+                        .tag(AppTab.favorites)
                     SettingsView()
+                        .tabItem { Label("Settings", systemImage: "gearshape.fill") }
+                        .tag(AppTab.settings)
                 }
-            }
-            .tabViewStyle(.sidebarAdaptable)
-        } else {
-            TabView(selection: $router.selection) {
-                HomeView()
-                    .tabItem { Label("Home", systemImage: "house.fill") }
-                    .tag(AppTab.home)
-                FavoritesView()
-                    .tabItem { Label("Favourites", systemImage: "heart.fill") }
-                    .tag(AppTab.favorites)
-                SettingsView()
-                    .tabItem { Label("Settings", systemImage: "gearshape.fill") }
-                    .tag(AppTab.settings)
             }
         }
+
+        return tabs
+            // Apply UIKit appearance overrides so the system nav bar and tab
+            // bar chrome respects Performance Mode. SwiftUI's .toolbarBackground
+            // only controls the content fill — it cannot remove the floating
+            // Liquid Glass shell that iOS 26 draws around NavigationStack chrome.
+            // UINavigationBarAppearance.configureWithOpaqueBackground() is the
+            // only API that forces the bar back to a flat, opaque surface on
+            // iOS 26, same as it does on iOS 17-25.
+            .onChange(of: glassFidelity, initial: true) { _, fidelity in
+                applyBarAppearance(fidelity: fidelity)
+            }
+    }
+
+    private func applyBarAppearance(fidelity: GlassFidelity) {
+        let navAppearance = UINavigationBarAppearance()
+        let tabAppearance = UITabBarAppearance()
+
+        switch fidelity {
+        case .full:
+            // Let the system decide — on iOS 26 this gives Liquid Glass,
+            // on iOS 17-25 it gives the standard blurred bar.
+            navAppearance.configureWithDefaultBackground()
+            tabAppearance.configureWithDefaultBackground()
+
+        case .flat:
+            // Opaque dark bar — matches the flat/translucent glass fallback
+            // used by every other surface in the app under Performance Mode.
+            navAppearance.configureWithOpaqueBackground()
+            navAppearance.backgroundColor = UIColor(white: 0.06, alpha: 1)
+            navAppearance.shadowColor = UIColor(white: 1, alpha: 0.08)
+            navAppearance.titleTextAttributes = [.foregroundColor: UIColor.white]
+            navAppearance.largeTitleTextAttributes = [.foregroundColor: UIColor.white]
+            tabAppearance.configureWithOpaqueBackground()
+            tabAppearance.backgroundColor = UIColor(white: 0.06, alpha: 1)
+
+        case .opaque:
+            // Fully opaque black bar — matches Ultra Performance Mode
+            // where even gradients and backdrop images are stripped.
+            navAppearance.configureWithOpaqueBackground()
+            navAppearance.backgroundColor = .black
+            navAppearance.shadowColor = UIColor(white: 1, alpha: 0.12)
+            navAppearance.titleTextAttributes = [.foregroundColor: UIColor.white]
+            navAppearance.largeTitleTextAttributes = [.foregroundColor: UIColor.white]
+            tabAppearance.configureWithOpaqueBackground()
+            tabAppearance.backgroundColor = .black
+        }
+
+        UINavigationBar.appearance().standardAppearance = navAppearance
+        UINavigationBar.appearance().scrollEdgeAppearance = navAppearance
+        UINavigationBar.appearance().compactAppearance = navAppearance
+        UITabBar.appearance().standardAppearance = tabAppearance
+        UITabBar.appearance().scrollEdgeAppearance = tabAppearance
     }
 }
