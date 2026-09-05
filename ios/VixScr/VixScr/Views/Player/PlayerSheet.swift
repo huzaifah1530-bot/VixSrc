@@ -191,10 +191,6 @@ struct NextEpisodeButton: View {
                 }
 
                 Spacer()
-
-                Image(systemName: "chevron.right")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.white.opacity(0.45))
             }
             .padding(.horizontal, 18)
             .padding(.vertical, 14)
