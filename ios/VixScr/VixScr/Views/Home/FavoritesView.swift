@@ -6,15 +6,10 @@ import SwiftUI
 /// whole rather than skim past.
 struct FavoritesView: View {
     @Environment(AppStore.self) private var store
-    @Environment(\.horizontalSizeClass) private var hSizeClass
-    @Environment(\.verticalSizeClass) private var vSizeClass
     @State private var viewModel: CatalogViewModel?
 
-    private var isLandscape: Bool { hSizeClass == .compact && vSizeClass == .compact }
-
     private var columns: [GridItem] {
-        let count = isLandscape ? 4 : 2
-        return Array(repeating: GridItem(.flexible(), spacing: 14), count: count)
+        return Array(repeating: GridItem(.flexible(), spacing: 14), count: 2)
     }
 
     var body: some View {

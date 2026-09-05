@@ -3,21 +3,11 @@ import SwiftUI
 struct PlayerSheet: View {
     @Bindable var viewModel: CatalogViewModel
     @Environment(\.glassFidelity) private var fidelity
-    @Environment(\.horizontalSizeClass) private var hSizeClass
-    @Environment(\.verticalSizeClass) private var vSizeClass
-
-    private var isLandscape: Bool { hSizeClass == .compact && vSizeClass == .compact }
 
     var body: some View {
         NavigationStack {
-            Group {
-                if isLandscape {
-                    landscapeLayout
-                } else {
-                    portraitLayout
-                }
-            }
-            .background(VixTheme.background.ignoresSafeArea())
+            portraitLayout
+                .background(VixTheme.background.ignoresSafeArea())
             .navigationTitle(viewModel.selected?.title ?? "")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(.hidden, for: .navigationBar)
@@ -39,7 +29,7 @@ struct PlayerSheet: View {
         .preferredColorScheme(.dark)
     }
 
-    // MARK: - Portrait layout (original)
+    // MARK: - Subviews
 
     private var portraitLayout: some View {
         ScrollView {
@@ -65,43 +55,6 @@ struct PlayerSheet: View {
             .padding(.vertical, 20)
         }
     }
-
-    // MARK: - Landscape split layout
-    // Left 55%: player + next episode button (everything you need to control playback)
-    // Right 45%: scrollable info — server, actions, description, cast, episodes
-
-    private var landscapeLayout: some View {
-        GeometryReader { geo in
-            HStack(alignment: .top, spacing: 0) {
-                // LEFT: player + immediate controls
-                VStack(spacing: 12) {
-                    playerFrame
-                    nextEpisodeButton
-                    serverSelectorView
-                    actionRow
-                    Spacer()
-                }
-                .padding(16)
-                .frame(width: geo.size.width * 0.55)
-
-                Divider().background(Color.white.opacity(0.1))
-
-                // RIGHT: info panel
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        descriptionView
-                        metaLine
-                        castSection
-                        episodeSection
-                    }
-                    .padding(16)
-                }
-                .frame(width: geo.size.width * 0.45)
-            }
-        }
-    }
-
-    // MARK: - Subviews (shared between portrait and landscape)
 
     @ViewBuilder private var nextEpisodeButton: some View {
         if viewModel.selected?.type == .tv, let next = viewModel.nextEpisode {

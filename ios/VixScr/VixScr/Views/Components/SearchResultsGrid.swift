@@ -7,14 +7,8 @@ struct SearchResultsGrid: View {
     let store: AppStore
     let onSelect: (MediaItem) -> Void
 
-    @Environment(\.horizontalSizeClass) private var hSizeClass
-    @Environment(\.verticalSizeClass) private var vSizeClass
-
-    private var isLandscape: Bool { hSizeClass == .compact && vSizeClass == .compact }
-
     private var columns: [GridItem] {
-        let count = isLandscape ? 4 : 2
-        return Array(repeating: GridItem(.flexible(), spacing: 14), count: count)
+        return Array(repeating: GridItem(.flexible(), spacing: 14), count: 2)
     }
 
     var body: some View {
