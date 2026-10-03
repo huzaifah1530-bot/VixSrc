@@ -15,7 +15,10 @@ struct HeroView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             backdrop
-                .frame(height: 220)
+                // Keep the media area proportional while capping it on iPad.
+                // A fixed height made the loaded artwork feel like it changed
+                // the surrounding padding on different device widths.
+                .aspectRatio(16.0 / 9.0, contentMode: .fit)
                 .frame(maxWidth: .infinity)
                 .clipped()
                 .overlay(alignment: .bottomLeading) {
@@ -102,6 +105,7 @@ struct HeroView: View {
             .animation(.easeInOut(duration: 0.8), value: item?.id)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: 720)
         .background(Color(white: 0.08))
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
@@ -114,7 +118,7 @@ struct HeroView: View {
     @ViewBuilder
     private var backdrop: some View {
         if let url = item?.backdropURL, glassFidelity != .opaque {
-            AsyncImage(url: url) { phase in
+            AsyncImage(url: url, transaction: Transaction(animation: .easeInOut(duration: 0.35))) { phase in
                 if let image = phase.image {
                     image.resizable().scaledToFill()
                         // Fade the image in once loaded. Using .transition here

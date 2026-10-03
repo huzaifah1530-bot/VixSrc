@@ -185,6 +185,8 @@ struct HomeView: View {
                         onToggleFavorite: { viewModel.toggleFavoriteOnHero() },
                         isFavorite: viewModel.hero.map(store.isFavorite) ?? false
                     )
+                    .frame(maxWidth: 720)
+                    .frame(maxWidth: .infinity)
                     .padding(.horizontal, 16)
                     .padding(.top, 8)
 

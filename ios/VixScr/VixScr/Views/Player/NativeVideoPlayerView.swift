@@ -270,6 +270,8 @@ struct PlayerButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .foregroundStyle(.white)
+            .frame(minWidth: 44, minHeight: 44)
+            .contentShape(Rectangle())
             .opacity(configuration.isPressed ? 0.6 : 1.0)
     }
 }
