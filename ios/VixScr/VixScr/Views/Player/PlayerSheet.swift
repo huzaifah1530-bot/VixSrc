@@ -131,9 +131,27 @@ struct PlayerSheet: View {
         ZStack {
             Group {
                 if viewModel.currentNativeVideoURL != nil {
-                    NativeVideoPlayerView(playerManager: viewModel.playerManager)
+                    NativeVideoPlayerView(
+                        playerManager: viewModel.playerManager,
+                        onPlaybackFailure: {
+                            if let failedURL = viewModel.currentNativeVideoURL {
+                                viewModel.rejectNativeStream(failedURL)
+                            }
+                        }
+                    )
                 } else if let url = viewModel.currentStreamURL {
-                    StreamWebView(url: url)
+                    StreamWebView(
+                        url: url,
+                        resumePosition: viewModel.playbackResumePosition,
+                        onNativeStreamFound: { streamURL, cookies in
+                            guard viewModel.currentStreamURL == url else { return }
+                            viewModel.adoptNativeStream(streamURL, cookies: cookies)
+                        },
+                        onProgress: { position, duration in
+                            guard viewModel.currentStreamURL == url else { return }
+                            viewModel.recordPlaybackProgress(position: position, duration: duration)
+                        }
+                    )
                 } else {
                     Color.black
                     ProgressView().tint(.white)

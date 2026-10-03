@@ -36,7 +36,7 @@ final class VideoPlayerManager {
     
     // MARK: - Playback Control
     
-    func load(url: URL, startPosition: Double = 0, progressId: String? = nil) {
+    func load(url: URL, requestHeaders: [String: String] = [:], httpCookies: [HTTPCookie] = [], startPosition: Double = 0, progressId: String? = nil) {
         cleanup()
         
         self.currentURL = url
@@ -46,7 +46,12 @@ final class VideoPlayerManager {
         self.isLoading = true
         self.error = nil
         
-        let player = AVPlayer(url: url)
+        var options: [String: Any] = [
+            AVURLAssetHTTPUserAgentKey: requestHeaders["User-Agent"] ?? StreamURLExtractor.userAgent
+        ]
+        if !httpCookies.isEmpty { options[AVURLAssetHTTPCookiesKey] = httpCookies }
+        let asset = AVURLAsset(url: url, options: options)
+        let player = AVPlayer(playerItem: AVPlayerItem(asset: asset))
         self.player = player
         
         // Observe player status

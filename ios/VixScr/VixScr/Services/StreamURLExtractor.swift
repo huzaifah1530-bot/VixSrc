@@ -8,6 +8,28 @@ struct StreamURLExtractor {
         let id: String
         let name: String
         let url: URL
+        var requestHeaders: [String: String] = [:]
+        var httpCookies: [HTTPCookie] = []
+
+        static func == (lhs: Self, rhs: Self) -> Bool {
+            lhs.id == rhs.id && lhs.name == rhs.name && lhs.url == rhs.url &&
+                lhs.requestHeaders == rhs.requestHeaders && cookieKeys(lhs.httpCookies) == cookieKeys(rhs.httpCookies)
+        }
+
+        func hash(into hasher: inout Hasher) {
+            hasher.combine(id)
+            hasher.combine(name)
+            hasher.combine(url)
+            for (key, value) in requestHeaders.sorted(by: { $0.key < $1.key }) {
+                hasher.combine(key)
+                hasher.combine(value)
+            }
+            for cookie in Self.cookieKeys(httpCookies) { hasher.combine(cookie) }
+        }
+
+        private static func cookieKeys(_ cookies: [HTTPCookie]) -> [String] {
+            cookies.map { "\($0.domain)|\($0.path)|\($0.name)|\($0.value)" }.sorted()
+        }
     }
     
     /// Attempts to extract a direct video URL from the server response.
@@ -49,26 +71,29 @@ struct StreamURLExtractor {
         
         // Try to fetch the page and look for video sources
         if let url = await extractFromHTML(serverURL) {
-            return [ResolvedStream(id: url.absoluteString, name: "Direct stream", url: url)]
+            return [ResolvedStream(
+                id: url.absoluteString,
+                name: "Direct stream",
+                url: url,
+                requestHeaders: ["User-Agent": userAgent]
+            )]
         }
         return []
     }
 
     private static func extractCinezoStreams(from pageURL: URL) async -> [ResolvedStream]? {
-        let components = pageURL.pathComponents.filter { $0 != "/" }
-        guard components.count >= 2 else { return nil }
-
-        let type = components[0].lowercased()
-        guard type == "movie" || type == "tv" else { return nil }
-        let id = components[1]
-        let season = components.count > 2 ? components[2] : nil
-        let episode = components.count > 3 ? components[3] : nil
+        guard let route = mediaRoute(in: pageURL), route.count >= 2 else { return nil }
+        let type = route[0]
+        let id = route[1]
+        let season = route.count > 2 ? route[2] : nil
+        let episode = route.count > 3 ? route[3] : nil
         if type == "tv" && (season == nil || episode == nil) { return nil }
 
-        let sourceDefinitions: [(name: String, base: String)] = [
-            ("Berlin", "https://proxy1.flikhub.net"),
-            ("Sadie", "https://proxy1.flikhub.net"),
-            ("Jennifer", "https://punkflix.net")
+        let sourceDefinitions: [(name: String, base: String, source: String)] = [
+            ("Berlin", "https://proxy1.flikhub.net", "berlin"),
+            ("Zendaya", "https://proxy3.flikhub.net", "zendaya"),
+            ("Sadie", "https://proxy1.flikhub.net", "cinefreak"),
+            ("Jennifer", "https://punkflix.net", "jennifer")
         ]
 
         var resolved: [ResolvedStream] = []
@@ -79,7 +104,7 @@ struct StreamURLExtractor {
                 id: id,
                 season: season,
                 episode: episode,
-                source: source.name.lowercased()
+                source: source.source
             ) else { continue }
 
             do {
@@ -95,7 +120,12 @@ struct StreamURLExtractor {
                 for (index, streamURL) in mediaURLs(in: data).enumerated() {
                     let name = resolved.isEmpty && index == 0 ? source.name : "\(source.name) \(index + 1)"
                     if !resolved.contains(where: { $0.url == streamURL }) {
-                        resolved.append(ResolvedStream(id: streamURL.absoluteString, name: name, url: streamURL))
+                        resolved.append(ResolvedStream(
+                            id: streamURL.absoluteString,
+                            name: name,
+                            url: streamURL,
+                            requestHeaders: ["User-Agent": userAgent]
+                        ))
                     }
                 }
             } catch {
@@ -170,8 +200,7 @@ struct StreamURLExtractor {
     }
 
     private static func extractVixSrcStreams(from pageURL: URL) async -> [ResolvedStream]? {
-        let components = pageURL.pathComponents.filter { $0 != "/" }
-        guard components.count >= 2 else { return nil }
+        guard let components = mediaRoute(in: pageURL), components.count >= 2 else { return nil }
 
         let endpoint: String
         switch components[0].lowercased() {
@@ -214,6 +243,17 @@ struct StreamURLExtractor {
         } catch {
             return nil
         }
+    }
+
+    /// Configured embeds commonly prefix their media path with `/embed`.
+    /// Normalize both `/movie/id` and `/embed/movie/id` before resolving.
+    private static func mediaRoute(in url: URL) -> [String]? {
+        let components = url.pathComponents.filter { $0 != "/" }
+        guard let index = components.firstIndex(where: {
+            let value = $0.lowercased()
+            return value == "movie" || value == "tv"
+        }) else { return nil }
+        return Array(components[index...]).map { $0.removingPercentEncoding ?? $0 }
     }
 
     private static func playlistURLs(from html: String, embedURL: URL) -> [ResolvedStream]? {
@@ -262,13 +302,23 @@ struct StreamURLExtractor {
                 // `ub=1` or `ab=1`) and append the shared signed token.
                 streamComponents.queryItems = (streamComponents.queryItems ?? []) + (components.queryItems ?? [])
                 if let url = streamComponents.url {
-                    streams.append(ResolvedStream(id: name, name: name, url: url))
+                    streams.append(ResolvedStream(
+                        id: name,
+                        name: name,
+                        url: url,
+                        requestHeaders: ["User-Agent": userAgent]
+                    ))
                 }
             }
         }
 
         if streams.isEmpty, let url = components.url {
-            streams.append(ResolvedStream(id: "master", name: "Auto", url: url))
+            streams.append(ResolvedStream(
+                id: "master",
+                name: "Auto",
+                url: url,
+                requestHeaders: ["User-Agent": userAgent]
+            ))
         }
         return streams
     }
@@ -281,7 +331,7 @@ struct StreamURLExtractor {
         return String(string[range])
     }
 
-    private static let userAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1"
+    static let userAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1"
 
     private struct VixSrcAPIResponse: Decodable {
         let src: String?

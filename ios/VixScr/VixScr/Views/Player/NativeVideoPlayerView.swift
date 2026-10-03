@@ -5,6 +5,7 @@ import AVKit
 /// Replaces the WebView-based player with a proper AVPlayerLayer.
 struct NativeVideoPlayerView: View {
     @Bindable var playerManager: VideoPlayerManager
+    var onPlaybackFailure: (() -> Void)? = nil
     @State private var showControls = true
     @State private var controlsTimer: Timer?
     @State private var isFullscreen = false
@@ -46,6 +47,7 @@ struct NativeVideoPlayerView: View {
                     onHideControls: { hideControls() },
                     onToggleFullscreen: { isFullscreen = true }
                 )
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                 .transition(.move(edge: .bottom).combined(with: .opacity).combined(with: .scale(scale: 0.98, anchor: .bottom)))
             }
         }
@@ -61,6 +63,9 @@ struct NativeVideoPlayerView: View {
                 playerManager.pause()
             }
             controlsTimer?.invalidate()
+        }
+        .onChange(of: playerManager.error) { _, error in
+            if error != nil { onPlaybackFailure?() }
         }
         .fullScreenCover(isPresented: $isFullscreen) {
             SystemVideoPlayerView(player: playerManager.player)
@@ -166,40 +171,10 @@ struct PlayerControlsOverlay: View {
         VStack {
             Spacer()
             
-            // Bottom controls. Keep one timeline only: the scrubber owns both
-            // time labels, while this row is reserved for playback actions.
-            VStack(spacing: 6) {
-                HStack(spacing: 20) {
-                    // Skip back
-                    Button {
-                        playerManager.seekBackward(10)
-                    } label: {
-                        Image(systemName: "gobackward.10")
-                            .font(.title2)
-                    }
-                    .buttonStyle(PlayerButtonStyle())
-                    
-                    // Play/Pause
-                    Button {
-                        playerManager.togglePlayPause()
-                        if playerManager.isPlaying {
-                            onHideControls()
-                        }
-                    } label: {
-                        Image(systemName: playerManager.isPlaying ? "pause.fill" : "play.fill")
-                            .font(.title)
-                    }
-                    .buttonStyle(PlayerButtonStyle())
-                    
-                    // Skip forward
-                    Button {
-                        playerManager.seekForward(10)
-                    } label: {
-                        Image(systemName: "goforward.10")
-                            .font(.title2)
-                    }
-                    .buttonStyle(PlayerButtonStyle())
-
+            // Keep one timeline. Secondary actions sit above the centered
+            // playback controls to avoid crowding them on narrow screens.
+            VStack(spacing: 2) {
+                HStack(spacing: 4) {
                     Spacer()
                     Button { showCaptions = true } label: {
                         Image(systemName: "captions.bubble")
@@ -214,13 +189,42 @@ struct PlayerControlsOverlay: View {
                     .buttonStyle(PlayerButtonStyle())
                     .accessibilityLabel("Full screen")
                 }
-                .padding(.horizontal, 16)
+                .padding(.horizontal, 12)
 
-                // The scrubber is the lowest element, directly above the safe
-                // area, matching the familiar native video-player layout.
+                HStack(spacing: 24) {
+                    Button {
+                        playerManager.seekBackward(10)
+                    } label: {
+                        Image(systemName: "gobackward.10")
+                            .font(.title2)
+                    }
+                    .buttonStyle(PlayerButtonStyle())
+
+                    Button {
+                        playerManager.togglePlayPause()
+                        if playerManager.isPlaying { onHideControls() }
+                    } label: {
+                        Image(systemName: playerManager.isPlaying ? "pause.fill" : "play.fill")
+                            .font(.title)
+                    }
+                    .buttonStyle(PlayerButtonStyle())
+
+                    Button {
+                        playerManager.seekForward(10)
+                    } label: {
+                        Image(systemName: "goforward.10")
+                            .font(.title2)
+                    }
+                    .buttonStyle(PlayerButtonStyle())
+                }
+                .frame(maxWidth: .infinity)
+
+                // The timeline spans the player width and sits directly above
+                // the bottom edge of the video.
                 scrubber
             }
             .padding(.bottom, 8)
+            .frame(maxWidth: .infinity)
             .background {
                 LinearGradient(
                     colors: [.clear, .black.opacity(0.8)],
@@ -239,7 +243,7 @@ struct PlayerControlsOverlay: View {
 
     private var scrubber: some View {
         GeometryReader { geometry in
-            let availableWidth = max(1, geometry.size.width - 40)
+            let availableWidth = max(1, geometry.size.width)
             let duration = playerManager.duration
             let currentFraction = duration > 0
                 ? (isSeeking ? seekPosition / duration : playerManager.progress)
@@ -256,9 +260,9 @@ struct PlayerControlsOverlay: View {
                         .frame(width: availableWidth * clampedFraction, height: 5)
                     Circle()
                         .fill(.white)
-                        .frame(width: 16, height: 16)
+                        .frame(width: 12, height: 12)
                         .shadow(color: .black.opacity(0.35), radius: 3, y: 1)
-                        .offset(x: availableWidth * clampedFraction - 8)
+                        .offset(x: min(max(0, availableWidth - 12), availableWidth * clampedFraction - 6))
                 }
                 .frame(width: availableWidth, height: 30)
                 .contentShape(Rectangle())
@@ -267,12 +271,12 @@ struct PlayerControlsOverlay: View {
                         .onChanged { value in
                             guard duration > 0 else { return }
                             isSeeking = true
-                            let fraction = min(1, max(0, (value.location.x - 20) / availableWidth))
+                            let fraction = min(1, max(0, value.location.x / availableWidth))
                             seekPosition = fraction * duration
                         }
                         .onEnded { value in
                             guard duration > 0 else { return }
-                            let fraction = min(1, max(0, (value.location.x - 20) / availableWidth))
+                            let fraction = min(1, max(0, value.location.x / availableWidth))
                             playerManager.seek(to: fraction * duration)
                             isSeeking = false
                         }
@@ -284,11 +288,10 @@ struct PlayerControlsOverlay: View {
                 }
                 .font(.caption2.monospacedDigit())
                 .foregroundStyle(.white.opacity(0.86))
-                .frame(width: availableWidth)
+                .frame(maxWidth: .infinity)
             }
         }
         .frame(height: 52)
-        .padding(.horizontal, 20)
     }
     
     private func formatTime(_ seconds: Double) -> String {

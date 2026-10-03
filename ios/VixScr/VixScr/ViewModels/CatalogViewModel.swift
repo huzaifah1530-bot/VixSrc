@@ -58,6 +58,7 @@ final class CatalogViewModel {
 
     let playerManager = VideoPlayerManager()
     private var streamResolutionTask: Task<Void, Never>?
+    private var rejectedNativeStreamURLs: Set<URL> = []
 
     private var castTask: Task<Void, Never>?
 
@@ -544,6 +545,7 @@ final class CatalogViewModel {
 
     func reloadPlayer() {
         let url = currentStreamURL
+        rejectedNativeStreamURLs.removeAll()
         currentStreamURL = nil
         currentNativeVideoURL = nil
         nativeSources = []
@@ -584,22 +586,19 @@ final class CatalogViewModel {
     private func loadNativeSource(at index: Int) {
         guard nativeSources.indices.contains(index) else { return }
         let source = nativeSources[index]
+        // Flush the previous item while its progress callback still carries
+        // its own movie or episode ID.
+        playerManager.cleanup()
         currentNativeVideoURL = source.url
         let progressID = currentProgressID
         playerManager.onProgressUpdate = { [weak self] position, duration in
-            guard let self else { return }
-            let progress = WatchProgress(
-                id: progressID,
-                position: position,
-                duration: duration,
-                lastWatchedAt: Date(),
-                completed: duration > 0 && position / duration >= 0.95
-            )
-            self.store.saveProgress(progress)
+            self?.recordPlaybackProgress(position: position, duration: duration, progressID: progressID)
         }
         playerManager.load(
             url: source.url,
-            startPosition: currentResumePosition,
+            requestHeaders: source.requestHeaders,
+            httpCookies: source.httpCookies,
+            startPosition: playbackResumePosition,
             progressId: progressID
         )
     }
@@ -612,14 +611,54 @@ final class CatalogViewModel {
         return "movie:\(item.tmdbId)"
     }
 
-    private var currentResumePosition: Double {
-        guard let progress = store.progress(for: currentProgressID), progress.shouldResume else { return 0 }
+    var playbackResumePosition: Double {
+        guard let progress = store.progress(for: currentProgressID),
+              progress.position > 0, progress.progress < 0.95 else { return 0 }
         return progress.position
+    }
+
+    func recordPlaybackProgress(position: Double, duration: Double) {
+        recordPlaybackProgress(position: position, duration: duration, progressID: currentProgressID)
+    }
+
+    private func recordPlaybackProgress(position: Double, duration: Double, progressID: String) {
+        guard position.isFinite, duration.isFinite, position >= 0, duration > 0 else { return }
+        store.saveProgress(WatchProgress(
+            id: progressID,
+            position: position,
+            duration: duration,
+            lastWatchedAt: Date(),
+            completed: position / duration >= 0.95
+        ))
+    }
+
+    func adoptNativeStream(_ url: URL, cookies: [HTTPCookie]) {
+        guard currentNativeVideoURL != url, !rejectedNativeStreamURLs.contains(url) else { return }
+        let source = StreamURLExtractor.ResolvedStream(
+            id: url.absoluteString,
+            name: "Native stream",
+            url: url,
+            requestHeaders: ["User-Agent": StreamURLExtractor.userAgent],
+            httpCookies: cookies
+        )
+        nativeSources = [source]
+        selectedNativeSourceIndex = 0
+        loadNativeSource(at: 0)
+    }
+
+    func rejectNativeStream(_ url: URL) {
+        guard currentNativeVideoURL == url else { return }
+        rejectedNativeStreamURLs.insert(url)
+        playerManager.cleanup()
+        currentNativeVideoURL = nil
+        nativeSources = []
+        selectedNativeSourceIndex = 0
     }
 
     @MainActor
     func closePlayer() {
         isPlayerPresented = false
+        rejectedNativeStreamURLs.removeAll()
         currentStreamURL = nil
         currentNativeVideoURL = nil
         nativeSources = []
