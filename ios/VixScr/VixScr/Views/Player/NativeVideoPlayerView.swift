@@ -154,8 +154,8 @@ struct VideoPlayerLayer: UIViewRepresentable {
             layer.frame = bounds
             self.layer.addSublayer(layer)
             self.playerLayer = layer
-            if AVPictureInPictureController.isPictureInPictureSupported() {
-                let controller = AVPictureInPictureController(playerLayer: layer)
+            if AVPictureInPictureController.isPictureInPictureSupported(),
+               let controller = AVPictureInPictureController(playerLayer: layer) {
                 controller.canStartPictureInPictureAutomaticallyFromInline = true
                 pictureInPictureController = controller
             }
