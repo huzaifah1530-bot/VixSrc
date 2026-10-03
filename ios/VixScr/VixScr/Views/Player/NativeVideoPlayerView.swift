@@ -7,6 +7,7 @@ struct NativeVideoPlayerView: View {
     @Bindable var playerManager: VideoPlayerManager
     @State private var showControls = true
     @State private var controlsTimer: Timer?
+    @State private var isFullscreen = false
     
     var body: some View {
         ZStack {
@@ -42,7 +43,8 @@ struct NativeVideoPlayerView: View {
             if showControls && !playerManager.isLoading && playerManager.error == nil {
                 PlayerControlsOverlay(
                     playerManager: playerManager,
-                    onHideControls: { hideControls() }
+                    onHideControls: { hideControls() },
+                    onToggleFullscreen: { isFullscreen = true }
                 )
                 .transition(.opacity)
             }
@@ -55,8 +57,15 @@ struct NativeVideoPlayerView: View {
             }
         }
         .onDisappear {
-            playerManager.pause()
+            if !isFullscreen {
+                playerManager.pause()
+            }
             controlsTimer?.invalidate()
+        }
+        .fullScreenCover(isPresented: $isFullscreen) {
+            FullscreenNativePlayerView(playerManager: playerManager) {
+                isFullscreen = false
+            }
         }
     }
     
@@ -147,6 +156,7 @@ struct VideoPlayerLayer: UIViewRepresentable {
 struct PlayerControlsOverlay: View {
     @Bindable var playerManager: VideoPlayerManager
     let onHideControls: () -> Void
+    let onToggleFullscreen: () -> Void
     
     @State private var isSeeking = false
     @State private var seekPosition: Double = 0
@@ -203,6 +213,37 @@ struct PlayerControlsOverlay: View {
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(.white)
                         .frame(minWidth: 50, alignment: .trailing)
+                }
+                .padding(.horizontal, 20)
+
+                HStack {
+                    Spacer()
+                    if !playerManager.subtitleOptions.isEmpty {
+                        Menu {
+                            Button {
+                                playerManager.selectSubtitle(at: nil)
+                            } label: {
+                                Label("Off", systemImage: playerManager.selectedSubtitleIndex == nil ? "checkmark" : "circle")
+                            }
+                            ForEach(Array(playerManager.subtitleOptions.enumerated()), id: \.offset) { index, option in
+                                Button {
+                                    playerManager.selectSubtitle(at: index)
+                                } label: {
+                                    Label(option.displayName, systemImage: playerManager.selectedSubtitleIndex == index ? "checkmark" : "circle")
+                                }
+                            }
+                        } label: {
+                            Image(systemName: "captions.bubble")
+                                .frame(minWidth: 44, minHeight: 44)
+                        }
+                        .foregroundStyle(.white)
+                        .accessibilityLabel("Captions")
+                    }
+                    Button(action: onToggleFullscreen) {
+                        Image(systemName: "arrow.up.left.and.arrow.down.right")
+                    }
+                    .buttonStyle(PlayerButtonStyle())
+                    .accessibilityLabel("Full screen")
                 }
                 .padding(.horizontal, 20)
             }
@@ -262,6 +303,37 @@ struct PlayerControlsOverlay: View {
         } else {
             return String(format: "%d:%02d", minutes, secs)
         }
+    }
+}
+
+private struct FullscreenNativePlayerView: View {
+    @Bindable var playerManager: VideoPlayerManager
+    let onDismiss: () -> Void
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            Color.black.ignoresSafeArea()
+            VideoPlayerLayer(player: playerManager.player)
+                .ignoresSafeArea()
+            PlayerControlsOverlay(
+                playerManager: playerManager,
+                onHideControls: {},
+                onToggleFullscreen: onDismiss
+            )
+            Button(action: onDismiss) {
+                Image(systemName: "xmark")
+                    .font(.headline.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 44, height: 44)
+                    .background(.black.opacity(0.55), in: Circle())
+            }
+            .padding(.top, 12)
+            .padding(.trailing, 16)
+            .accessibilityLabel("Close full screen")
+        }
+        .preferredColorScheme(.dark)
+        .onAppear { playerManager.play() }
+        .onDisappear { playerManager.pause() }
     }
 }
 

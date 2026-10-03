@@ -40,6 +40,8 @@ struct PlayerSheet: View {
                     .padding(.horizontal, 20)
                 serverSelectorView
                     .padding(.horizontal, 20)
+                nativeSourceSelectorView
+                    .padding(.horizontal, 20)
                 actionRow
                     .padding(.horizontal, 20)
                 descriptionView
@@ -67,6 +69,37 @@ struct PlayerSheet: View {
     @ViewBuilder private var serverSelectorView: some View {
         if viewModel.store.servers.count > 1 {
             ServerSelector(viewModel: viewModel)
+        }
+    }
+
+    @ViewBuilder private var nativeSourceSelectorView: some View {
+        if viewModel.nativeSources.count > 1 {
+            HStack {
+                Label("Source", systemImage: "antenna.radiowaves.left.and.right")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Menu {
+                    ForEach(Array(viewModel.nativeSources.enumerated()), id: \.offset) { index, source in
+                        Button {
+                            viewModel.switchNativeSource(to: index)
+                        } label: {
+                            if index == viewModel.selectedNativeSourceIndex {
+                                Label(source.name, systemImage: "checkmark")
+                            } else {
+                                Text(source.name)
+                            }
+                        }
+                    }
+                } label: {
+                    Label(viewModel.nativeSources[viewModel.selectedNativeSourceIndex].name,
+                          systemImage: "chevron.up.chevron.down")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.blue)
+                }
+            }
+            .padding(14)
+            .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
     }
 
@@ -105,22 +138,6 @@ struct PlayerSheet: View {
                     Color.black
                     ProgressView().tint(.white)
                 }
-            }
-            .overlay(alignment: .topLeading) {
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(viewModel.currentNativeVideoURL == nil ? .orange : .green)
-                        .frame(width: 7, height: 7)
-                    Text(viewModel.isResolvingStream
-                         ? "Resolving stream"
-                         : (viewModel.currentNativeVideoURL == nil ? "Embedded player" : "Native player"))
-                        .font(.caption2.weight(.semibold))
-                }
-                .foregroundStyle(.white.opacity(0.9))
-                .padding(.horizontal, 9)
-                .padding(.vertical, 6)
-                .background(.black.opacity(0.65), in: Capsule())
-                .padding(10)
             }
         }
         .aspectRatio(16.0 / 9.0, contentMode: .fit)

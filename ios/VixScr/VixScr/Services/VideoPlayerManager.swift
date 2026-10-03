@@ -20,8 +20,15 @@ final class VideoPlayerManager {
     // Progress tracking
     private var timeObserver: Any?
     private var statusObservation: NSKeyValueObservation?
+    private var durationObservation: NSKeyValueObservation?
+    private var endObserver: NSObjectProtocol?
     private var progressId: String?
+    private var pendingResumePosition: Double = 0
+    private var lastSavedSecond = -1
     var onProgressUpdate: (@MainActor (Double, Double) -> Void)? // (position, duration)
+
+    private(set) var subtitleOptions: [AVMediaSelectionOption] = []
+    private(set) var selectedSubtitleIndex: Int?
     
     init() {
         setupAudioSession()
@@ -34,6 +41,8 @@ final class VideoPlayerManager {
         
         self.currentURL = url
         self.progressId = progressId
+        self.pendingResumePosition = max(0, startPosition)
+        self.lastSavedSecond = -1
         self.isLoading = true
         self.error = nil
         
@@ -49,11 +58,9 @@ final class VideoPlayerManager {
                 case .readyToPlay:
                     self.isLoading = false
                     if let item = player.currentItem {
-                        self.duration = item.duration.seconds
-                    }
-                    // Seek to resume position if needed
-                    if startPosition > 0 {
-                        self.seek(to: startPosition)
+                        self.updateDuration(from: item)
+                        self.observeDuration(for: item)
+                        self.updateSubtitleOptions(for: item)
                     }
                     self.setupPeriodicTimeObserver()
                     
@@ -91,9 +98,11 @@ final class VideoPlayerManager {
     }
     
     func seek(to seconds: Double) {
-        let time = CMTime(seconds: seconds, preferredTimescale: 600)
+        let clamped = max(0, duration > 0 ? min(seconds, duration) : seconds)
+        let time = CMTime(seconds: clamped, preferredTimescale: 600)
         player?.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
-        currentTime = seconds
+        currentTime = clamped
+        pendingResumePosition = 0
     }
     
     func seekForward(_ seconds: Double = 10) {
@@ -125,15 +134,17 @@ final class VideoPlayerManager {
                     self.onProgressUpdate?(seconds, self.duration)
                 }
 
-                // Auto-save progress every 30 seconds
-                if Int(seconds) % 30 == 0 {
+                // Persist often enough to resume accurately without writing to
+                // UserDefaults on every half-second UI tick.
+                if Int(seconds) % 5 == 0 && Int(seconds) != self.lastSavedSecond {
+                    self.lastSavedSecond = Int(seconds)
                     self.saveProgress()
                 }
             }
         }
         
         // Observe playback end
-        NotificationCenter.default.addObserver(
+        endObserver = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemDidPlayToEndTime,
             object: player.currentItem,
             queue: .main
@@ -145,6 +156,12 @@ final class VideoPlayerManager {
     }
     
     private func saveProgress() {
+        let playerDuration = player?.currentItem?.duration.seconds ?? 0
+        if duration <= 0, playerDuration.isFinite, playerDuration > 0 {
+            duration = playerDuration
+        }
+        let actualTime = player?.currentTime().seconds ?? currentTime
+        if actualTime.isFinite { currentTime = max(0, actualTime) }
         guard currentTime > 0, duration > 0 else { return }
         onProgressUpdate?(currentTime, duration)
     }
@@ -154,6 +171,54 @@ final class VideoPlayerManager {
         // Mark as completed
         if duration > 0 {
             onProgressUpdate?(duration, duration)
+        }
+    }
+
+    private func observeDuration(for item: AVPlayerItem) {
+        durationObservation?.invalidate()
+        durationObservation = item.observe(\.duration, options: [.initial, .new]) { [weak self] item, _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.updateDuration(from: item)
+            }
+        }
+    }
+
+    private func updateDuration(from item: AVPlayerItem) {
+        let seconds = item.duration.seconds
+        guard seconds.isFinite, seconds > 0 else { return }
+        duration = seconds
+        if pendingResumePosition > 0 {
+            let resume = min(pendingResumePosition, seconds)
+            pendingResumePosition = 0
+            player?.seek(to: CMTime(seconds: resume, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+            currentTime = resume
+        }
+    }
+
+    private func updateSubtitleOptions(for item: AVPlayerItem) {
+        guard let group = item.asset.mediaSelectionGroup(forMediaCharacteristic: .legible) else {
+            subtitleOptions = []
+            selectedSubtitleIndex = nil
+            return
+        }
+        subtitleOptions = group.options
+        if let selected = item.currentMediaSelection.selectedMediaOption(in: group) {
+            selectedSubtitleIndex = subtitleOptions.firstIndex { $0 === selected }
+        } else {
+            selectedSubtitleIndex = nil
+        }
+    }
+
+    func selectSubtitle(at index: Int?) {
+        guard let item = player?.currentItem,
+              let group = item.asset.mediaSelectionGroup(forMediaCharacteristic: .legible) else { return }
+        if let index, subtitleOptions.indices.contains(index) {
+            item.select(subtitleOptions[index], in: group)
+            selectedSubtitleIndex = index
+        } else {
+            item.select(nil, in: group)
+            selectedSubtitleIndex = nil
         }
     }
     
@@ -172,6 +237,8 @@ final class VideoPlayerManager {
     // MARK: - Cleanup
     
     func cleanup() {
+        saveProgress()
+
         if let timeObserver {
             player?.removeTimeObserver(timeObserver)
             self.timeObserver = nil
@@ -179,6 +246,12 @@ final class VideoPlayerManager {
         
         statusObservation?.invalidate()
         statusObservation = nil
+        durationObservation?.invalidate()
+        durationObservation = nil
+        if let endObserver {
+            NotificationCenter.default.removeObserver(endObserver)
+            self.endObserver = nil
+        }
         
         player?.pause()
         player = nil
@@ -188,6 +261,9 @@ final class VideoPlayerManager {
         duration = 0
         currentURL = nil
         progressId = nil
+        pendingResumePosition = 0
+        subtitleOptions = []
+        selectedSubtitleIndex = nil
     }
 }
 

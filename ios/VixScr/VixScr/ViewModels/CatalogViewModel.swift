@@ -51,6 +51,8 @@ final class CatalogViewModel {
     private(set) var currentServerIndex = 0
     private(set) var currentStreamURL: URL?
     private(set) var currentNativeVideoURL: URL?
+    private(set) var nativeSources: [StreamURLExtractor.ResolvedStream] = []
+    private(set) var selectedNativeSourceIndex = 0
     private(set) var isResolvingStream = false
     private(set) var cast: [CastMember] = []
 
@@ -392,6 +394,8 @@ final class CatalogViewModel {
         currentServerIndex = 0
         currentStreamURL = nil
         currentNativeVideoURL = nil
+        nativeSources = []
+        selectedNativeSourceIndex = 0
         isResolvingStream = false
         streamResolutionTask?.cancel()
         playerManager.cleanup()
@@ -542,6 +546,8 @@ final class CatalogViewModel {
         let url = currentStreamURL
         currentStreamURL = nil
         currentNativeVideoURL = nil
+        nativeSources = []
+        selectedNativeSourceIndex = 0
         playerManager.cleanup()
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 80_000_000)
@@ -559,29 +565,43 @@ final class CatalogViewModel {
             guard let self, !Task.isCancelled, self.currentStreamURL == pageURL else { return }
             self.isResolvingStream = false
             switch mode {
-            case .native(let videoURL):
-                self.currentNativeVideoURL = videoURL
-                self.playerManager.onProgressUpdate = { [weak self] position, duration in
-                    guard let self else { return }
-                    let id = self.currentProgressID
-                    let progress = WatchProgress(
-                        id: id,
-                        position: position,
-                        duration: duration,
-                        lastWatchedAt: Date(),
-                        completed: duration > 0 && position / duration >= 0.95
-                    )
-                    self.store.saveProgress(progress)
-                }
-                self.playerManager.load(
-                    url: videoURL,
-                    startPosition: self.currentResumePosition,
-                    progressId: self.currentProgressID
-                )
+            case .native(let sources):
+                self.nativeSources = sources
+                self.selectedNativeSourceIndex = 0
+                self.loadNativeSource(at: 0)
             case .embed:
                 break
             }
         }
+    }
+
+    func switchNativeSource(to index: Int) {
+        guard nativeSources.indices.contains(index) else { return }
+        selectedNativeSourceIndex = index
+        loadNativeSource(at: index)
+    }
+
+    private func loadNativeSource(at index: Int) {
+        guard nativeSources.indices.contains(index) else { return }
+        let source = nativeSources[index]
+        currentNativeVideoURL = source.url
+        let progressID = currentProgressID
+        playerManager.onProgressUpdate = { [weak self] position, duration in
+            guard let self else { return }
+            let progress = WatchProgress(
+                id: progressID,
+                position: position,
+                duration: duration,
+                lastWatchedAt: Date(),
+                completed: duration > 0 && position / duration >= 0.95
+            )
+            self.store.saveProgress(progress)
+        }
+        playerManager.load(
+            url: source.url,
+            startPosition: currentResumePosition,
+            progressId: progressID
+        )
     }
 
     private var currentProgressID: String {
@@ -593,9 +613,8 @@ final class CatalogViewModel {
     }
 
     private var currentResumePosition: Double {
-        store.progress(for: currentProgressID)?.shouldResume == true
-            ? (store.progress(for: currentProgressID)?.position ?? 0)
-            : 0
+        guard let progress = store.progress(for: currentProgressID), progress.shouldResume else { return 0 }
+        return progress.position
     }
 
     @MainActor
@@ -603,6 +622,8 @@ final class CatalogViewModel {
         isPlayerPresented = false
         currentStreamURL = nil
         currentNativeVideoURL = nil
+        nativeSources = []
+        selectedNativeSourceIndex = 0
         isResolvingStream = false
         streamResolutionTask?.cancel()
         playerManager.cleanup()

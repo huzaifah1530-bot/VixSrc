@@ -3,10 +3,20 @@ import Foundation
 /// Extracts direct video URLs from streaming server responses.
 /// For servers that return direct video URLs or have extractable patterns.
 struct StreamURLExtractor {
+
+    struct ResolvedStream: Identifiable, Hashable {
+        let id: String
+        let name: String
+        let url: URL
+    }
     
     /// Attempts to extract a direct video URL from the server response.
     /// Returns nil if extraction fails - caller should fall back to WebView embed.
     static func extractVideoURL(from serverURL: URL) async -> URL? {
+        (await resolveStreams(for: serverURL)).first?.url
+    }
+
+    static func resolveStreams(for serverURL: URL) async -> [ResolvedStream] {
         // For now, we'll try to detect if the URL is already a direct video URL
         // or if it needs to be loaded as an embed
         
@@ -17,22 +27,25 @@ struct StreamURLExtractor {
         // separately so signed URLs with query parameters are recognised too.
         if ["mp4", "m3u8", "m3u", "webm", "mov"].contains(pathExtension) ||
            urlString.contains(".m3u8?") || urlString.contains(".mp4?") {
-            return serverURL
+            return [ResolvedStream(id: serverURL.absoluteString, name: "Direct stream", url: serverURL)]
         }
 
         // VixSrc serves a short-lived embed token from /api/movie or /api/tv,
         // then publishes the signed HLS master playlist in the embed HTML.
         // Resolve that chain before falling back to the web player.
         if serverURL.host?.lowercased().contains("vixsrc") == true,
-           let vixSrcURL = await extractVixSrcStream(from: serverURL) {
-            return vixSrcURL
+           let vixSrcStreams = await extractVixSrcStreams(from: serverURL) {
+            return vixSrcStreams
         }
         
         // Try to fetch the page and look for video sources
-        return await extractFromHTML(serverURL)
+        if let url = await extractFromHTML(serverURL) {
+            return [ResolvedStream(id: url.absoluteString, name: "Direct stream", url: url)]
+        }
+        return []
     }
 
-    private static func extractVixSrcStream(from pageURL: URL) async -> URL? {
+    private static func extractVixSrcStreams(from pageURL: URL) async -> [ResolvedStream]? {
         let components = pageURL.pathComponents.filter { $0 != "/" }
         guard components.count >= 2 else { return nil }
 
@@ -70,16 +83,16 @@ struct StreamURLExtractor {
             embedRequest.setValue(pageURL.absoluteString, forHTTPHeaderField: "Referer")
             let (embedData, _) = try await URLSession.shared.data(for: embedRequest)
             guard let html = String(data: embedData, encoding: .utf8),
-                  let playlistURL = playlistURL(from: html, embedURL: embedURL)
+                  let playlistURLs = playlistURLs(from: html, embedURL: embedURL)
             else { return nil }
 
-            return playlistURL
+            return playlistURLs
         } catch {
             return nil
         }
     }
 
-    private static func playlistURL(from html: String, embedURL: URL) -> URL? {
+    private static func playlistURLs(from html: String, embedURL: URL) -> [ResolvedStream]? {
         guard let rawURL = firstCapture(
             pattern: "(?:window\\.)?masterPlaylist\\s*=\\s*\\{[\\s\\S]*?url\\s*:\\s*['\\\"]([^'\\\"]+)['\\\"]",
             in: html
@@ -110,7 +123,30 @@ struct StreamURLExtractor {
             components.queryItems = (components.queryItems ?? []) + [URLQueryItem(name: "lang", value: language)]
         }
         components.queryItems = (components.queryItems ?? []) + [URLQueryItem(name: "h", value: "1")]
-        return components.url
+
+        var streams: [ResolvedStream] = []
+        let streamPattern = "\\{\\s*['\\\"]name['\\\"]\\s*:\\s*['\\\"]([^'\\\"]+)['\\\"][\\s\\S]*?['\\\"]url['\\\"]\\s*:\\s*['\\\"]([^'\\\"]+)['\\\"]"
+        if let regex = try? NSRegularExpression(pattern: streamPattern, options: [.caseInsensitive]) {
+            for match in regex.matches(in: html, range: NSRange(html.startIndex..., in: html)) {
+                guard let nameRange = Range(match.range(at: 1), in: html),
+                      let urlRange = Range(match.range(at: 2), in: html) else { continue }
+                let name = String(html[nameRange])
+                let rawStreamURL = String(html[urlRange]).replacingOccurrences(of: "\\/", with: "/")
+                guard let streamURL = URL(string: rawStreamURL, relativeTo: embedURL)?.absoluteURL,
+                      var streamComponents = URLComponents(url: streamURL, resolvingAgainstBaseURL: true) else { continue }
+                // Preserve the sub-server's own selector (for example
+                // `ub=1` or `ab=1`) and append the shared signed token.
+                streamComponents.queryItems = (streamComponents.queryItems ?? []) + (components.queryItems ?? [])
+                if let url = streamComponents.url {
+                    streams.append(ResolvedStream(id: name, name: name, url: url))
+                }
+            }
+        }
+
+        if streams.isEmpty, let url = components.url {
+            streams.append(ResolvedStream(id: "master", name: "Auto", url: url))
+        }
+        return streams
     }
 
     private static func firstCapture(pattern: String, in string: String) -> String? {
@@ -204,15 +240,16 @@ struct StreamURLExtractor {
 
 /// Determines whether to use native player or WebView embed
 enum StreamPlaybackMode {
-    case native(videoURL: URL)
+    case native(sources: [StreamURLExtractor.ResolvedStream])
     case embed(pageURL: URL)
 }
 
 extension StreamURLExtractor {
     /// Determines the best playback mode for a given server URL
     static func determinePlaybackMode(for url: URL) async -> StreamPlaybackMode {
-        if let videoURL = await extractVideoURL(from: url) {
-            return .native(videoURL: videoURL)
+        let streams = await resolveStreams(for: url)
+        if !streams.isEmpty {
+            return .native(sources: streams)
         } else {
             return .embed(pageURL: url)
         }
