@@ -95,10 +95,6 @@ private struct SearchPosterCard: View {
 
                     if let watchProgress {
                         VStack {
-                            HStack {
-                                Spacer()
-                                TimestampBadge(lastWatched: watchProgress.lastWatchedAt)
-                            }
                             Spacer()
                             ProgressOverlay(progress: watchProgress.progress)
                                 .frame(height: 4)

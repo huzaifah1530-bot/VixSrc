@@ -37,12 +37,136 @@ struct StreamURLExtractor {
            let vixSrcStreams = await extractVixSrcStreams(from: serverURL) {
             return vixSrcStreams
         }
+
+        // Cinezo's embed page loads its playable URLs from the same JSON
+        // resolvers used by the web player. Resolve those URLs directly so
+        // AVPlayer can provide native captions, scrubbing, PiP, and servers.
+        if serverURL.host?.lowercased().contains("cinezo") == true,
+           let cinezoStreams = await extractCinezoStreams(from: serverURL),
+           !cinezoStreams.isEmpty {
+            return cinezoStreams
+        }
         
         // Try to fetch the page and look for video sources
         if let url = await extractFromHTML(serverURL) {
             return [ResolvedStream(id: url.absoluteString, name: "Direct stream", url: url)]
         }
         return []
+    }
+
+    private static func extractCinezoStreams(from pageURL: URL) async -> [ResolvedStream]? {
+        let components = pageURL.pathComponents.filter { $0 != "/" }
+        guard components.count >= 2 else { return nil }
+
+        let type = components[0].lowercased()
+        guard type == "movie" || type == "tv" else { return nil }
+        let id = components[1]
+        let season = components.count > 2 ? components[2] : nil
+        let episode = components.count > 3 ? components[3] : nil
+        if type == "tv" && (season == nil || episode == nil) { return nil }
+
+        let sourceDefinitions: [(name: String, base: String)] = [
+            ("Berlin", "https://proxy1.flikhub.net"),
+            ("Sadie", "https://proxy1.flikhub.net"),
+            ("Jennifer", "https://punkflix.net")
+        ]
+
+        var resolved: [ResolvedStream] = []
+        for source in sourceDefinitions {
+            guard let endpoint = cinezoEndpoint(
+                base: source.base,
+                type: type,
+                id: id,
+                season: season,
+                episode: episode,
+                source: source.name.lowercased()
+            ) else { continue }
+
+            do {
+                var request = URLRequest(url: endpoint)
+                request.timeoutInterval = 12
+                request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+                request.setValue("application/json", forHTTPHeaderField: "Accept")
+                request.setValue(pageURL.absoluteString, forHTTPHeaderField: "Referer")
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let httpResponse = response as? HTTPURLResponse,
+                      (200...299).contains(httpResponse.statusCode) else { continue }
+
+                for (index, streamURL) in mediaURLs(in: data).enumerated() {
+                    let name = resolved.isEmpty && index == 0 ? source.name : "\(source.name) \(index + 1)"
+                    if !resolved.contains(where: { $0.url == streamURL }) {
+                        resolved.append(ResolvedStream(id: streamURL.absoluteString, name: name, url: streamURL))
+                    }
+                }
+            } catch {
+                continue
+            }
+        }
+
+        return resolved.isEmpty ? nil : resolved
+    }
+
+    private static func cinezoEndpoint(
+        base: String,
+        type: String,
+        id: String,
+        season: String?,
+        episode: String?,
+        source: String
+    ) -> URL? {
+        if base.contains("punkflix.net") {
+            let path = type == "tv"
+                ? "/tv/\(id)/\(season ?? "")/\(episode ?? "").json"
+                : "/movie/\(id).json"
+            return URL(string: base + path)
+        }
+
+        var components = URLComponents(string: base + "/" + type)
+        components?.queryItems = [
+            URLQueryItem(name: "id", value: id),
+            URLQueryItem(name: "mode", value: "json"),
+            URLQueryItem(name: "sources", value: source),
+            URLQueryItem(name: "hevc", value: "1")
+        ]
+        if type == "tv" {
+            components?.queryItems?.append(URLQueryItem(name: "season", value: season))
+            components?.queryItems?.append(URLQueryItem(name: "episode", value: episode))
+        }
+        return components?.url
+    }
+
+    private static func mediaURLs(in data: Data) -> [URL] {
+        guard let object = try? JSONSerialization.jsonObject(with: data) else { return [] }
+        var values: [String] = []
+
+        func collect(_ value: Any) {
+            if let string = value as? String {
+                let normalized = string.replacingOccurrences(of: "\\/", with: "/")
+                if let url = URL(string: normalized),
+                   ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+                   (normalized.localizedCaseInsensitiveContains(".m3u8") ||
+                    normalized.localizedCaseInsensitiveContains(".mp4") ||
+                    normalized.localizedCaseInsensitiveContains("/stream") ||
+                    normalized.localizedCaseInsensitiveContains("/file") ||
+                    normalized.localizedCaseInsensitiveContains("/remux") ||
+                    normalized.localizedCaseInsensitiveContains("/hls")) {
+                    values.append(normalized)
+                }
+            } else if let dictionary = value as? [String: Any] {
+                dictionary.values.forEach(collect)
+            } else if let array = value as? [Any] {
+                array.forEach(collect)
+            }
+        }
+
+        collect(object)
+        var unique: [URL] = []
+        for value in values {
+            if let url = URL(string: value), !unique.contains(url) {
+                unique.append(url)
+            }
+        }
+        return unique
     }
 
     private static func extractVixSrcStreams(from pageURL: URL) async -> [ResolvedStream]? {
