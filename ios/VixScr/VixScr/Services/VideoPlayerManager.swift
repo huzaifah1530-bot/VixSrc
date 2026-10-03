@@ -298,7 +298,7 @@ final class VideoPlayerManager {
     }
 
     func setNowPlayingMetadata(title: String?, subtitle: String?, artworkURL: URL?) {
-        nowPlayingTitle = title.map { "\($0) (Vela)" } ?? "Vela"
+        nowPlayingTitle = title ?? "Vela"
         nowPlayingSubtitle = subtitle
         lastNowPlayingSecond = -1
         if nowPlayingArtworkURL != artworkURL {

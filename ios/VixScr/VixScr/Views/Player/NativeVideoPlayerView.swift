@@ -16,7 +16,7 @@ struct NativeVideoPlayerView: View {
     var body: some View {
         ZStack {
             // Video layer
-            VideoPlayerLayer(player: playerManager.player)
+            VideoPlayerLayer(player: playerManager.player, isFullscreen: isFullscreen)
                 .background(Color.black)
                 .onTapGesture {
                     toggleControls()
@@ -111,18 +111,22 @@ struct NativeVideoPlayerView: View {
 /// UIViewRepresentable wrapper for AVPlayerLayer
 struct VideoPlayerLayer: UIViewRepresentable {
     let player: AVPlayer?
+    let isFullscreen: Bool
     
     func makeUIView(context: Context) -> PlayerUIView {
-        PlayerUIView(player: player)
+        PlayerUIView(player: player, isFullscreen: isFullscreen)
     }
     
     func updateUIView(_ uiView: PlayerUIView, context: Context) {
+        uiView.isFullscreen = isFullscreen
         uiView.player = player
     }
     
     final class PlayerUIView: UIView {
         private var playerLayer: AVPlayerLayer?
         private var pictureInPictureController: AVPictureInPictureController?
+        private var backgroundObserver: NSObjectProtocol?
+        var isFullscreen: Bool
         
         var player: AVPlayer? {
             didSet {
@@ -132,8 +136,9 @@ struct VideoPlayerLayer: UIViewRepresentable {
             }
         }
         
-        init(player: AVPlayer?) {
+        init(player: AVPlayer?, isFullscreen: Bool) {
             self.player = player
+            self.isFullscreen = isFullscreen
             super.init(frame: .zero)
             setupPlayerLayer()
         }
@@ -143,6 +148,10 @@ struct VideoPlayerLayer: UIViewRepresentable {
         }
         
         private func setupPlayerLayer() {
+            if let backgroundObserver {
+                NotificationCenter.default.removeObserver(backgroundObserver)
+                self.backgroundObserver = nil
+            }
             pictureInPictureController = nil
             playerLayer?.removeFromSuperlayer()
             playerLayer = nil
@@ -158,6 +167,28 @@ struct VideoPlayerLayer: UIViewRepresentable {
                let controller = AVPictureInPictureController(playerLayer: layer) {
                 controller.canStartPictureInPictureAutomaticallyFromInline = true
                 pictureInPictureController = controller
+                // The native AVPlayerViewController used for fullscreen lives
+                // inside a SwiftUI fullScreenCover, so it isn't an inline
+                // presentation and automatic-from-inline PiP doesn't apply.
+                // Start PiP explicitly as the app enters the background.
+                backgroundObserver = NotificationCenter.default.addObserver(
+                    forName: UIApplication.didEnterBackgroundNotification,
+                    object: nil,
+                    queue: .main
+                ) { [weak self] _ in
+                    guard let self,
+                          self.isFullscreen,
+                          self.player?.timeControlStatus == .playing,
+                          let pipController = self.pictureInPictureController,
+                          pipController.isPictureInPicturePossible else { return }
+                    pipController.startPictureInPicture()
+                }
+            }
+        }
+
+        deinit {
+            if let backgroundObserver {
+                NotificationCenter.default.removeObserver(backgroundObserver)
             }
         }
         
