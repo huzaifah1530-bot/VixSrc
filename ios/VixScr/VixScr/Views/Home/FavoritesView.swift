@@ -32,7 +32,10 @@ struct FavoritesView: View {
                                         compact: store.cardSize == .compact,
                                         watchProgress: store.progress(for: item),
                                         widthOverride: geometry.size.width,
-                                        onTap: { Task { await open(item) } }
+                                        canRemoveFromHistory: store.recents.contains { $0.id == item.id } || store.progress(for: item) != nil,
+                                        onTap: { Task { await open(item) } },
+                                        onToggleFavorite: { store.toggleFavorite(item) },
+                                        onRemoveFromHistory: { store.removeFromHistory(item) }
                                     )
                                 }
                                 .aspectRatio(2.0 / 3.0, contentMode: .fit)

@@ -9,6 +9,9 @@ struct PosterCard: View {
     var watchProgress: WatchProgress?
     var widthOverride: CGFloat?
     var onTap: () -> Void
+    var onToggleFavorite: (() -> Void)?
+    var onRemoveFromHistory: (() -> Void)?
+    var canRemoveFromHistory: Bool
 
     private var width: CGFloat { widthOverride ?? (compact ? 124 : 154) }
     private var cornerRadius: CGFloat { compact ? 18 : 22 }
@@ -79,15 +82,34 @@ struct PosterCard: View {
             )
         }
         .buttonStyle(.plain)
+        .contextMenu {
+            Button(action: onTap) {
+                Label(item.resumeSeason != nil || watchProgress != nil ? "Resume" : "Play", systemImage: "play.fill")
+            }
+            if let onToggleFavorite {
+                Button(action: onToggleFavorite) {
+                    Label(isFavorite ? "Remove from Favourites" : "Add to Favourites",
+                          systemImage: isFavorite ? "heart.slash" : "heart")
+                }
+            }
+            if canRemoveFromHistory, let onRemoveFromHistory {
+                Button(role: .destructive, action: onRemoveFromHistory) {
+                    Label("Remove from History", systemImage: "clock.arrow.circlepath")
+                }
+            }
+        }
     }
 
-    init(item: MediaItem, isFavorite: Bool, compact: Bool, watchProgress: WatchProgress? = nil, widthOverride: CGFloat? = nil, onTap: @escaping () -> Void) {
+    init(item: MediaItem, isFavorite: Bool, compact: Bool, watchProgress: WatchProgress? = nil, widthOverride: CGFloat? = nil, canRemoveFromHistory: Bool = false, onTap: @escaping () -> Void, onToggleFavorite: (() -> Void)? = nil, onRemoveFromHistory: (() -> Void)? = nil) {
         self.item = item
         self.isFavorite = isFavorite
         self.compact = compact
         self.watchProgress = watchProgress
         self.widthOverride = widthOverride
         self.onTap = onTap
+        self.onToggleFavorite = onToggleFavorite
+        self.onRemoveFromHistory = onRemoveFromHistory
+        self.canRemoveFromHistory = canRemoveFromHistory
     }
 
     @ViewBuilder

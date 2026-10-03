@@ -249,6 +249,15 @@ final class AppStore {
         recents = ([snapshot] + recents.filter { $0.id != item.id }).prefix(24).map { $0 }
     }
 
+    func removeFromHistory(_ item: MediaItem) {
+        recents.removeAll { $0.id == item.id }
+        if item.type == .movie {
+            watchProgress.removeAll { $0.id == "movie:\(item.tmdbId)" }
+        } else {
+            watchProgress.removeAll { $0.id.hasPrefix("tv:\(item.tmdbId):") }
+        }
+    }
+
     var sortedRecents: [MediaItem] {
         recents.sorted { ($0.updatedAt ?? .distantPast) > ($1.updatedAt ?? .distantPast) }
     }

@@ -31,7 +31,10 @@ struct SearchResultsGrid: View {
                         item: item,
                         isFavorite: store.isFavorite(item),
                         watchProgress: store.progress(for: item),
-                        onTap: { onSelect(item) }
+                        canRemoveFromHistory: store.recents.contains { $0.id == item.id } || store.progress(for: item) != nil,
+                        onTap: { onSelect(item) },
+                        onToggleFavorite: { store.toggleFavorite(item) },
+                        onRemoveFromHistory: { store.removeFromHistory(item) }
                     )
                 }
             }
@@ -46,7 +49,10 @@ private struct SearchPosterCard: View {
     let item: MediaItem
     var isFavorite: Bool
     var watchProgress: WatchProgress?
+    var canRemoveFromHistory: Bool
     var onTap: () -> Void
+    var onToggleFavorite: () -> Void
+    var onRemoveFromHistory: () -> Void
 
     var body: some View {
         GeometryReader { geo in
@@ -110,16 +116,33 @@ private struct SearchPosterCard: View {
                 )
             }
             .buttonStyle(.plain)
+            .contextMenu {
+                Button(action: onTap) {
+                    Label(item.resumeSeason != nil || watchProgress != nil ? "Resume" : "Play", systemImage: "play.fill")
+                }
+                Button(action: onToggleFavorite) {
+                    Label(isFavorite ? "Remove from Favourites" : "Add to Favourites",
+                          systemImage: isFavorite ? "heart.slash" : "heart")
+                }
+                if canRemoveFromHistory {
+                    Button(role: .destructive, action: onRemoveFromHistory) {
+                        Label("Remove from History", systemImage: "clock.arrow.circlepath")
+                    }
+                }
+            }
         }
         // aspectRatio drives the GeometryReader's height
         .aspectRatio(2.0 / 3.0, contentMode: .fit)
     }
 
-    init(item: MediaItem, isFavorite: Bool, watchProgress: WatchProgress? = nil, onTap: @escaping () -> Void) {
+    init(item: MediaItem, isFavorite: Bool, watchProgress: WatchProgress? = nil, canRemoveFromHistory: Bool, onTap: @escaping () -> Void, onToggleFavorite: @escaping () -> Void, onRemoveFromHistory: @escaping () -> Void) {
         self.item = item
         self.isFavorite = isFavorite
         self.watchProgress = watchProgress
+        self.canRemoveFromHistory = canRemoveFromHistory
         self.onTap = onTap
+        self.onToggleFavorite = onToggleFavorite
+        self.onRemoveFromHistory = onRemoveFromHistory
     }
 
     @ViewBuilder

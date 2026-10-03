@@ -61,7 +61,10 @@ struct ContinueWatchingRowView: View {
                             isFavorite: store.isFavorite(item),
                             compact: store.cardSize == .compact,
                             watchProgress: store.progress(for: item),
-                            onTap: { handleTap(item) }
+                            canRemoveFromHistory: true,
+                            onTap: { handleTap(item) },
+                            onToggleFavorite: { store.toggleFavorite(item) },
+                            onRemoveFromHistory: { store.removeFromHistory(item) }
                         )
                         // matchedGeometryEffect binds each card to its
                         // stable id in cardSpace. When displayItems reorders,

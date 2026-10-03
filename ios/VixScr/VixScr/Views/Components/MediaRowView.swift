@@ -27,7 +27,10 @@ struct MediaRowView: View {
                             isFavorite: store.isFavorite(item),
                             compact: store.cardSize == .compact,
                             watchProgress: store.progress(for: item),
-                            onTap: { onSelect(item) }
+                            canRemoveFromHistory: store.recents.contains { $0.id == item.id } || store.progress(for: item) != nil,
+                            onTap: { onSelect(item) },
+                            onToggleFavorite: { store.toggleFavorite(item) },
+                            onRemoveFromHistory: { store.removeFromHistory(item) }
                         )
                     }
                 }
