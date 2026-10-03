@@ -344,9 +344,17 @@ final class VideoPlayerManager {
             info[MPMediaItemPropertyPlaybackDuration] = duration
         }
         if let image = nowPlayingArtwork {
-            info[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+            info[MPMediaItemPropertyArtwork] = Self.makeNowPlayingArtwork(image)
         }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+    }
+
+    /// MediaPlayer may request artwork from one of its own background queues.
+    /// Keep its synchronous provider outside the manager's MainActor isolation;
+    /// otherwise Swift's executor check traps when the system calls it off-main.
+    private nonisolated static func makeNowPlayingArtwork(_ image: UIImage) -> MPMediaItemArtwork {
+        let boundsSize = image.size
+        return MPMediaItemArtwork(boundsSize: boundsSize) { _ in image }
     }
 
     private func installRemoteCommands() {
