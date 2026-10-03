@@ -394,6 +394,7 @@ final class CatalogViewModel {
         currentNativeVideoURL = nil
         isResolvingStream = false
         streamResolutionTask?.cancel()
+        playerManager.cleanup()
         cast = []
         isPlayerPresented = true
 
@@ -601,6 +602,10 @@ final class CatalogViewModel {
     func closePlayer() {
         isPlayerPresented = false
         currentStreamURL = nil
+        currentNativeVideoURL = nil
+        isResolvingStream = false
+        streamResolutionTask?.cancel()
+        playerManager.cleanup()
         startHeroCycle()
     }
 

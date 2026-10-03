@@ -19,9 +19,112 @@ struct StreamURLExtractor {
            urlString.contains(".m3u8?") || urlString.contains(".mp4?") {
             return serverURL
         }
+
+        // VixSrc serves a short-lived embed token from /api/movie or /api/tv,
+        // then publishes the signed HLS master playlist in the embed HTML.
+        // Resolve that chain before falling back to the web player.
+        if serverURL.host?.lowercased().contains("vixsrc") == true,
+           let vixSrcURL = await extractVixSrcStream(from: serverURL) {
+            return vixSrcURL
+        }
         
         // Try to fetch the page and look for video sources
         return await extractFromHTML(serverURL)
+    }
+
+    private static func extractVixSrcStream(from pageURL: URL) async -> URL? {
+        let components = pageURL.pathComponents.filter { $0 != "/" }
+        guard components.count >= 2 else { return nil }
+
+        let endpoint: String
+        switch components[0].lowercased() {
+        case "movie":
+            endpoint = "/api/movie/\(components[1])"
+        case "tv":
+            guard components.count >= 4 else { return nil }
+            endpoint = "/api/tv/\(components[1])/\(components[2])/\(components[3])"
+        default:
+            return nil
+        }
+
+        guard let host = pageURL.host else { return nil }
+        var apiComponents = URLComponents()
+        apiComponents.scheme = pageURL.scheme ?? "https"
+        apiComponents.host = host
+        apiComponents.path = endpoint
+
+        do {
+            var apiRequest = URLRequest(url: apiComponents.url!)
+            apiRequest.timeoutInterval = 15
+            apiRequest.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+            apiRequest.setValue(pageURL.absoluteString, forHTTPHeaderField: "Referer")
+            let (apiData, _) = try await URLSession.shared.data(for: apiRequest)
+            let payload = try JSONDecoder().decode(VixSrcAPIResponse.self, from: apiData)
+            guard let embedPath = payload.src,
+                  let embedURL = URL(string: embedPath, relativeTo: pageURL)?.absoluteURL
+            else { return nil }
+
+            var embedRequest = URLRequest(url: embedURL)
+            embedRequest.timeoutInterval = 15
+            embedRequest.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+            embedRequest.setValue(pageURL.absoluteString, forHTTPHeaderField: "Referer")
+            let (embedData, _) = try await URLSession.shared.data(for: embedRequest)
+            guard let html = String(data: embedData, encoding: .utf8),
+                  let playlistURL = playlistURL(from: html, embedURL: embedURL)
+            else { return nil }
+
+            return playlistURL
+        } catch {
+            return nil
+        }
+    }
+
+    private static func playlistURL(from html: String, embedURL: URL) -> URL? {
+        guard let rawURL = firstCapture(
+            pattern: "(?:window\\.)?masterPlaylist\\s*=\\s*\\{[\\s\\S]*?url\\s*:\\s*['\\\"]([^'\\\"]+)['\\\"]",
+            in: html
+        ), let baseURL = URL(string: rawURL, relativeTo: embedURL)?.absoluteURL,
+        var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: true)
+        else { return nil }
+
+        let paramsBlock = firstCapture(
+            pattern: "masterPlaylist\\s*=\\s*\\{[\\s\\S]*?params\\s*:\\s*\\{([\\s\\S]*?)\\}[^}]*url",
+            in: html
+        ) ?? ""
+        let parameterPattern = "['\\\"]([^'\\\"]+)['\\\"]\\s*:\\s*['\\\"]([^'\\\"]*)['\\\"]"
+        if let regex = try? NSRegularExpression(pattern: parameterPattern),
+           let range = Range(NSRange(location: 0, length: paramsBlock.utf16.count), in: paramsBlock) {
+            for match in regex.matches(in: paramsBlock, range: NSRange(range, in: paramsBlock)) {
+                guard let keyRange = Range(match.range(at: 1), in: paramsBlock),
+                      let valueRange = Range(match.range(at: 2), in: paramsBlock) else { continue }
+                let key = String(paramsBlock[keyRange])
+                let value = String(paramsBlock[valueRange])
+                if !value.isEmpty {
+                    components.queryItems = (components.queryItems ?? []) + [URLQueryItem(name: key, value: value)]
+                }
+            }
+        }
+
+        let embedQuery = URLComponents(url: embedURL, resolvingAgainstBaseURL: true)?.queryItems ?? []
+        if let language = embedQuery.first(where: { $0.name == "lang" })?.value {
+            components.queryItems = (components.queryItems ?? []) + [URLQueryItem(name: "lang", value: language)]
+        }
+        components.queryItems = (components.queryItems ?? []) + [URLQueryItem(name: "h", value: "1")]
+        return components.url
+    }
+
+    private static func firstCapture(pattern: String, in string: String) -> String? {
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
+              let match = regex.firstMatch(in: string, range: NSRange(string.startIndex..., in: string)),
+              match.numberOfRanges > 1,
+              let range = Range(match.range(at: 1), in: string) else { return nil }
+        return String(string[range])
+    }
+
+    private static let userAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1"
+
+    private struct VixSrcAPIResponse: Decodable {
+        let src: String?
     }
     
     private static func extractFromHTML(_ url: URL) async -> URL? {
