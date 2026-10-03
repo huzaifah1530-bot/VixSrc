@@ -24,6 +24,15 @@ struct MediaItem: Identifiable, Codable, Hashable {
     var resumeEpisode: Int?
     var resumeTitle: String?
     var updatedAt: Date?
+    
+    // Watch progress tracking
+    var resumePosition: Double?
+    var duration: Double?
+    
+    var progress: Double? {
+        guard let position = resumePosition, let dur = duration, dur > 0 else { return nil }
+        return position / dur
+    }
 
     var id: String { "\(type.rawValue):\(tmdbId)" }
 
