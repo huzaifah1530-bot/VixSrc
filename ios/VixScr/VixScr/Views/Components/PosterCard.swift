@@ -32,6 +32,16 @@ struct PosterCard: View {
                     Text(item.year.isEmpty ? "TMDB" : item.year)
                         .font(.caption2.weight(.medium))
                         .foregroundStyle(.white.opacity(0.56))
+                    if let season = item.resumeSeason, let episode = item.resumeEpisode {
+                        Text("RESUME S\(season) E\(episode)")
+                            .font(.caption2.weight(.bold))
+                            .lineLimit(1)
+                            .padding(.horizontal, 9)
+                            .padding(.vertical, 6)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .background(.black.opacity(0.56), in: Capsule())
+                            .foregroundStyle(.white.opacity(0.92))
+                    }
                 }
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -52,15 +62,6 @@ struct PosterCard: View {
                                 .padding(6)
                                 .vixGlass(.regular, cornerRadius: 999)
                         }
-                    }
-                    if let season = item.resumeSeason, let episode = item.resumeEpisode {
-                        Text("RESUME S\(season) E\(episode)")
-                            .font(.caption2.weight(.bold))
-                            .lineLimit(1)
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 4)
-                            .background(.black.opacity(0.56), in: Capsule())
-                            .foregroundStyle(.white.opacity(0.92))
                     }
                     Spacer(minLength: 0)
                 }
