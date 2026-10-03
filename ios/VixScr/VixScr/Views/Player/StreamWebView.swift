@@ -68,7 +68,6 @@ struct StreamWebView: UIViewRepresentable {
         private(set) var currentURL: URL?
         private var allowedHost: String?
         private weak var webView: WKWebView?
-        private var remoteCommandObserver: NSObjectProtocol?
         let onNewLoad: (() -> Void)?
         private var resumePosition: Double = 0
         private var onNativeStreamFound: ((URL, [HTTPCookie]) -> Void)?
@@ -76,23 +75,24 @@ struct StreamWebView: UIViewRepresentable {
 
         init(onNewLoad: (() -> Void)?) {
             self.onNewLoad = onNewLoad
-            remoteCommandObserver = NotificationCenter.default.addObserver(
-                forName: .velaWebRemoteCommand,
-                object: nil,
-                queue: .main
-            ) { [weak self] notification in
-                let action = notification.userInfo?["action"] as? String
-                let position = notification.userInfo?["position"] as? Double
-                Task { @MainActor [weak self] in
-                    self?.performRemoteCommand(action, position: position)
-                }
-            }
+            super.init()
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(receiveRemoteCommand(_:)),
+                name: .velaWebRemoteCommand,
+                object: nil
+            )
         }
 
         deinit {
-            if let remoteCommandObserver {
-                NotificationCenter.default.removeObserver(remoteCommandObserver)
-            }
+            NotificationCenter.default.removeObserver(self, name: .velaWebRemoteCommand, object: nil)
+        }
+
+        @objc private func receiveRemoteCommand(_ notification: Notification) {
+            performRemoteCommand(
+                notification.userInfo?["action"] as? String,
+                position: notification.userInfo?["position"] as? Double
+            )
         }
 
         func update(resumePosition: Double, onNativeStreamFound: ((URL, [HTTPCookie]) -> Void)?, onProgress: ((Double, Double, Bool) -> Void)?) {
