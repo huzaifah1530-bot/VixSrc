@@ -33,7 +33,7 @@ struct PosterCard: View {
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                VStack {
+                VStack(alignment: .leading, spacing: 6) {
                     HStack {
                         Text(item.typeLabel.uppercased())
                             .font(.caption2.weight(.bold))
@@ -50,16 +50,16 @@ struct PosterCard: View {
                                 .vixGlass(.regular, cornerRadius: 999)
                         }
                     }
-                    Spacer()
                     if let season = item.resumeSeason, let episode = item.resumeEpisode {
                         Text("RESUME S\(season) E\(episode)")
                             .font(.caption2.weight(.bold))
-                            .padding(.horizontal, 9)
-                            .padding(.vertical, 6)
-                            .frame(maxWidth: .infinity)
-                            .background(.white.opacity(0.13), in: Capsule())
-                            .foregroundStyle(.white.opacity(0.86))
+                            .lineLimit(1)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 4)
+                            .background(.black.opacity(0.56), in: Capsule())
+                            .foregroundStyle(.white.opacity(0.92))
                     }
+                    Spacer(minLength: 0)
                 }
                 .padding(8)
 
