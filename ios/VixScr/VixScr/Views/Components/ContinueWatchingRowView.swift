@@ -60,6 +60,7 @@ struct ContinueWatchingRowView: View {
                             item: item,
                             isFavorite: store.isFavorite(item),
                             compact: store.cardSize == .compact,
+                            watchProgress: store.progress(for: item),
                             onTap: { handleTap(item) }
                         )
                         // matchedGeometryEffect binds each card to its

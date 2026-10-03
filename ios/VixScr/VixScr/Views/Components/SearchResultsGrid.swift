@@ -30,6 +30,7 @@ struct SearchResultsGrid: View {
                     SearchPosterCard(
                         item: item,
                         isFavorite: store.isFavorite(item),
+                        watchProgress: store.progress(for: item),
                         onTap: { onSelect(item) }
                     )
                 }
@@ -44,6 +45,7 @@ struct SearchResultsGrid: View {
 private struct SearchPosterCard: View {
     let item: MediaItem
     var isFavorite: Bool
+    var watchProgress: WatchProgress?
     var onTap: () -> Void
 
     var body: some View {
@@ -90,6 +92,19 @@ private struct SearchPosterCard: View {
                         Spacer()
                     }
                     .padding(8)
+
+                    if let watchProgress {
+                        VStack {
+                            HStack {
+                                Spacer()
+                                TimestampBadge(lastWatched: watchProgress.lastWatchedAt)
+                            }
+                            Spacer()
+                            ProgressOverlay(progress: watchProgress.progress)
+                                .frame(height: 4)
+                        }
+                        .padding(8)
+                    }
                 }
                 .frame(width: geo.size.width, height: geo.size.width * 1.5)
                 .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
@@ -102,6 +117,13 @@ private struct SearchPosterCard: View {
         }
         // aspectRatio drives the GeometryReader's height
         .aspectRatio(2.0 / 3.0, contentMode: .fit)
+    }
+
+    init(item: MediaItem, isFavorite: Bool, watchProgress: WatchProgress? = nil, onTap: @escaping () -> Void) {
+        self.item = item
+        self.isFavorite = isFavorite
+        self.watchProgress = watchProgress
+        self.onTap = onTap
     }
 
     @ViewBuilder

@@ -96,13 +96,31 @@ struct PlayerSheet: View {
     @ViewBuilder
     private var playerFrame: some View {
         ZStack {
-            if viewModel.currentNativeVideoURL != nil {
-                NativeVideoPlayerView(playerManager: viewModel.playerManager)
-            } else if let url = viewModel.currentStreamURL {
-                StreamWebView(url: url)
-            } else {
-                Color.black
-                ProgressView().tint(.white)
+            Group {
+                if viewModel.currentNativeVideoURL != nil {
+                    NativeVideoPlayerView(playerManager: viewModel.playerManager)
+                } else if let url = viewModel.currentStreamURL {
+                    StreamWebView(url: url)
+                } else {
+                    Color.black
+                    ProgressView().tint(.white)
+                }
+            }
+            .overlay(alignment: .topLeading) {
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(viewModel.currentNativeVideoURL == nil ? .orange : .green)
+                        .frame(width: 7, height: 7)
+                    Text(viewModel.isResolvingStream
+                         ? "Resolving stream"
+                         : (viewModel.currentNativeVideoURL == nil ? "Embedded player" : "Native player"))
+                        .font(.caption2.weight(.semibold))
+                }
+                .foregroundStyle(.white.opacity(0.9))
+                .padding(.horizontal, 9)
+                .padding(.vertical, 6)
+                .background(.black.opacity(0.65), in: Capsule())
+                .padding(10)
             }
         }
         .aspectRatio(16.0 / 9.0, contentMode: .fit)

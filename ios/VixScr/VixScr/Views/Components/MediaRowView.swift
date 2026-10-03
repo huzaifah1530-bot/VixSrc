@@ -26,6 +26,7 @@ struct MediaRowView: View {
                             item: item,
                             isFavorite: store.isFavorite(item),
                             compact: store.cardSize == .compact,
+                            watchProgress: store.progress(for: item),
                             onTap: { onSelect(item) }
                         )
                     }

@@ -7,6 +7,7 @@ import SwiftUI
 struct LastWatchedCard: View {
     let item: MediaItem
     let isFavorite: Bool
+    let watchProgress: WatchProgress?
     var onContinue: () -> Void
     var onFavorite: () -> Void
 
@@ -54,6 +55,15 @@ struct LastWatchedCard: View {
             .padding(.vertical, 12)
             .frame(maxWidth: .infinity)
             .background { cardBackground }
+            .overlay(alignment: .bottom) {
+                if let watchProgress {
+                    ProgressOverlay(progress: watchProgress.progress)
+                        .frame(height: 4)
+                        .clipShape(Capsule())
+                        .padding(.horizontal, 14)
+                        .padding(.bottom, 4)
+                }
+            }
         }
         // Apple-style press feedback: scale down slightly on press, spring
         // back on release. Matches the feel of cells in Apple TV, App Store,

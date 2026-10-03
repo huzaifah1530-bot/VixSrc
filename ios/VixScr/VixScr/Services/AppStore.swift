@@ -257,6 +257,16 @@ final class AppStore {
         watchProgress.first { $0.id == id }
     }
 
+    func progress(for item: MediaItem) -> WatchProgress? {
+        if item.type == .tv, let season = item.resumeSeason, let episode = item.resumeEpisode {
+            return progress(for: "tv:\(item.tmdbId):\(season):\(episode)")
+        }
+        if item.type == .movie {
+            return progress(for: "movie:\(item.tmdbId)")
+        }
+        return watchProgress.first { $0.id.hasPrefix("tv:\(item.tmdbId):") }
+    }
+
     func saveProgress(_ progress: WatchProgress) {
         watchProgress = [progress] + watchProgress.filter { $0.id != progress.id }
         if watchProgress.count > 100 {

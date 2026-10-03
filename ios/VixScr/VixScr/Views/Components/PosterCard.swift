@@ -6,6 +6,7 @@ struct PosterCard: View {
     let item: MediaItem
     var isFavorite: Bool
     var compact: Bool
+    var watchProgress: WatchProgress?
     var onTap: () -> Void
 
     private var width: CGFloat { compact ? 124 : 154 }
@@ -60,6 +61,18 @@ struct PosterCard: View {
                     }
                 }
                 .padding(8)
+
+                if let watchProgress {
+                    VStack {
+                        HStack {
+                            Spacer()
+                            TimestampBadge(lastWatched: watchProgress.lastWatchedAt)
+                        }
+                        Spacer()
+                        ProgressOverlay(progress: watchProgress.progress)
+                            .frame(height: 4)
+                    }
+                }
             }
             .frame(width: width, height: width * 1.5)
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
@@ -69,6 +82,14 @@ struct PosterCard: View {
             )
         }
         .buttonStyle(.plain)
+    }
+
+    init(item: MediaItem, isFavorite: Bool, compact: Bool, watchProgress: WatchProgress? = nil, onTap: @escaping () -> Void) {
+        self.item = item
+        self.isFavorite = isFavorite
+        self.compact = compact
+        self.watchProgress = watchProgress
+        self.onTap = onTap
     }
 
     @ViewBuilder

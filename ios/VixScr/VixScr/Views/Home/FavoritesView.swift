@@ -29,6 +29,7 @@ struct FavoritesView: View {
                                     item: item,
                                     isFavorite: true,
                                     compact: store.cardSize == .compact,
+                                    watchProgress: store.progress(for: item),
                                     onTap: { Task { await open(item) } }
                                 )
                             }

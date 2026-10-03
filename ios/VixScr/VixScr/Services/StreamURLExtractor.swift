@@ -11,13 +11,12 @@ struct StreamURLExtractor {
         // or if it needs to be loaded as an embed
         
         let urlString = serverURL.absoluteString.lowercased()
-        
-        // Direct video file URLs (mp4, m3u8, etc.)
-        if urlString.hasSuffix(".mp4") ||
-           urlString.hasSuffix(".m3u8") ||
-           urlString.hasSuffix(".m3u") ||
-           urlString.contains("/manifest.m3u8") ||
-           urlString.contains(".mp4?") {
+        let pathExtension = serverURL.pathExtension.lowercased()
+
+        // Direct video file URLs (mp4, m3u8, etc.). Check the path extension
+        // separately so signed URLs with query parameters are recognised too.
+        if ["mp4", "m3u8", "m3u", "webm", "mov"].contains(pathExtension) ||
+           urlString.contains(".m3u8?") || urlString.contains(".mp4?") {
             return serverURL
         }
         
@@ -27,13 +26,17 @@ struct StreamURLExtractor {
     
     private static func extractFromHTML(_ url: URL) async -> URL? {
         do {
-            let (data, _) = try await URLSession.shared.data(from: url)
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 15
+            request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
+            request.setValue("text/html,application/xhtml+xml", forHTTPHeaderField: "Accept")
+            let (data, _) = try await URLSession.shared.data(for: request)
             guard let html = String(data: data, encoding: .utf8) else { return nil }
             
             // Look for common video URL patterns in the HTML
             let patterns = [
                 // M3U8 playlist URLs
-                "https?://[^\"'\\s]+\\.m3u8[^\"'\\s]*",
+                "https?://[^\"'\\s]+(?:\\.m3u8|\\.mp4)[^\"'\\s]*",
                 // MP4 URLs
                 "https?://[^\"'\\s]+\\.mp4[^\"'\\s]*",
                 // Common video source patterns
@@ -58,8 +61,10 @@ struct StreamURLExtractor {
                         }
                     }
                     
-                    if let urlString = urlString?.trimmingCharacters(in: .whitespacesAndNewlines),
-                       let videoURL = URL(string: urlString) {
+                    if let rawURL = urlString?.trimmingCharacters(in: .whitespacesAndNewlines),
+                       let videoURL = URL(string: rawURL
+                        .replacingOccurrences(of: "\\/", with: "/")
+                        .replacingOccurrences(of: "&amp;", with: "&")) {
                         // Validate it's a real video URL
                         if await validateVideoURL(videoURL) {
                             return videoURL
@@ -78,7 +83,8 @@ struct StreamURLExtractor {
     private static func validateVideoURL(_ url: URL) async -> Bool {
         // Quick HEAD request to verify the URL is accessible
         var request = URLRequest(url: url)
-        request.httpMethod = "HEAD"
+        request.httpMethod = "GET"
+        request.setValue("bytes=0-1", forHTTPHeaderField: "Range")
         request.timeoutInterval = 5
         
         do {

@@ -198,6 +198,7 @@ struct HomeView: View {
                         LastWatchedCard(
                             item: lastWatched,
                             isFavorite: store.isFavorite(lastWatched),
+                            watchProgress: store.progress(for: lastWatched),
                             onContinue: {
                                 Task { await viewModel.open(lastWatched) }
                             },

@@ -51,6 +51,7 @@ final class CatalogViewModel {
     private(set) var currentServerIndex = 0
     private(set) var currentStreamURL: URL?
     private(set) var currentNativeVideoURL: URL?
+    private(set) var isResolvingStream = false
     private(set) var cast: [CastMember] = []
 
     let playerManager = VideoPlayerManager()
@@ -391,6 +392,7 @@ final class CatalogViewModel {
         currentServerIndex = 0
         currentStreamURL = nil
         currentNativeVideoURL = nil
+        isResolvingStream = false
         streamResolutionTask?.cancel()
         cast = []
         isPlayerPresented = true
@@ -548,11 +550,13 @@ final class CatalogViewModel {
 
     private func resolvePlaybackURL() {
         currentNativeVideoURL = nil
+        isResolvingStream = true
         streamResolutionTask?.cancel()
         guard let pageURL = currentStreamURL else { return }
         streamResolutionTask = Task { @MainActor [weak self] in
             let mode = await StreamURLExtractor.determinePlaybackMode(for: pageURL)
             guard let self, !Task.isCancelled, self.currentStreamURL == pageURL else { return }
+            self.isResolvingStream = false
             switch mode {
             case .native(let videoURL):
                 self.currentNativeVideoURL = videoURL
