@@ -6,7 +6,6 @@ import UIKit
 /// Replaces the WebView-based player with a proper AVPlayerLayer.
 struct NativeVideoPlayerView: View {
     @Bindable var playerManager: VideoPlayerManager
-    var posterURL: URL? = nil
     var onPlaybackFailure: (() -> Void)? = nil
     @State private var showControls = true
     @State private var controlsTimer: Timer?
@@ -47,7 +46,6 @@ struct NativeVideoPlayerView: View {
             if !playerManager.isLoading && playerManager.error == nil {
                 PlayerControlsOverlay(
                     playerManager: playerManager,
-                    posterURL: posterURL,
                     onHideControls: { hideControls() },
                     onToggleFullscreen: { isFullscreen = true }
                 )
@@ -209,14 +207,12 @@ struct VideoPlayerLayer: UIViewRepresentable {
 /// Custom controls overlay with play/pause, seek bar, and time labels
 struct PlayerControlsOverlay: View {
     @Bindable var playerManager: VideoPlayerManager
-    var posterURL: URL? = nil
     let onHideControls: () -> Void
     let onToggleFullscreen: () -> Void
     
     @State private var isSeeking = false
     @State private var seekPosition: Double = 0
     @State private var showCaptions = false
-    @State private var scrubPreviewImage: UIImage?
     
     var body: some View {
         VStack {
@@ -303,10 +299,6 @@ struct PlayerControlsOverlay: View {
 
             ZStack(alignment: .topLeading) {
                 VStack(spacing: 2) {
-                    if isSeeking {
-                        Color.clear.frame(height: 84)
-                    }
-
                     ZStack(alignment: .leading) {
                         Capsule()
                             .fill(.white.opacity(0.28))
@@ -346,71 +338,11 @@ struct PlayerControlsOverlay: View {
                     .foregroundStyle(.white.opacity(0.86))
                     .frame(maxWidth: .infinity)
                 }
-
-                if isSeeking {
-                    scrubPreview
-                        .offset(x: min(max(0, availableWidth - 116), max(0, availableWidth * clampedFraction - 58)))
-                        .task(id: Int(seekPosition.rounded(.down))) {
-                            scrubPreviewImage = nil
-                            guard let asset = playerManager.player?.currentItem?.asset else { return }
-                            let generator = AVAssetImageGenerator(asset: asset)
-                            generator.appliesPreferredTrackTransform = true
-                            generator.maximumSize = CGSize(width: 320, height: 180)
-                            generator.requestedTimeToleranceBefore = CMTime(seconds: 0.5, preferredTimescale: 600)
-                            generator.requestedTimeToleranceAfter = CMTime(seconds: 0.5, preferredTimescale: 600)
-                            do {
-                                try await Task.sleep(nanoseconds: 100_000_000)
-                                let time = CMTime(seconds: seekPosition.rounded(.down), preferredTimescale: 600)
-                                let result = try await generator.image(at: time)
-                                guard !Task.isCancelled else { return }
-                                scrubPreviewImage = UIImage(cgImage: result.image)
-                            } catch {
-                                // Some streams don't expose frame thumbnails; keep the time preview usable.
-                            }
-                        }
-                }
             }
-            .frame(height: isSeeking ? 132 : 48, alignment: .top)
+            .frame(height: 48, alignment: .top)
         }
-        .frame(height: isSeeking ? 132 : 48)
+        .frame(height: 48)
         .padding(.horizontal, 20)
-    }
-
-    private var scrubPreview: some View {
-        VStack(spacing: 4) {
-            Group {
-                if let scrubPreviewImage {
-                    Image(uiImage: scrubPreviewImage)
-                        .resizable()
-                        .scaledToFill()
-                } else {
-                    AsyncImage(url: posterURL) { phase in
-                        if let image = phase.image {
-                            image.resizable().scaledToFill()
-                        } else {
-                            Rectangle()
-                                .fill(.ultraThinMaterial)
-                                .overlay {
-                                    Image(systemName: "film")
-                                        .font(.title3.weight(.medium))
-                                        .foregroundStyle(.white.opacity(0.65))
-                                }
-                        }
-                    }
-                }
-            }
-            .frame(width: 116, height: 64)
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(.white.opacity(0.22), lineWidth: 1)
-            }
-            Text(formatTime(seekPosition))
-                .font(.caption2.monospacedDigit().weight(.semibold))
-                .foregroundStyle(.white)
-                .shadow(color: .black.opacity(0.8), radius: 3)
-        }
-        .frame(width: 116)
     }
     
     private func formatTime(_ seconds: Double) -> String {

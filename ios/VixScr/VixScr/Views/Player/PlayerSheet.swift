@@ -133,7 +133,6 @@ struct PlayerSheet: View {
                 if viewModel.currentNativeVideoURL != nil {
                     NativeVideoPlayerView(
                         playerManager: viewModel.playerManager,
-                        posterURL: viewModel.selected?.posterURL,
                         onPlaybackFailure: {
                             if let failedURL = viewModel.currentNativeVideoURL {
                                 viewModel.rejectNativeStream(failedURL)
