@@ -96,7 +96,9 @@ struct PlayerSheet: View {
     @ViewBuilder
     private var playerFrame: some View {
         ZStack {
-            if let url = viewModel.currentStreamURL {
+            if viewModel.currentNativeVideoURL != nil {
+                NativeVideoPlayerView(playerManager: viewModel.playerManager)
+            } else if let url = viewModel.currentStreamURL {
                 StreamWebView(url: url)
             } else {
                 Color.black

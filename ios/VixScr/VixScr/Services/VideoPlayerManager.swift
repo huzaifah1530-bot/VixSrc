@@ -21,14 +21,10 @@ final class VideoPlayerManager {
     private var timeObserver: Any?
     private var statusObservation: NSKeyValueObservation?
     private var progressId: String?
-    var onProgressUpdate: ((Double, Double) -> Void)? // (position, duration)
+    var onProgressUpdate: (@MainActor (Double, Double) -> Void)? // (position, duration)
     
     init() {
         setupAudioSession()
-    }
-    
-    deinit {
-        cleanup()
     }
     
     // MARK: - Playback Control
@@ -48,7 +44,7 @@ final class VideoPlayerManager {
         statusObservation = player.observe(\.status, options: [.new]) { [weak self] player, _ in
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                
+
                 switch player.status {
                 case .readyToPlay:
                     self.isLoading = false
@@ -116,21 +112,23 @@ final class VideoPlayerManager {
         // Update every 0.5 seconds
         let interval = CMTime(seconds: 0.5, preferredTimescale: 600)
         timeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
-            guard let self else { return }
-            
-            let seconds = time.seconds
-            guard seconds.isFinite else { return }
-            
-            self.currentTime = seconds
-            
-            // Notify progress update
-            if self.duration > 0 {
-                self.onProgressUpdate?(seconds, self.duration)
-            }
-            
-            // Auto-save progress every 30 seconds
-            if Int(seconds) % 30 == 0 {
-                self.saveProgress()
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+
+                let seconds = time.seconds
+                guard seconds.isFinite else { return }
+
+                self.currentTime = seconds
+
+                // Notify progress update
+                if self.duration > 0 {
+                    self.onProgressUpdate?(seconds, self.duration)
+                }
+
+                // Auto-save progress every 30 seconds
+                if Int(seconds) % 30 == 0 {
+                    self.saveProgress()
+                }
             }
         }
         
@@ -140,7 +138,9 @@ final class VideoPlayerManager {
             object: player.currentItem,
             queue: .main
         ) { [weak self] _ in
-            self?.handlePlaybackEnd()
+            Task { @MainActor [weak self] in
+                self?.handlePlaybackEnd()
+            }
         }
     }
     

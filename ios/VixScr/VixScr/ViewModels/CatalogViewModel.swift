@@ -50,7 +50,11 @@ final class CatalogViewModel {
     private(set) var episodeErrorMessage: String?
     private(set) var currentServerIndex = 0
     private(set) var currentStreamURL: URL?
+    private(set) var currentNativeVideoURL: URL?
     private(set) var cast: [CastMember] = []
+
+    let playerManager = VideoPlayerManager()
+    private var streamResolutionTask: Task<Void, Never>?
 
     private var castTask: Task<Void, Never>?
 
@@ -386,6 +390,8 @@ final class CatalogViewModel {
         episodes = []
         currentServerIndex = 0
         currentStreamURL = nil
+        currentNativeVideoURL = nil
+        streamResolutionTask?.cancel()
         cast = []
         isPlayerPresented = true
 
@@ -397,6 +403,7 @@ final class CatalogViewModel {
         if item.type == .movie {
             store.addRecent(item)
             currentStreamURL = activeServer?.movieURL(tmdbId: item.tmdbId)
+            resolvePlaybackURL()
             return
         }
 
@@ -511,6 +518,7 @@ final class CatalogViewModel {
         guard let item = selected, let season = selectedSeason else { return }
         currentStreamURL = activeServer?.tvURL(tmdbId: item.tmdbId, season: season.seasonNumber, episode: episode.episodeNumber)
         store.addRecent(item, season: season.seasonNumber, episode: episode.episodeNumber, episodeTitle: episode.name)
+        resolvePlaybackURL()
     }
 
     @MainActor
@@ -523,16 +531,66 @@ final class CatalogViewModel {
         } else if let season = selectedSeason, let episode = selectedEpisode {
             currentStreamURL = server.tvURL(tmdbId: item.tmdbId, season: season.seasonNumber, episode: episode.episodeNumber)
         }
+        resolvePlaybackURL()
         showToast("Switched to \(server.name)")
     }
 
     func reloadPlayer() {
         let url = currentStreamURL
         currentStreamURL = nil
+        currentNativeVideoURL = nil
+        playerManager.cleanup()
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 80_000_000)
             currentStreamURL = url
         }
+    }
+
+    private func resolvePlaybackURL() {
+        currentNativeVideoURL = nil
+        streamResolutionTask?.cancel()
+        guard let pageURL = currentStreamURL else { return }
+        streamResolutionTask = Task { @MainActor [weak self] in
+            let mode = await StreamURLExtractor.determinePlaybackMode(for: pageURL)
+            guard let self, !Task.isCancelled, self.currentStreamURL == pageURL else { return }
+            switch mode {
+            case .native(let videoURL):
+                self.currentNativeVideoURL = videoURL
+                self.playerManager.onProgressUpdate = { [weak self] position, duration in
+                    guard let self else { return }
+                    let id = self.currentProgressID
+                    let progress = WatchProgress(
+                        id: id,
+                        position: position,
+                        duration: duration,
+                        lastWatchedAt: Date(),
+                        completed: duration > 0 && position / duration >= 0.95
+                    )
+                    self.store.saveProgress(progress)
+                }
+                self.playerManager.load(
+                    url: videoURL,
+                    startPosition: self.currentResumePosition,
+                    progressId: self.currentProgressID
+                )
+            case .embed:
+                break
+            }
+        }
+    }
+
+    private var currentProgressID: String {
+        guard let item = selected else { return "movie:unknown" }
+        if item.type == .tv, let season = selectedSeason, let episode = selectedEpisode {
+            return "tv:\(item.tmdbId):\(season.seasonNumber):\(episode.episodeNumber)"
+        }
+        return "movie:\(item.tmdbId)"
+    }
+
+    private var currentResumePosition: Double {
+        store.progress(for: currentProgressID)?.shouldResume == true
+            ? (store.progress(for: currentProgressID)?.position ?? 0)
+            : 0
     }
 
     @MainActor

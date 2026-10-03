@@ -73,8 +73,9 @@ struct NativeVideoPlayerView: View {
     
     private func scheduleControlsHide() {
         controlsTimer?.invalidate()
-        controlsTimer = Timer.scheduledTimer(withTimeInterval: 4.0, repeats: false) { _ in
-            if playerManager.isPlaying {
+        controlsTimer = Timer.scheduledTimer(withTimeInterval: 4.0, repeats: false) { [weak playerManager] _ in
+            Task { @MainActor [weak playerManager] in
+                guard playerManager?.isPlaying == true else { return }
                 withAnimation(.easeInOut(duration: 0.3)) {
                     showControls = false
                 }

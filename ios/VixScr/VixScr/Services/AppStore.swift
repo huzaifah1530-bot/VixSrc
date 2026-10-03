@@ -29,6 +29,7 @@ final class AppStore {
         static let perfMode = "vixsrc_live_perf_mode"
         static let ultraPerfMode = "vixsrc_live_ultra_perf_mode"
         static let servers = "vixsrc_live_servers"
+        static let watchProgress = "vixsrc_live_watch_progress"
     }
 
     /// Optional built-in credential. The Electron app hardcodes one directly
@@ -172,6 +173,20 @@ final class AppStore {
         }
     }
 
+    @ObservationIgnored private var storedWatchProgress: [WatchProgress]
+    var watchProgress: [WatchProgress] {
+        get {
+            access(keyPath: \.watchProgress)
+            return storedWatchProgress
+        }
+        set {
+            withMutation(keyPath: \.watchProgress) {
+                storedWatchProgress = newValue
+                save(newValue, key: Keys.watchProgress)
+            }
+        }
+    }
+
     enum ContentFilter: String, CaseIterable {
         case all, movie, tv, favorites
     }
@@ -195,6 +210,7 @@ final class AppStore {
         self.storedPerformanceMode = defaults.bool(forKey: Keys.perfMode)
         self.storedUltraPerformanceMode = defaults.bool(forKey: Keys.ultraPerfMode)
         self.storedServers = AppStore.load([StreamServer].self, key: Keys.servers, defaults: defaults) ?? StreamServer.defaults
+        self.storedWatchProgress = AppStore.load([WatchProgress].self, key: Keys.watchProgress, defaults: defaults) ?? []
     }
 
     private func save<T: Encodable>(_ value: T, key: String) {
@@ -235,6 +251,17 @@ final class AppStore {
 
     var sortedRecents: [MediaItem] {
         recents.sorted { ($0.updatedAt ?? .distantPast) > ($1.updatedAt ?? .distantPast) }
+    }
+
+    func progress(for id: String) -> WatchProgress? {
+        watchProgress.first { $0.id == id }
+    }
+
+    func saveProgress(_ progress: WatchProgress) {
+        watchProgress = [progress] + watchProgress.filter { $0.id != progress.id }
+        if watchProgress.count > 100 {
+            watchProgress = Array(watchProgress.prefix(100))
+        }
     }
 
     // MARK: Search history
