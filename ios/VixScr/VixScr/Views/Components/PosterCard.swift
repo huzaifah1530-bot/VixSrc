@@ -7,9 +7,10 @@ struct PosterCard: View {
     var isFavorite: Bool
     var compact: Bool
     var watchProgress: WatchProgress?
+    var widthOverride: CGFloat?
     var onTap: () -> Void
 
-    private var width: CGFloat { compact ? 124 : 154 }
+    private var width: CGFloat { widthOverride ?? (compact ? 124 : 154) }
     private var cornerRadius: CGFloat { compact ? 18 : 22 }
 
     var body: some View {
@@ -84,11 +85,12 @@ struct PosterCard: View {
         .buttonStyle(.plain)
     }
 
-    init(item: MediaItem, isFavorite: Bool, compact: Bool, watchProgress: WatchProgress? = nil, onTap: @escaping () -> Void) {
+    init(item: MediaItem, isFavorite: Bool, compact: Bool, watchProgress: WatchProgress? = nil, widthOverride: CGFloat? = nil, onTap: @escaping () -> Void) {
         self.item = item
         self.isFavorite = isFavorite
         self.compact = compact
         self.watchProgress = watchProgress
+        self.widthOverride = widthOverride
         self.onTap = onTap
     }
 

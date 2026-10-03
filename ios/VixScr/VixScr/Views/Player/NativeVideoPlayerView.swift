@@ -46,7 +46,7 @@ struct NativeVideoPlayerView: View {
                     onHideControls: { hideControls() },
                     onToggleFullscreen: { isFullscreen = true }
                 )
-                .transition(.opacity)
+                .transition(.move(edge: .bottom).combined(with: .opacity).combined(with: .scale(scale: 0.98, anchor: .bottom)))
             }
         }
         .onAppear {
@@ -63,14 +63,14 @@ struct NativeVideoPlayerView: View {
             controlsTimer?.invalidate()
         }
         .fullScreenCover(isPresented: $isFullscreen) {
-            FullscreenNativePlayerView(playerManager: playerManager) {
-                isFullscreen = false
-            }
+            SystemVideoPlayerView(player: playerManager.player)
+                .ignoresSafeArea()
+                .preferredColorScheme(.dark)
         }
     }
     
     private func toggleControls() {
-        withAnimation(.easeInOut(duration: 0.3)) {
+        withAnimation(.spring(response: 0.36, dampingFraction: 0.86)) {
             showControls.toggle()
         }
         if showControls {
@@ -93,7 +93,7 @@ struct NativeVideoPlayerView: View {
     }
     
     private func hideControls() {
-        withAnimation(.easeInOut(duration: 0.3)) {
+        withAnimation(.spring(response: 0.36, dampingFraction: 0.86)) {
             showControls = false
         }
         controlsTimer?.invalidate()
@@ -160,6 +160,7 @@ struct PlayerControlsOverlay: View {
     
     @State private var isSeeking = false
     @State private var seekPosition: Double = 0
+    @State private var showCaptions = false
     
     var body: some View {
         VStack {
@@ -168,7 +169,7 @@ struct PlayerControlsOverlay: View {
             // Bottom controls
             VStack(spacing: 16) {
                 // Progress bar
-                progressBar
+                scrubber
                 
                 // Control buttons and time
                 HStack(spacing: 20) {
@@ -218,27 +219,13 @@ struct PlayerControlsOverlay: View {
 
                 HStack {
                     Spacer()
-                    if !playerManager.subtitleOptions.isEmpty {
-                        Menu {
-                            Button {
-                                playerManager.selectSubtitle(at: nil)
-                            } label: {
-                                Label("Off", systemImage: playerManager.selectedSubtitleIndex == nil ? "checkmark" : "circle")
-                            }
-                            ForEach(Array(playerManager.subtitleOptions.enumerated()), id: \.offset) { index, option in
-                                Button {
-                                    playerManager.selectSubtitle(at: index)
-                                } label: {
-                                    Label(option.displayName, systemImage: playerManager.selectedSubtitleIndex == index ? "checkmark" : "circle")
-                                }
-                            }
-                        } label: {
-                            Image(systemName: "captions.bubble")
-                                .frame(minWidth: 44, minHeight: 44)
-                        }
-                        .foregroundStyle(.white)
-                        .accessibilityLabel("Captions")
+                    Button { showCaptions = true } label: {
+                        Image(systemName: "captions.bubble")
                     }
+                    .buttonStyle(PlayerButtonStyle())
+                    .disabled(playerManager.subtitleOptions.isEmpty)
+                    .opacity(playerManager.subtitleOptions.isEmpty ? 0.45 : 1)
+                    .accessibilityLabel("Captions")
                     Button(action: onToggleFullscreen) {
                         Image(systemName: "arrow.up.left.and.arrow.down.right")
                     }
@@ -257,38 +244,64 @@ struct PlayerControlsOverlay: View {
                 .ignoresSafeArea()
             }
         }
-    }
-    
-    private var progressBar: some View {
-        GeometryReader { geometry in
-            ZStack(alignment: .leading) {
-                // Background track
-                Rectangle()
-                    .fill(.white.opacity(0.3))
-                    .frame(height: 4)
-                
-                // Progress
-                Rectangle()
-                    .fill(.white)
-                    .frame(width: geometry.size.width * (isSeeking ? (seekPosition / playerManager.duration) : playerManager.progress), height: 4)
-            }
-            .clipShape(Capsule())
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        isSeeking = true
-                        let progress = max(0, min(1, value.location.x / geometry.size.width))
-                        seekPosition = progress * playerManager.duration
-                    }
-                    .onEnded { value in
-                        let progress = max(0, min(1, value.location.x / geometry.size.width))
-                        let newPosition = progress * playerManager.duration
-                        playerManager.seek(to: newPosition)
-                        isSeeking = false
-                    }
-            )
+        .sheet(isPresented: $showCaptions) {
+            CaptionPicker(playerManager: playerManager)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
         }
-        .frame(height: 44)
+    }
+
+    private var scrubber: some View {
+        GeometryReader { geometry in
+            let availableWidth = max(1, geometry.size.width - 40)
+            let duration = playerManager.duration
+            let currentFraction = duration > 0
+                ? (isSeeking ? seekPosition / duration : playerManager.progress)
+                : 0
+            let clampedFraction = min(1, max(0, currentFraction))
+
+            VStack(spacing: 2) {
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(.white.opacity(0.28))
+                        .frame(height: 5)
+                    Capsule()
+                        .fill(.white)
+                        .frame(width: availableWidth * clampedFraction, height: 5)
+                    Circle()
+                        .fill(.white)
+                        .frame(width: 16, height: 16)
+                        .shadow(color: .black.opacity(0.35), radius: 3, y: 1)
+                        .offset(x: availableWidth * clampedFraction - 8)
+                }
+                .frame(width: availableWidth, height: 30)
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            guard duration > 0 else { return }
+                            isSeeking = true
+                            let fraction = min(1, max(0, (value.location.x - 20) / availableWidth))
+                            seekPosition = fraction * duration
+                        }
+                        .onEnded { value in
+                            guard duration > 0 else { return }
+                            let fraction = min(1, max(0, (value.location.x - 20) / availableWidth))
+                            playerManager.seek(to: fraction * duration)
+                            isSeeking = false
+                        }
+                )
+                HStack {
+                    Text(formatTime(isSeeking ? seekPosition : playerManager.currentTime))
+                    Spacer()
+                    Text("-" + formatTime(isSeeking ? max(0, duration - seekPosition) : playerManager.duration - playerManager.currentTime))
+                }
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.white.opacity(0.86))
+                .frame(width: availableWidth)
+            }
+        }
+        .frame(height: 52)
         .padding(.horizontal, 20)
     }
     
@@ -306,34 +319,70 @@ struct PlayerControlsOverlay: View {
     }
 }
 
-private struct FullscreenNativePlayerView: View {
+private struct CaptionPicker: View {
     @Bindable var playerManager: VideoPlayerManager
-    let onDismiss: () -> Void
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        ZStack(alignment: .topTrailing) {
-            Color.black.ignoresSafeArea()
-            VideoPlayerLayer(player: playerManager.player)
-                .ignoresSafeArea()
-            PlayerControlsOverlay(
-                playerManager: playerManager,
-                onHideControls: {},
-                onToggleFullscreen: onDismiss
-            )
-            Button(action: onDismiss) {
-                Image(systemName: "xmark")
-                    .font(.headline.weight(.semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 44, height: 44)
-                    .background(.black.opacity(0.55), in: Circle())
+        NavigationStack {
+            List {
+                Button {
+                    playerManager.selectSubtitle(at: nil)
+                    dismiss()
+                } label: {
+                    HStack {
+                        Text("Off")
+                        Spacer()
+                        if playerManager.selectedSubtitleIndex == nil {
+                            Image(systemName: "checkmark")
+                                .foregroundStyle(.tint)
+                        }
+                    }
+                }
+                ForEach(Array(playerManager.subtitleOptions.enumerated()), id: \.offset) { index, option in
+                    Button {
+                        playerManager.selectSubtitle(at: index)
+                        dismiss()
+                    } label: {
+                        HStack {
+                            Text(option.displayName)
+                            Spacer()
+                            if playerManager.selectedSubtitleIndex == index {
+                                Image(systemName: "checkmark")
+                                    .foregroundStyle(.tint)
+                            }
+                        }
+                    }
+                }
             }
-            .padding(.top, 12)
-            .padding(.trailing, 16)
-            .accessibilityLabel("Close full screen")
+            .navigationTitle("Captions")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
         }
-        .preferredColorScheme(.dark)
-        .onAppear { playerManager.play() }
-        .onDisappear { playerManager.pause() }
+    }
+}
+
+private struct SystemVideoPlayerView: UIViewControllerRepresentable {
+    let player: AVPlayer?
+
+    func makeUIViewController(context: Context) -> AVPlayerViewController {
+        let controller = AVPlayerViewController()
+        controller.player = player
+        controller.showsPlaybackControls = true
+        controller.allowsPictureInPicturePlayback = true
+        controller.canStartPictureInPictureAutomaticallyFromInline = true
+        controller.entersFullScreenWhenPlaybackBegins = false
+        controller.exitsFullScreenWhenPlaybackEnds = false
+        controller.updatesNowPlayingInfoCenter = true
+        return controller
+    }
+
+    func updateUIViewController(_ controller: AVPlayerViewController, context: Context) {
+        controller.player = player
     }
 }
 

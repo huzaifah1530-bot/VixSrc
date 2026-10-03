@@ -8,7 +8,7 @@ struct SearchResultsGrid: View {
     let onSelect: (MediaItem) -> Void
 
     private var columns: [GridItem] {
-        return Array(repeating: GridItem(.flexible(), spacing: 14), count: 2)
+        [GridItem(.adaptive(minimum: 140, maximum: 220), spacing: 14)]
     }
 
     var body: some View {

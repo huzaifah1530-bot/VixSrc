@@ -9,7 +9,7 @@ struct FavoritesView: View {
     @State private var viewModel: CatalogViewModel?
 
     private var columns: [GridItem] {
-        return Array(repeating: GridItem(.flexible(), spacing: 14), count: 2)
+        [GridItem(.adaptive(minimum: 140, maximum: 220), spacing: 14)]
     }
 
     var body: some View {
@@ -25,13 +25,17 @@ struct FavoritesView: View {
                     ScrollView {
                         LazyVGrid(columns: columns, spacing: 14) {
                             ForEach(store.favorites) { item in
-                                PosterCard(
-                                    item: item,
-                                    isFavorite: true,
-                                    compact: store.cardSize == .compact,
-                                    watchProgress: store.progress(for: item),
-                                    onTap: { Task { await open(item) } }
-                                )
+                                GeometryReader { geometry in
+                                    PosterCard(
+                                        item: item,
+                                        isFavorite: true,
+                                        compact: store.cardSize == .compact,
+                                        watchProgress: store.progress(for: item),
+                                        widthOverride: geometry.size.width,
+                                        onTap: { Task { await open(item) } }
+                                    )
+                                }
+                                .aspectRatio(2.0 / 3.0, contentMode: .fit)
                             }
                         }
                         .padding(20)
