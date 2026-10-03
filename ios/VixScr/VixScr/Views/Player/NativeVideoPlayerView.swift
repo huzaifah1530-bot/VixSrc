@@ -121,6 +121,10 @@ struct VideoPlayerLayer: UIViewRepresentable {
         uiView.isFullscreen = isFullscreen
         uiView.player = player
     }
+
+    static func dismantleUIView(_ uiView: PlayerUIView, coordinator: ()) {
+        uiView.removeBackgroundObserver()
+    }
     
     final class PlayerUIView: UIView {
         private var playerLayer: AVPlayerLayer?
@@ -176,19 +180,22 @@ struct VideoPlayerLayer: UIViewRepresentable {
                     object: nil,
                     queue: .main
                 ) { [weak self] _ in
-                    guard let self,
-                          self.isFullscreen,
-                          self.player?.timeControlStatus == .playing,
-                          let pipController = self.pictureInPictureController,
-                          pipController.isPictureInPicturePossible else { return }
-                    pipController.startPictureInPicture()
+                    Task { @MainActor [weak self] in
+                        guard let self,
+                              self.isFullscreen,
+                              self.player?.timeControlStatus == .playing,
+                              let pipController = self.pictureInPictureController,
+                              pipController.isPictureInPicturePossible else { return }
+                        pipController.startPictureInPicture()
+                    }
                 }
             }
         }
 
-        deinit {
+        func removeBackgroundObserver() {
             if let backgroundObserver {
                 NotificationCenter.default.removeObserver(backgroundObserver)
+                self.backgroundObserver = nil
             }
         }
         
