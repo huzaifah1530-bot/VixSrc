@@ -11,6 +11,7 @@ struct NativeVideoPlayerView: View {
     @State private var showControls = true
     @State private var controlsTimer: Timer?
     @State private var isFullscreen = false
+    private let controlsAnimation = Animation.spring(response: 0.38, dampingFraction: 0.88)
     
     var body: some View {
         ZStack {
@@ -43,7 +44,7 @@ struct NativeVideoPlayerView: View {
             }
             
             // Custom controls overlay
-            if showControls && !playerManager.isLoading && playerManager.error == nil {
+            if !playerManager.isLoading && playerManager.error == nil {
                 PlayerControlsOverlay(
                     playerManager: playerManager,
                     posterURL: posterURL,
@@ -51,7 +52,12 @@ struct NativeVideoPlayerView: View {
                     onToggleFullscreen: { isFullscreen = true }
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                .transition(.move(edge: .bottom).combined(with: .opacity).combined(with: .scale(scale: 0.98, anchor: .bottom)))
+                .opacity(showControls ? 1 : 0)
+                .offset(y: showControls ? 0 : 24)
+                .scaleEffect(showControls ? 1 : 0.985, anchor: .bottom)
+                .allowsHitTesting(showControls)
+                .accessibilityHidden(!showControls)
+                .animation(controlsAnimation, value: showControls)
             }
         }
         .onAppear {
@@ -78,9 +84,7 @@ struct NativeVideoPlayerView: View {
     }
     
     private func toggleControls() {
-        withAnimation(.spring(response: 0.36, dampingFraction: 0.86)) {
-            showControls.toggle()
-        }
+        showControls.toggle()
         if showControls {
             scheduleControlsHide()
         } else {
@@ -93,17 +97,13 @@ struct NativeVideoPlayerView: View {
         controlsTimer = Timer.scheduledTimer(withTimeInterval: 4.0, repeats: false) { [weak playerManager] _ in
             Task { @MainActor [weak playerManager] in
                 guard playerManager?.isPlaying == true else { return }
-                withAnimation(.easeInOut(duration: 0.3)) {
-                    showControls = false
-                }
+                showControls = false
             }
         }
     }
     
     private func hideControls() {
-        withAnimation(.spring(response: 0.36, dampingFraction: 0.86)) {
-            showControls = false
-        }
+        showControls = false
         controlsTimer?.invalidate()
     }
 }
