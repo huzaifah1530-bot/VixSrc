@@ -1,6 +1,8 @@
 import AVFoundation
 import AVKit
+import MediaPlayer
 import Observation
+import UIKit
 
 /// Manages native video playback with AVPlayer, tracking progress,
 /// handling resume positions, and providing playback controls.
@@ -22,9 +24,17 @@ final class VideoPlayerManager {
     private var statusObservation: NSKeyValueObservation?
     private var durationObservation: NSKeyValueObservation?
     private var endObserver: NSObjectProtocol?
+    private var rateObservation: NSKeyValueObservation?
     private var progressId: String?
     private var pendingResumePosition: Double = 0
     private var lastSavedSecond = -1
+    private var lastNowPlayingSecond = -1
+    private var nowPlayingTitle = "Vela"
+    private var nowPlayingSubtitle: String?
+    private var nowPlayingArtwork: UIImage?
+    private var nowPlayingArtworkURL: URL?
+    @ObservationIgnored private var artworkTask: Task<Void, Never>?
+    @ObservationIgnored private var remoteCommandTargets: [(MPRemoteCommand, Any)] = []
     var onProgressUpdate: (@MainActor (Double, Double) -> Void)? // (position, duration)
 
     private(set) var subtitleOptions: [AVMediaSelectionOption] = []
@@ -36,13 +46,15 @@ final class VideoPlayerManager {
     
     // MARK: - Playback Control
     
-    func load(url: URL, requestHeaders: [String: String] = [:], httpCookies: [HTTPCookie] = [], startPosition: Double = 0, progressId: String? = nil) {
+    func load(url: URL, requestHeaders: [String: String] = [:], httpCookies: [HTTPCookie] = [], startPosition: Double = 0, progressId: String? = nil, mediaTitle: String? = nil, subtitle: String? = nil, artworkURL: URL? = nil) {
         cleanup()
         
         self.currentURL = url
         self.progressId = progressId
         self.pendingResumePosition = max(0, startPosition)
         self.lastSavedSecond = -1
+        self.lastNowPlayingSecond = -1
+        setNowPlayingMetadata(title: mediaTitle, subtitle: subtitle, artworkURL: artworkURL)
         self.isLoading = true
         self.error = nil
         
@@ -53,6 +65,16 @@ final class VideoPlayerManager {
         let asset = AVURLAsset(url: url, options: options)
         let player = AVPlayer(playerItem: AVPlayerItem(asset: asset))
         self.player = player
+        installRemoteCommands()
+        publishNowPlayingInfo()
+
+        rateObservation = player.observe(\.rate, options: [.initial, .new]) { [weak self] player, _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.player === player else { return }
+                self.isPlaying = player.rate > 0
+                self.publishNowPlayingInfo()
+            }
+        }
         
         // Observe player status
         statusObservation = player.observe(\.status, options: [.new]) { [weak self] player, _ in
@@ -66,6 +88,7 @@ final class VideoPlayerManager {
                         self.updateDuration(from: item)
                         self.observeDuration(for: item)
                         self.updateSubtitleOptions(for: item)
+                        self.publishNowPlayingInfo()
                     }
                     self.setupPeriodicTimeObserver()
                     
@@ -84,14 +107,24 @@ final class VideoPlayerManager {
     }
     
     func play() {
-        player?.play()
+        if let player {
+            player.play()
+        } else {
+            postWebRemoteCommand("play")
+        }
         isPlaying = true
+        publishNowPlayingInfo()
     }
     
     func pause() {
-        player?.pause()
+        if let player {
+            player.pause()
+        } else {
+            postWebRemoteCommand("pause")
+        }
         isPlaying = false
         saveProgress()
+        publishNowPlayingInfo()
     }
     
     func togglePlayPause() {
@@ -105,9 +138,14 @@ final class VideoPlayerManager {
     func seek(to seconds: Double) {
         let clamped = max(0, duration > 0 ? min(seconds, duration) : seconds)
         let time = CMTime(seconds: clamped, preferredTimescale: 600)
-        player?.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
+        if let player {
+            player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
+        } else {
+            postWebRemoteCommand("seek", position: clamped)
+        }
         currentTime = clamped
         pendingResumePosition = 0
+        publishNowPlayingInfo()
     }
     
     func seekForward(_ seconds: Double = 10) {
@@ -144,6 +182,10 @@ final class VideoPlayerManager {
                 if Int(seconds) % 5 == 0 && Int(seconds) != self.lastSavedSecond {
                     self.lastSavedSecond = Int(seconds)
                     self.saveProgress()
+                }
+                if Int(seconds) % 15 == 0 && Int(seconds) != self.lastNowPlayingSecond {
+                    self.lastNowPlayingSecond = Int(seconds)
+                    self.publishNowPlayingInfo()
                 }
             }
         }
@@ -193,6 +235,7 @@ final class VideoPlayerManager {
         let seconds = item.duration.seconds
         guard seconds.isFinite, seconds > 0 else { return }
         duration = seconds
+        publishNowPlayingInfo()
         if pendingResumePosition > 0 {
             let resume = min(pendingResumePosition, seconds)
             pendingResumePosition = 0
@@ -238,11 +281,141 @@ final class VideoPlayerManager {
             print("Failed to setup audio session: \(error)")
         }
     }
+
+    // MARK: - Now Playing / remote controls
+
+    private func loadNowPlayingArtwork(from url: URL?) {
+        artworkTask?.cancel()
+        nowPlayingArtwork = nil
+        guard let url else { return }
+        artworkTask = Task { [weak self] in
+            guard let (data, _) = try? await URLSession.shared.data(from: url),
+                  !Task.isCancelled,
+                  let artwork = UIImage(data: data) else { return }
+            self?.nowPlayingArtwork = artwork
+            self?.publishNowPlayingInfo()
+        }
+    }
+
+    func setNowPlayingMetadata(title: String?, subtitle: String?, artworkURL: URL?) {
+        nowPlayingTitle = title.map { "\($0) (Vela)" } ?? "Vela"
+        nowPlayingSubtitle = subtitle
+        lastNowPlayingSecond = -1
+        if nowPlayingArtworkURL != artworkURL {
+            nowPlayingArtworkURL = artworkURL
+            nowPlayingArtwork = nil
+            loadNowPlayingArtwork(from: artworkURL)
+        }
+        if player == nil { installRemoteCommands() }
+        publishNowPlayingInfo()
+    }
+
+    private func postWebRemoteCommand(_ action: String, position: Double? = nil) {
+        var userInfo: [String: Any] = ["action": action]
+        if let position { userInfo["position"] = position }
+        NotificationCenter.default.post(name: .velaWebRemoteCommand, object: nil, userInfo: userInfo)
+    }
+
+    func updateWebPlaybackPosition(_ position: Double, duration: Double, isPlaying playing: Bool = true) {
+        guard player == nil, position.isFinite, duration.isFinite, duration > 0 else { return }
+        currentTime = max(0, position)
+        self.duration = duration
+        let playbackStateChanged = isPlaying != playing
+        isPlaying = playing
+        let second = Int(position)
+        guard playbackStateChanged || (second % 15 == 0 && second != lastNowPlayingSecond) else { return }
+        lastNowPlayingSecond = second
+        publishNowPlayingInfo()
+    }
+
+    private func publishNowPlayingInfo() {
+        var info: [String: Any] = [
+            MPMediaItemPropertyTitle: nowPlayingTitle,
+            MPMediaItemPropertyArtist: "Vela",
+            MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.video.rawValue,
+            MPNowPlayingInfoPropertyElapsedPlaybackTime: currentTime,
+            MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? 1.0 : 0.0,
+            MPNowPlayingInfoPropertyDefaultPlaybackRate: 1.0
+        ]
+        if let nowPlayingSubtitle, !nowPlayingSubtitle.isEmpty {
+            info[MPMediaItemPropertyAlbumTitle] = nowPlayingSubtitle
+        }
+        if duration > 0 {
+            info[MPMediaItemPropertyPlaybackDuration] = duration
+        }
+        if let image = nowPlayingArtwork {
+            info[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+        }
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+    }
+
+    private func installRemoteCommands() {
+        removeRemoteCommands()
+        let center = MPRemoteCommandCenter.shared()
+        center.playCommand.isEnabled = true
+        center.pauseCommand.isEnabled = true
+        center.changePlaybackPositionCommand.isEnabled = true
+        center.skipForwardCommand.isEnabled = true
+        center.skipBackwardCommand.isEnabled = true
+
+        let play = center.playCommand.addTarget { [weak self] _ in
+            Task { @MainActor [weak self] in self?.play() }
+            return .success
+        }
+        remoteCommandTargets.append((center.playCommand, play))
+
+        let pause = center.pauseCommand.addTarget { [weak self] _ in
+            Task { @MainActor [weak self] in self?.pause() }
+            return .success
+        }
+        remoteCommandTargets.append((center.pauseCommand, pause))
+
+        let position = center.changePlaybackPositionCommand.addTarget { [weak self] event in
+            guard let event = event as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
+            let seconds = event.positionTime
+            Task { @MainActor [weak self] in self?.seek(to: seconds) }
+            return .success
+        }
+        remoteCommandTargets.append((center.changePlaybackPositionCommand, position))
+
+        center.skipForwardCommand.preferredIntervals = [10]
+        let forward = center.skipForwardCommand.addTarget { [weak self] _ in
+            Task { @MainActor [weak self] in self?.seekForward(10) }
+            return .success
+        }
+        remoteCommandTargets.append((center.skipForwardCommand, forward))
+
+        center.skipBackwardCommand.preferredIntervals = [10]
+        let backward = center.skipBackwardCommand.addTarget { [weak self] _ in
+            Task { @MainActor [weak self] in self?.seekBackward(10) }
+            return .success
+        }
+        remoteCommandTargets.append((center.skipBackwardCommand, backward))
+    }
+
+    private func removeRemoteCommands() {
+        for (command, target) in remoteCommandTargets {
+            command.removeTarget(target)
+        }
+        remoteCommandTargets.removeAll()
+        let center = MPRemoteCommandCenter.shared()
+        center.playCommand.isEnabled = false
+        center.pauseCommand.isEnabled = false
+        center.changePlaybackPositionCommand.isEnabled = false
+        center.skipForwardCommand.isEnabled = false
+        center.skipBackwardCommand.isEnabled = false
+    }
     
     // MARK: - Cleanup
     
     func cleanup() {
         saveProgress()
+        artworkTask?.cancel()
+        artworkTask = nil
+        rateObservation?.invalidate()
+        rateObservation = nil
+        removeRemoteCommands()
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
 
         if let timeObserver {
             player?.removeTimeObserver(timeObserver)
@@ -269,7 +442,14 @@ final class VideoPlayerManager {
         pendingResumePosition = 0
         subtitleOptions = []
         selectedSubtitleIndex = nil
+        nowPlayingArtwork = nil
+        nowPlayingArtworkURL = nil
+        nowPlayingSubtitle = nil
     }
+}
+
+extension Notification.Name {
+    static let velaWebRemoteCommand = Notification.Name("VelaWebRemoteCommand")
 }
 
 // MARK: - Helpers

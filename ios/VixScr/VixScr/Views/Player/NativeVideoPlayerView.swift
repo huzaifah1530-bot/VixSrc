@@ -6,6 +6,7 @@ import UIKit
 /// Replaces the WebView-based player with a proper AVPlayerLayer.
 struct NativeVideoPlayerView: View {
     @Bindable var playerManager: VideoPlayerManager
+    var posterURL: URL? = nil
     var onPlaybackFailure: (() -> Void)? = nil
     @State private var showControls = true
     @State private var controlsTimer: Timer?
@@ -45,6 +46,7 @@ struct NativeVideoPlayerView: View {
             if showControls && !playerManager.isLoading && playerManager.error == nil {
                 PlayerControlsOverlay(
                     playerManager: playerManager,
+                    posterURL: posterURL,
                     onHideControls: { hideControls() },
                     onToggleFullscreen: { isFullscreen = true }
                 )
@@ -120,6 +122,7 @@ struct VideoPlayerLayer: UIViewRepresentable {
     
     final class PlayerUIView: UIView {
         private var playerLayer: AVPlayerLayer?
+        private var pictureInPictureController: AVPictureInPictureController?
         
         var player: AVPlayer? {
             didSet {
@@ -140,7 +143,9 @@ struct VideoPlayerLayer: UIViewRepresentable {
         }
         
         private func setupPlayerLayer() {
+            pictureInPictureController = nil
             playerLayer?.removeFromSuperlayer()
+            playerLayer = nil
             
             guard let player else { return }
             
@@ -149,6 +154,11 @@ struct VideoPlayerLayer: UIViewRepresentable {
             layer.frame = bounds
             self.layer.addSublayer(layer)
             self.playerLayer = layer
+            if AVPictureInPictureController.isPictureInPictureSupported() {
+                let controller = AVPictureInPictureController(playerLayer: layer)
+                controller.canStartPictureInPictureAutomaticallyFromInline = true
+                pictureInPictureController = controller
+            }
         }
         
         override func layoutSubviews() {
@@ -161,6 +171,7 @@ struct VideoPlayerLayer: UIViewRepresentable {
 /// Custom controls overlay with play/pause, seek bar, and time labels
 struct PlayerControlsOverlay: View {
     @Bindable var playerManager: VideoPlayerManager
+    var posterURL: URL? = nil
     let onHideControls: () -> Void
     let onToggleFullscreen: () -> Void
     
@@ -335,13 +346,19 @@ struct PlayerControlsOverlay: View {
                         .resizable()
                         .scaledToFill()
                 } else {
-                    Rectangle()
-                        .fill(.ultraThinMaterial)
-                        .overlay {
-                            Image(systemName: "film")
-                                .font(.title3.weight(.medium))
-                                .foregroundStyle(.white.opacity(0.65))
+                    AsyncImage(url: posterURL) { phase in
+                        if let image = phase.image {
+                            image.resizable().scaledToFill()
+                        } else {
+                            Rectangle()
+                                .fill(.ultraThinMaterial)
+                                .overlay {
+                                    Image(systemName: "film")
+                                        .font(.title3.weight(.medium))
+                                        .foregroundStyle(.white.opacity(0.65))
+                                }
                         }
+                    }
                 }
             }
             .frame(width: 116, height: 64)
@@ -424,18 +441,31 @@ private struct SystemVideoPlayerView: UIViewControllerRepresentable {
 
     func makeUIViewController(context: Context) -> AVPlayerViewController {
         let controller = AVPlayerViewController()
+        controller.delegate = context.coordinator
         controller.player = player
         controller.showsPlaybackControls = true
         controller.allowsPictureInPicturePlayback = true
         controller.canStartPictureInPictureAutomaticallyFromInline = true
         controller.entersFullScreenWhenPlaybackBegins = false
         controller.exitsFullScreenWhenPlaybackEnds = false
-        controller.updatesNowPlayingInfoCenter = true
+        // Metadata and poster art are published centrally by VideoPlayerManager.
+        controller.updatesNowPlayingInfoCenter = false
         return controller
     }
 
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
     func updateUIViewController(_ controller: AVPlayerViewController, context: Context) {
         controller.player = player
+    }
+
+    final class Coordinator: NSObject, AVPlayerViewControllerDelegate {
+        func playerViewController(
+            _ playerViewController: AVPlayerViewController,
+            restoreUserInterfaceForPictureInPictureStopWithCompletionHandler completionHandler: @escaping (Bool) -> Void
+        ) {
+            completionHandler(true)
+        }
     }
 }
 

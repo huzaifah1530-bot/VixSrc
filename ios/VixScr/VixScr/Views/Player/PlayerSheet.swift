@@ -133,6 +133,7 @@ struct PlayerSheet: View {
                 if viewModel.currentNativeVideoURL != nil {
                     NativeVideoPlayerView(
                         playerManager: viewModel.playerManager,
+                        posterURL: viewModel.selected?.posterURL,
                         onPlaybackFailure: {
                             if let failedURL = viewModel.currentNativeVideoURL {
                                 viewModel.rejectNativeStream(failedURL)
@@ -147,8 +148,9 @@ struct PlayerSheet: View {
                             guard viewModel.currentStreamURL == url else { return }
                             viewModel.adoptNativeStream(streamURL, cookies: cookies)
                         },
-                        onProgress: { position, duration in
+                        onProgress: { position, duration, isPlaying in
                             guard viewModel.currentStreamURL == url else { return }
+                            viewModel.updateWebPlaybackPosition(position, duration: duration, isPlaying: isPlaying)
                             viewModel.recordPlaybackProgress(position: position, duration: duration)
                         }
                     )

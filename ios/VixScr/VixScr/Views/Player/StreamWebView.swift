@@ -34,11 +34,12 @@ struct StreamWebView: UIViewRepresentable {
     var resumePosition: Double = 0
     var onNewLoad: (() -> Void)?
     var onNativeStreamFound: ((URL, [HTTPCookie]) -> Void)?
-    var onProgress: ((Double, Double) -> Void)?
+    var onProgress: ((Double, Double, Bool) -> Void)?
 
     func makeUIView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.allowsInlineMediaPlayback = true
+        configuration.allowsPictureInPictureMediaPlayback = true
         configuration.mediaTypesRequiringUserActionForPlayback = []
         let controller = WKUserContentController()
         controller.add(WeakScriptMessageHandler(context.coordinator), name: "vixMedia")
@@ -66,22 +67,42 @@ struct StreamWebView: UIViewRepresentable {
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
         private(set) var currentURL: URL?
         private var allowedHost: String?
+        private weak var webView: WKWebView?
+        private var remoteCommandObserver: NSObjectProtocol?
         let onNewLoad: (() -> Void)?
         private var resumePosition: Double = 0
         private var onNativeStreamFound: ((URL, [HTTPCookie]) -> Void)?
-        private var onProgress: ((Double, Double) -> Void)?
+        private var onProgress: ((Double, Double, Bool) -> Void)?
 
         init(onNewLoad: (() -> Void)?) {
             self.onNewLoad = onNewLoad
+            remoteCommandObserver = NotificationCenter.default.addObserver(
+                forName: .velaWebRemoteCommand,
+                object: nil,
+                queue: .main
+            ) { [weak self] notification in
+                let action = notification.userInfo?["action"] as? String
+                let position = notification.userInfo?["position"] as? Double
+                Task { @MainActor [weak self] in
+                    self?.performRemoteCommand(action, position: position)
+                }
+            }
         }
 
-        func update(resumePosition: Double, onNativeStreamFound: ((URL, [HTTPCookie]) -> Void)?, onProgress: ((Double, Double) -> Void)?) {
+        deinit {
+            if let remoteCommandObserver {
+                NotificationCenter.default.removeObserver(remoteCommandObserver)
+            }
+        }
+
+        func update(resumePosition: Double, onNativeStreamFound: ((URL, [HTTPCookie]) -> Void)?, onProgress: ((Double, Double, Bool) -> Void)?) {
             self.resumePosition = resumePosition
             self.onNativeStreamFound = onNativeStreamFound
             self.onProgress = onProgress
         }
 
         func load(_ url: URL, into webView: WKWebView) {
+            self.webView = webView
             currentURL = url
             allowedHost = url.host
             onNewLoad?()
@@ -93,6 +114,30 @@ struct StreamWebView: UIViewRepresentable {
                 forMainFrameOnly: false
             ))
             webView.load(URLRequest(url: url))
+        }
+
+        private func performRemoteCommand(_ action: String?, position: Double?) {
+            let operation: String
+            switch action {
+            case "play": operation = "video.play().catch(()=>{})"
+            case "pause": operation = "video.pause()"
+            case "seek":
+                guard let position, position.isFinite else { return }
+                operation = "video.currentTime=\(position)"
+            default: return
+            }
+            let script = """
+            (() => {
+              const visit = frame => {
+                try {
+                  frame.document.querySelectorAll('video').forEach(video => { try { \(operation); } catch (_) {} });
+                  for (let i = 0; i < frame.frames.length; i++) visit(frame.frames[i]);
+                } catch (_) {}
+              };
+              visit(window);
+            })();
+            """
+            webView?.evaluateJavaScript(script)
         }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -111,8 +156,9 @@ struct StreamWebView: UIViewRepresentable {
             } else if kind == "progress",
                       let position = body["position"] as? Double,
                       let duration = body["duration"] as? Double,
+                      let isPlaying = body["isPlaying"] as? Bool,
                       position.isFinite, duration.isFinite, duration > 0 {
-                onProgress?(position, duration)
+                onProgress?(position, duration, isPlaying)
             }
         }
 
@@ -245,7 +291,7 @@ struct StreamWebView: UIViewRepresentable {
             const position = Number.isFinite(video.currentTime) ? video.currentTime : 0;
             const duration = Number.isFinite(video.duration) ? video.duration : 0;
             if (duration > 0 && (forceProgress || Date.now() - Number(window.__vixLastProgressReport || 0) >= 3000)) {
-              window.webkit?.messageHandlers?.vixMedia?.postMessage({kind:'progress', position, duration});
+              window.webkit?.messageHandlers?.vixMedia?.postMessage({kind:'progress', position, duration, isPlaying: !video.paused && !video.ended});
               window.__vixLastProgressReport = Date.now();
             }
           });

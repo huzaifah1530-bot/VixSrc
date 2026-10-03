@@ -400,6 +400,7 @@ final class CatalogViewModel {
         isResolvingStream = false
         streamResolutionTask?.cancel()
         playerManager.cleanup()
+        playerManager.setNowPlayingMetadata(title: item.title, subtitle: nil, artworkURL: item.posterURL)
         cast = []
         isPlayerPresented = true
 
@@ -524,6 +525,9 @@ final class CatalogViewModel {
     func selectEpisode(_ episode: Episode) async {
         selectedEpisode = episode
         guard let item = selected, let season = selectedSeason else { return }
+        let episodeLabel = "S\(season.seasonNumber) · E\(episode.episodeNumber)"
+        let subtitle = episode.name.map { "\(episodeLabel) — \($0)" } ?? episodeLabel
+        playerManager.setNowPlayingMetadata(title: item.title, subtitle: subtitle, artworkURL: item.posterURL)
         currentStreamURL = activeServer?.tvURL(tmdbId: item.tmdbId, season: season.seasonNumber, episode: episode.episodeNumber)
         store.addRecent(item, season: season.seasonNumber, episode: episode.episodeNumber, episodeTitle: episode.name)
         resolvePlaybackURL()
@@ -572,7 +576,14 @@ final class CatalogViewModel {
                 self.selectedNativeSourceIndex = 0
                 self.loadNativeSource(at: 0)
             case .embed:
-                break
+                self.playerManager.cleanup()
+                if let item = self.selected {
+                    self.playerManager.setNowPlayingMetadata(
+                        title: item.title,
+                        subtitle: self.nowPlayingEpisodeSubtitle,
+                        artworkURL: item.posterURL
+                    )
+                }
             }
         }
     }
@@ -599,8 +610,18 @@ final class CatalogViewModel {
             requestHeaders: source.requestHeaders,
             httpCookies: source.httpCookies,
             startPosition: playbackResumePosition,
-            progressId: progressID
+            progressId: progressID,
+            mediaTitle: selected?.title,
+            subtitle: nowPlayingEpisodeSubtitle,
+            artworkURL: selected?.posterURL
         )
+    }
+
+    private var nowPlayingEpisodeSubtitle: String? {
+        guard let season = selectedSeason, let episode = selectedEpisode else { return nil }
+        let number = "S\(season.seasonNumber) · E\(episode.episodeNumber)"
+        guard let name = episode.name, !name.isEmpty else { return number }
+        return "\(number) — \(name)"
     }
 
     private var currentProgressID: String {
@@ -619,6 +640,10 @@ final class CatalogViewModel {
 
     func recordPlaybackProgress(position: Double, duration: Double) {
         recordPlaybackProgress(position: position, duration: duration, progressID: currentProgressID)
+    }
+
+    func updateWebPlaybackPosition(_ position: Double, duration: Double, isPlaying: Bool) {
+        playerManager.updateWebPlaybackPosition(position, duration: duration, isPlaying: isPlaying)
     }
 
     private func recordPlaybackProgress(position: Double, duration: Double, progressID: String) {
