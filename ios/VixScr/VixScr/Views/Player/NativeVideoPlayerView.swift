@@ -166,19 +166,10 @@ struct PlayerControlsOverlay: View {
         VStack {
             Spacer()
             
-            // Bottom controls
-            VStack(spacing: 16) {
-                // Progress bar
-                scrubber
-                
-                // Control buttons and time
+            // Bottom controls. Keep one timeline only: the scrubber owns both
+            // time labels, while this row is reserved for playback actions.
+            VStack(spacing: 6) {
                 HStack(spacing: 20) {
-                    // Time elapsed
-                    Text(isSeeking ? formatTime(seekPosition) : playerManager.formattedCurrentTime)
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.white)
-                        .frame(minWidth: 50, alignment: .leading)
-                    
                     // Skip back
                     Button {
                         playerManager.seekBackward(10)
@@ -208,16 +199,7 @@ struct PlayerControlsOverlay: View {
                             .font(.title2)
                     }
                     .buttonStyle(PlayerButtonStyle())
-                    
-                    // Time remaining
-                    Text(isSeeking ? "-\(formatTime(playerManager.duration - seekPosition))" : "-\(playerManager.formattedTimeRemaining)")
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.white)
-                        .frame(minWidth: 50, alignment: .trailing)
-                }
-                .padding(.horizontal, 20)
 
-                HStack {
                     Spacer()
                     Button { showCaptions = true } label: {
                         Image(systemName: "captions.bubble")
@@ -232,9 +214,13 @@ struct PlayerControlsOverlay: View {
                     .buttonStyle(PlayerButtonStyle())
                     .accessibilityLabel("Full screen")
                 }
-                .padding(.horizontal, 20)
+                .padding(.horizontal, 16)
+
+                // The scrubber is the lowest element, directly above the safe
+                // area, matching the familiar native video-player layout.
+                scrubber
             }
-            .padding(.bottom, 20)
+            .padding(.bottom, 8)
             .background {
                 LinearGradient(
                     colors: [.clear, .black.opacity(0.8)],
