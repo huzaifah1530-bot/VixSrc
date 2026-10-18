@@ -151,14 +151,45 @@ struct RemotePlayerView: View {
         let shown = scrub ?? state.position
         return VStack(spacing: 4) {
             if state.controllable && state.duration > 0 {
-                Slider(value: Binding(get: { shown }, set: { scrub = $0; pendingSeek = $0 }), in: 0...duration, onEditingChanged: { editing in
-                    if editing {
-                        seekGeneration += 1
-                    } else {
-                        commitSeek()
+                // Custom scrubber instead of `Slider`: on iOS 26 the system
+                // slider's editing callbacks can arrive late or not at all,
+                // which silently dropped seeks. Here the seek is computed from
+                // the finger's own release point, so it always fires.
+                GeometryReader { geo in
+                    let fraction = min(1, max(0, shown / duration))
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(.white.opacity(0.25))
+                        Capsule().fill(.white).frame(width: geo.size.width * fraction)
+                        Circle().fill(.white)
+                            .frame(width: scrub != nil ? 18 : 12, height: scrub != nil ? 18 : 12)
+                            .offset(x: geo.size.width * fraction - (scrub != nil ? 9 : 6))
                     }
-                })
-                .tint(.white)
+                    .frame(height: scrub != nil ? 8 : 5)
+                    .frame(maxHeight: .infinity)
+                    .contentShape(Rectangle())
+                    .gesture(DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            if scrub == nil { seekGeneration += 1 }
+                            let t = min(1, max(0, value.location.x / max(geo.size.width, 1))) * duration
+                            scrub = t
+                            pendingSeek = t
+                        }
+                        .onEnded { value in
+                            let t = min(1, max(0, value.location.x / max(geo.size.width, 1))) * duration
+                            scrub = t
+                            pendingSeek = t
+                            commitSeek()
+                        })
+                    .animation(.spring(response: 0.2, dampingFraction: 0.8), value: scrub != nil)
+                }
+                .frame(height: 28)
+                .accessibilityElement()
+                .accessibilityLabel("Position")
+                .accessibilityValue(Self.time(shown))
+                .accessibilityAdjustableAction { direction in
+                    let step = Double(store.seekInterval) * (direction == .increment ? 1 : -1)
+                    link.command("skip", ["by": step])
+                }
                 HStack {
                     Text(Self.time(shown))
                     Spacer()
@@ -181,7 +212,6 @@ struct RemotePlayerView: View {
     private func commitSeek() {
         let gen = seekGeneration
         Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 60_000_000)
             guard gen == seekGeneration, let target = pendingSeek else { return }
             pendingSeek = nil
             link.command("seek", ["to": target])
