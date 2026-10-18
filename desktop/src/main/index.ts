@@ -57,6 +57,8 @@ function loadRenderer(win: BrowserWindow, hash = '') {
   else win.loadFile(join(__dirname, '../renderer/index.html'), { hash })
 }
 
+const appIcon = app.isPackaged ? join(process.resourcesPath, 'icon.png') : join(__dirname, '../../resources/icon.png')
+
 const secureWebPrefs = {
   preload: join(__dirname, '../preload/index.js'),
   contextIsolation: true,
@@ -76,6 +78,7 @@ function createMainWindow() {
     backgroundColor: '#000000',
     show: false,
     title: 'Vela',
+    icon: appIcon,
     webPreferences: secureWebPrefs
   })
   if (b.maximized) mainWindow.maximize()

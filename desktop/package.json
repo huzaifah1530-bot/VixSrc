@@ -10,7 +10,7 @@
     "build": "electron-vite build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "start": "electron-vite preview",
-    "dist": "electron-vite build && electron-builder --win portable"
+    "dist": "electron-vite build && electron-builder --win nsis --publish never"
   },
   "dependencies": {
     "@ghostery/adblocker-electron": "2.20.1",
@@ -34,10 +34,22 @@
   "build": {
     "appId": "com.vela.app",
     "productName": "Vela",
-    "artifactName": "Vela.exe",
-    "directories": { "output": "release" },
+    "directories": { "output": "release", "buildResources": "build" },
     "files": ["out/**/*", "package.json"],
+    "extraResources": [{ "from": "resources/icon.png", "to": "icon.png" }],
     "protocols": [{ "name": "Vela", "schemes": ["vela", "vixscr"] }],
-    "win": { "target": "portable" }
+    "win": { "target": "nsis", "icon": "build/icon.png" },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "Vela-Setup-${version}.exe",
+      "shortcutName": "Vela",
+      "uninstallDisplayName": "Vela",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false
+    }
   }
 }
