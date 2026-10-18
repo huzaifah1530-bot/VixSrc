@@ -9,7 +9,7 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test:sync": "esbuild scripts/sync-test.ts --bundle --platform=node --outfile=scripts/sync-test.cjs --log-level=warning && node scripts/sync-test.cjs",
+    "test:sync": "npx --yes esbuild@0.25.0 scripts/sync-test.ts --bundle --platform=node --outfile=scripts/sync-test.cjs --log-level=warning && node scripts/sync-test.cjs",
     "start": "electron-vite preview",
     "dist": "electron-vite build && electron-builder --win nsis --publish never"
   },

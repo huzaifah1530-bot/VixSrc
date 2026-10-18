@@ -1,0 +1,26 @@
+name: Link Interop
+
+# Proves the iOS link crypto (CryptoKit) produces the same bytes as the
+# desktop's (Node + @noble/ciphers), using vectors the desktop generated.
+on:
+  push:
+    paths:
+      - "ios/VixScr/VixScr/Services/Link/**"
+      - "desktop/src/main/link/**"
+      - "desktop/scripts/interop/**"
+      - ".github/workflows/link-interop.yml"
+  workflow_dispatch: {}
+
+jobs:
+  interop:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and run Swift checks
+        run: |
+          swiftc -O \
+            ios/VixScr/VixScr/Services/Link/LinkCrypto.swift \
+            ios/VixScr/VixScr/Services/Link/LinkModels.swift \
+            desktop/scripts/interop/main.swift \
+            -o interop
+          ./interop desktop/scripts/interop/kat.json
