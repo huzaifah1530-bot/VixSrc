@@ -11,6 +11,9 @@ import UIKit
 final class VideoPlayerManager {
     private(set) var player: AVPlayer?
     private(set) var currentURL: URL?
+    /// Fullscreen player is up. Kept here (not in the view) so it survives
+    /// switching episodes; cleared when the player sheet closes.
+    var wantsFullscreen = false
     
     // Playback state
     private(set) var isPlaying = false

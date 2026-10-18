@@ -161,7 +161,7 @@ struct PlayerSheet: View {
                     RemotePlayerView(poster: viewModel.selected?.backdropURL ?? viewModel.selected?.posterURL) {
                         viewModel.startPlaybackForCurrentSelection()
                     }
-                } else if viewModel.currentNativeVideoURL != nil {
+                } else if viewModel.currentNativeVideoURL != nil || viewModel.playerManager.wantsFullscreen {
                     NativeVideoPlayerView(
                         playerManager: viewModel.playerManager,
                         onPlaybackFailure: {

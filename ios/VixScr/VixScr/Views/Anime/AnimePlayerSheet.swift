@@ -85,7 +85,7 @@ struct AnimePlayerSheet: View {
         ZStack {
             if DeviceLink.shared.routesPlayback {
                 RemotePlayerView(poster: viewModel.selected?.posterURL) { viewModel.replayOnCurrentTarget() }
-            } else if viewModel.currentNativeVideoURL != nil {
+            } else if viewModel.currentNativeVideoURL != nil || viewModel.playerManager.wantsFullscreen {
                 NativeVideoPlayerView(
                     playerManager: viewModel.playerManager,
                     onPlaybackFailure: { viewModel.rejectCurrentSource() },

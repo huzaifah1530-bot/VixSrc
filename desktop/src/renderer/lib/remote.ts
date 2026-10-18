@@ -88,6 +88,20 @@ if (location.hash.replace('#', '') !== 'settings') setInterval(async () => {
 
 // ── Commands ─────────────────────────────────────────────────────────
 const recent: string[] = []
+/** Results of recent commands, so a retried command gets the same answer. */
+const results = new Map<string, Promise<string | null>>()
+
+/** Runs a command once; a retry with the same id replays the first result. */
+export function runCommandOnce(cmd: Record<string, unknown>): Promise<string | null> {
+  const id = typeof cmd.id === 'string' ? cmd.id.slice(0, 64) : ''
+  if (id && results.has(id)) return results.get(id)!
+  const r = runCommand(cmd).catch(err => (err as Error).message.replace(/^Error invoking remote method '[^']+': (Error: )?/, ''))
+  if (id) {
+    results.set(id, r)
+    if (results.size > 200) results.delete(results.keys().next().value!)
+  }
+  return r
+}
 const isInt = (v: unknown) => Number.isInteger(v) && (v as number) >= 0 && (v as number) < 10_000
 const isNum = (v: unknown) => typeof v === 'number' && Number.isFinite(v)
 
@@ -95,6 +109,14 @@ function toItem(raw: unknown): MediaItem | null {
   const r = raw as Record<string, unknown> | null
   if (!r || (r.type !== 'movie' && r.type !== 'tv') || typeof r.tmdbId !== 'string' || typeof r.title !== 'string' || r.tmdbId.length > 300) return null
   return canonicalItem(r) as unknown as MediaItem
+}
+
+function waitFor(pred: () => boolean, ms: number): Promise<boolean> {
+  return new Promise(resolve => {
+    const end = Date.now() + ms
+    const tick = () => { if (pred()) resolve(true); else if (Date.now() > end) resolve(false); else setTimeout(tick, 100) }
+    tick()
+  })
 }
 
 /** This PC's Continue-watching entry for the item, if newer than the phone's. */
@@ -172,10 +194,28 @@ export async function runCommand(cmd: Record<string, unknown>): Promise<string |
   const native = p.sources.length > 0
   const transport = async (action: 'play' | 'pause' | 'toggle' | 'seek' | 'skip', value = 0) => {
     if (native && handle) {
-      if (action === 'seek') handle.seek(value)
-      else if (action === 'skip') handle.skip(value)
-      else handle[action]()
-      return null
+      // Apply, then confirm the player really changed; retry once before
+      // telling the phone it didn't work.
+      const before = handle.state()
+      if (!before) return 'The player isn’t ready yet'
+      const target = action === 'seek' ? value : action === 'skip' ? Math.max(0, before.position + value) : 0
+      const wantPlaying = action === 'play' ? true : action === 'pause' ? false : !before.playing
+      const apply = () => {
+        if (action === 'seek' || action === 'skip') handle!.seek(target)
+        else if (wantPlaying) handle!.play()
+        else handle!.pause()
+      }
+      const done = () => {
+        const now = handle?.state()
+        if (!now) return false
+        if (action === 'seek' || action === 'skip') return Math.abs(now.position - Math.min(target, Math.max(0, now.duration - 0.5) || target)) < 2.5
+        return now.playing === wantPlaying
+      }
+      for (let attempt = 0; attempt < 2; attempt++) {
+        apply()
+        if (await waitFor(done, 2500)) return null
+      }
+      return action === 'seek' || action === 'skip' ? 'The PC didn’t move to that point' : `The PC didn’t ${wantPlaying ? 'start playing' : 'pause'}`
     }
     if (p.embedUrl) return (await window.vela.embed.control(action, value)) ? null : 'This web player can’t be controlled remotely'
     return 'Nothing is playing yet'

@@ -773,6 +773,7 @@ final class CatalogViewModel {
 
     @MainActor
     func closePlayer() {
+        playerManager.wantsFullscreen = false
         isPlayerPresented = false
         rejectedNativeStreamURLs.removeAll()
         currentStreamURL = nil

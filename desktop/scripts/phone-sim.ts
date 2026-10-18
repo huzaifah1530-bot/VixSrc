@@ -98,7 +98,9 @@ async function main() {
   c.send({ t: 'cmd', id: 'c3', action: 'pause', session })
   await c.until(m => m.t === 'state' && m.s.playing === false, 10000); console.log('ok pause reflected')
   c.send({ t: 'cmd', id: 'c3', action: 'play', session })
-  assert.equal((await c.until(m => m.t === 'ack' && m.id === 'c3')).error, 'duplicate'); console.log('ok duplicate command ignored')
+  const replay = await c.until(m => m.t === 'ack' && m.id === 'c3')
+  assert.equal(replay.ok, true); console.log('ok retried command replays its first result (not run twice)')
+  assert.equal((await c.until(m => m.t === 'state')).s.playing, false, 'retry did not re-run as play')
   c.send({ t: 'cmd', id: 'c4', action: 'skip', by: 30, session: 'movie:999' })
   assert.equal((await c.until(m => m.t === 'ack' && m.id === 'c4')).error, 'stale'); console.log('ok stale command rejected')
 

@@ -4,7 +4,7 @@ import { create } from 'zustand'
 import type { LinkEvent, LinkStatus } from '@shared/link'
 import { validateDoc } from '@shared/sync'
 import { localDoc, mergeRemote, onLocalChange, replaceFromRemote } from '@/lib/sync'
-import { publish, runCommand, setConnectedCount } from '@/lib/remote'
+import { publish, runCommandOnce, setConnectedCount } from '@/lib/remote'
 import { toast } from './ui'
 
 interface Offer { deviceId: string; name: string; doc: ReturnType<typeof validateDoc> }
@@ -54,10 +54,13 @@ function sendDoc(deviceId: string, mode: 'merge' | 'replace', reply: boolean) {
 async function onMessage(deviceId: string, m: Record<string, unknown>) {
   switch (m.t) {
     case 'cmd': {
-      let error: string | null
-      try { error = await runCommand(m) } catch (err) { error = (err as Error).message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '') }
+      // Two replies: "got" as soon as it arrives, then "ack" once the player
+      // has actually done it (or failed), so the phone can tell lost
+      // messages from commands that didn't take effect.
+      window.vela.link.send(deviceId, { t: 'got', id: m.id })
+      const error = await runCommandOnce(m)
       window.vela.link.send(deviceId, { t: 'ack', id: m.id, ok: !error, error })
-      if (error !== 'duplicate') publish(deviceId)
+      publish(deviceId)
       return
     }
     case 'state-request':

@@ -13,9 +13,15 @@ struct NativeVideoPlayerView: View {
     @Bindable var playerManager: VideoPlayerManager
     var onPlaybackFailure: (() -> Void)? = nil
     var options = PlayerOptions()
-    @State private var isFullscreen = false
+    /// Lives on the manager so fullscreen survives the player view being
+    /// rebuilt between episodes (Next Episode while in fullscreen).
+    private var isFullscreen: Bool {
+        get { playerManager.wantsFullscreen }
+        nonmutating set { playerManager.wantsFullscreen = newValue }
+    }
 
     var body: some View {
+        @Bindable var playerManager = playerManager
         PlayerSurface(playerManager: playerManager, isFullscreen: false, options: options) {
             setFullscreen(true)
         }
@@ -28,7 +34,7 @@ struct NativeVideoPlayerView: View {
         .onChange(of: playerManager.error) { _, error in
             if error != nil { onPlaybackFailure?() }
         }
-        .fullScreenCover(isPresented: $isFullscreen, onDismiss: { rotate(to: .portrait) }) {
+        .fullScreenCover(isPresented: $playerManager.wantsFullscreen, onDismiss: { if !isFullscreen { rotate(to: .portrait) } }) {
             PlayerSurface(playerManager: playerManager, isFullscreen: true, options: options) {
                 setFullscreen(false)
             }

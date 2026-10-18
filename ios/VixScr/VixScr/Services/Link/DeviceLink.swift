@@ -112,6 +112,7 @@ final class DeviceLink {
         let engine = SyncEngine(store: store)
         engine.onLocalChange = { [weak self] in self?.pushLocalChanges() }
         sync = engine
+        startRefreshLoop()
     }
 
     // MARK: - Derived
@@ -426,7 +427,10 @@ final class DeviceLink {
                 remote = state
                 updateLockScreen()
             }
+        case "got":
+            if let id = msg["id"] as? String { pending[id]?.received = true }
         case "ack":
+            if let id = msg["id"] as? String { pending[id] = nil; pendingCount = pending.count }
             if msg["ok"] as? Bool == false, let error = msg["error"] as? String, error != "duplicate" {
                 showToast(error == "stale" ? "That was for something that's no longer playing" : error)
             }
@@ -559,11 +563,115 @@ final class DeviceLink {
             return false
         }
         var msg = args
+        let id = UUID().uuidString
         msg["t"] = "cmd"
-        msg["id"] = UUID().uuidString
+        msg["id"] = id
         msg["action"] = action
         msg["session"] = remote?.session ?? ""
+        // A newer seek/skip replaces older ones still waiting; only the
+        // latest position matters, so stale ones aren't retried.
+        if ["seek", "skip"].contains(action) {
+            for (key, p) in pending where ["seek", "skip"].contains(p.action) { pending[key] = nil }
+        }
+        pending[id] = PendingCommand(msg: msg, action: action, sentAt: Date(), attempts: 1, received: false)
+        pendingCount = pending.count
+        startCommandWatch()
         return send(msg)
+    }
+
+    // MARK: - Command delivery
+    //
+    // Each command gets two replies: "got" when the computer receives it and
+    // "ack" once its player has actually done it (the computer checks, e.g.
+    // that the video really moved to the new time). No "got" within 2s means
+    // the message was lost, so it's resent with the same id — the computer
+    // runs each id only once and replays its answer. No "ack" means it
+    // arrived but didn't take effect, which is reported.
+
+    private struct PendingCommand {
+        var msg: [String: Any]
+        var action: String
+        var sentAt: Date
+        var attempts: Int
+        var received: Bool
+    }
+
+    @ObservationIgnored private var pending: [String: PendingCommand] = [:]
+    @ObservationIgnored private var watchTask: Task<Void, Never>?
+    /// Commands sent but not yet confirmed (drives a small "sending" spinner).
+    private(set) var pendingCount = 0
+
+    private func startCommandWatch() {
+        guard watchTask == nil else { return }
+        watchTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                guard let self else { return }
+                if self.pending.isEmpty { self.watchTask = nil; return }
+                self.checkPending()
+            }
+        }
+    }
+
+    private func checkPending() {
+        let now = Date()
+        for (id, var p) in pending {
+            let age = now.timeIntervalSince(p.sentAt)
+            if !p.received && age > 2 {
+                if p.attempts < 3 && isConnected {
+                    p.attempts += 1
+                    p.sentAt = now
+                    pending[id] = p
+                    send(p.msg)
+                } else {
+                    pending[id] = nil
+                    showToast("\(playbackTarget?.name ?? "Your computer") didn't receive that. Reconnecting…")
+                    // The connection is likely dead even if TCP hasn't noticed.
+                    if let desk = connectedDeskId { closed(reason: nil); connect(desk, auto: false) }
+                }
+            } else if p.received && age > 10 {
+                pending[id] = nil
+                showToast("\(playbackTarget?.name ?? "Your computer") got that but didn't confirm it worked")
+            }
+        }
+        pendingCount = pending.count
+    }
+
+    // MARK: - Periodic refresh
+    //
+    // While the app is running (foreground, or background with the lock
+    // screen remote): every 10s when something is playing on the computer,
+    // otherwise every 60s — reconnect if needed, refresh playback state and,
+    // with sync on, merge saved data.
+
+    @ObservationIgnored private var refreshLoop: Task<Void, Never>?
+
+    private func startRefreshLoop() {
+        guard refreshLoop == nil else { return }
+        refreshLoop = Task { @MainActor [weak self] in
+            var last = Date.distantPast
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                guard let self else { return }
+                let playing = self.remote?.open == true && self.remote?.playing == true
+                guard Date().timeIntervalSince(last) >= (playing ? 10 : 60) else { continue }
+                last = Date()
+                self.periodicRefresh()
+            }
+        }
+    }
+
+    private func periodicRefresh() {
+        let active = UIApplication.shared.applicationState == .active
+        guard active || RemoteNowPlaying.shared.isActive else { return }
+        if isConnected {
+            send(["t": "state-request"])
+            if connectedDesktop?.syncEnabled == true { sendDoc(mode: "merge", reply: true) }
+            return
+        }
+        if case .connecting = phase { return }
+        let id = playbackTargetId ?? UserDefaults.standard.string(forKey: Self.lastDeskKey)
+        if let id, paired.contains(where: { $0.deskId == id }) { connect(id, auto: true) }
     }
 
     private func itemObject(_ item: MediaItem) -> Any? {
@@ -721,6 +829,9 @@ final class DeviceLink {
 
     private func teardown() {
         RemoteNowPlaying.shared.stop()
+        // Commands never carry over to a new connection.
+        pending.removeAll()
+        pendingCount = 0
         generation += 1
         keepAliveTask?.cancel()
         connection?.cancel()

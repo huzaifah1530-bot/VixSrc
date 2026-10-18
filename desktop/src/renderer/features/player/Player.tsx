@@ -45,6 +45,7 @@ export function Player() {
   const [caption, setCaption] = useState<Caption>({ kind: 'off' })
   const [cues, setCues] = useState<Cue[]>([])
   const [hlsTracks, setHlsTracks] = useState<string[]>([])
+  const [hlsCaption, setHlsCaption] = useState<string | null>(null)
 
   const source = p.sources[p.sourceIndex]
   const native = !!source
@@ -91,7 +92,9 @@ export function Player() {
   useEffect(() => {
     setCues([])
     if (hls.current) hls.current.subtitleTrack = caption.kind === 'hls' ? caption.index : -1
-    if (hls.current) hls.current.subtitleDisplay = caption.kind === 'hls'
+    // Cues still load with display off ("hidden" mode); Vela draws them.
+    if (hls.current) hls.current.subtitleDisplay = false
+    setHlsCaption(null)
     if (caption.kind !== 'external' || !source) return
     const track = source.subtitles[caption.index]
     if (!track) return
@@ -260,7 +263,7 @@ export function Player() {
   }
 
   const shown = scrub !== null ? scrub * duration : time
-  const caption_text = caption.kind === 'external' ? captionAt(cues, time) : null
+  const caption_text = caption.kind === 'external' ? captionAt(cues, time) : caption.kind === 'hls' ? hlsCaption : null
   const showNext = native && duration > 0 && duration - time <= 90 && usePlayer.getState().hasNext()
 
   const grouped = useMemo(() => {
@@ -295,6 +298,18 @@ export function Player() {
             const v = e.currentTarget
             if (!started.current && v.currentTime > 0.2) started.current = true
             setTime(v.currentTime)
+            if (caption.kind === 'hls') {
+              const lines: string[] = []
+              for (const track of Array.from(v.textTracks)) {
+                if (track.mode === 'disabled' || !track.activeCues) continue
+                for (const cue of Array.from(track.activeCues)) {
+                  const text = (cue as VTTCue).text?.replace(/<[^>]+>/g, '').trim()
+                  if (text) lines.push(text)
+                }
+              }
+              const next = lines.length ? lines.join('\n') : null
+              setHlsCaption(c => (c === next ? c : next))
+            }
             if (v.buffered.length) setBuffered(v.buffered.end(v.buffered.length - 1))
             if (Date.now() - lastSave.current > 5000) { lastSave.current = Date.now(); save() }
           }}

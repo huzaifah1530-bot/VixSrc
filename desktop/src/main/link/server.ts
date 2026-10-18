@@ -89,15 +89,21 @@ export class LinkServer {
     this.server?.close()
   }
 
-  private advertise() {
+  private advertise(attempt = 1) {
     try {
-      this.bonjour = new Bonjour()
+      this.bonjour ??= new Bonjour({}, (err: unknown) => console.error('bonjour:', err))
+      const base = `Vela on ${this.deskName}`.slice(0, 55)
       this.service = this.bonjour.publish({
-        name: `Vela on ${this.deskName}`.slice(0, 60),
+        name: attempt === 1 ? base : `${base} (${attempt})`,
         type: LINK_SERVICE_TYPE,
         protocol: 'tcp',
         port: this.port,
         txt: { id: this.store.deskId, v: String(LINK_VERSION), n: this.deskName }
+      })
+      // Name taken (another PC with the same name, or a second copy): number it.
+      this.service.on('error', (err: Error) => {
+        if (attempt < 9 && /already in use/i.test(err.message)) this.advertise(attempt + 1)
+        else { this.error = 'Bonjour advertising failed: ' + err.message; this.pushStatus() }
       })
     } catch (err) {
       this.error = 'Bonjour advertising failed: ' + (err as Error).message

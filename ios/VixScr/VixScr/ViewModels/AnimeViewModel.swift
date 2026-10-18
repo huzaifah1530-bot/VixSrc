@@ -396,6 +396,7 @@ final class AnimeViewModel {
     }
 
     func closePlayer() {
+        playerManager.wantsFullscreen = false
         isPlayerPresented = false
         detailsTask?.cancel()
         resetPlayback()

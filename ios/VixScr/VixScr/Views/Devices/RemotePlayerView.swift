@@ -70,6 +70,10 @@ struct RemotePlayerView: View {
                 }
             }
             Spacer(minLength: 0)
+            if link.pendingCount > 0 {
+                ProgressView().controlSize(.small).tint(.white)
+                    .accessibilityLabel("Waiting for the computer")
+            }
         }
         .foregroundStyle(.white)
     }
