@@ -32,8 +32,9 @@ struct NativeVideoPlayerView: View {
             PlayerSurface(playerManager: playerManager, isFullscreen: true, options: options) {
                 setFullscreen(false)
             }
-            // Video and controls stay inside the safe area so nothing sits
-            // under the Dynamic Island / notch; only the black fills edges.
+            // Stay clear of the Dynamic Island / notch, but run under the
+            // home indicator so there's no empty black band at the bottom.
+            .ignoresSafeArea(edges: .bottom)
             .background(Color.black.ignoresSafeArea())
             .statusBarHidden()
             .persistentSystemOverlays(.hidden)
