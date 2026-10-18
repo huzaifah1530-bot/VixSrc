@@ -186,7 +186,14 @@ struct ConnectFlowView: View {
                 }
             }
         }
-        .onAppear { link.startBrowsing() }
+        .onAppear {
+            link.startBrowsing()
+            if link.bonjourUnavailable { scanning = true }
+        }
+        // No Bonjour here (e.g. LiveContainer): the QR code has the address.
+        .onChange(of: link.bonjourUnavailable) { _, unavailable in
+            if unavailable { scanning = true }
+        }
         .onChange(of: link.phase) { _, phase in
             if phase == .connected { dismiss() }
         }

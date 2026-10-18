@@ -147,7 +147,7 @@ final class DeviceLink {
     // MARK: - Discovery
 
     func startBrowsing() {
-        guard browser == nil else { return }
+        guard browser == nil, !bonjourUnavailable else { return }
         browseError = nil
         let params = NWParameters.tcp
         params.includePeerToPeer = false
@@ -161,6 +161,10 @@ final class DeviceLink {
                 switch state {
                 case .failed(let error), .waiting(let error):
                     self.browseError = Self.describe(browseError: error)
+                    if case .dns(let code) = error, code == -65555 {
+                        self.bonjourUnavailable = true
+                        self.stopBrowsing()
+                    }
                 case .ready:
                     self.browseError = nil
                 default: break
@@ -178,9 +182,18 @@ final class DeviceLink {
         isBrowsing = false
     }
 
+    /// True when iOS won't let this process browse Bonjour at all (e.g. when
+    /// run inside LiveContainer, whose Info.plist doesn't declare our
+    /// service). Pairing then goes straight to the QR code, which carries
+    /// the computer's address.
+    private(set) var bonjourUnavailable = false
+
     private static func describe(browseError error: NWError) -> String {
         if case .dns(let code) = error, code == -65570 /* kDNSServiceErr_PolicyDenied */ {
             return "Vela needs Local Network access. Turn it on in Settings › Privacy & Security › Local Network."
+        }
+        if case .dns(let code) = error, code == -65555 /* kDNSServiceErr_NoAuth */ {
+            return "Automatic discovery isn't available in this install (common when running inside LiveContainer). Scan the code on your computer instead."
         }
         return "Couldn't search the network: \(error.localizedDescription)"
     }
@@ -214,6 +227,7 @@ final class DeviceLink {
         Task { @MainActor [weak self] in
             // Give Bonjour a moment to resolve before using stored addresses.
             for _ in 0..<15 {
+                if self?.bonjourUnavailable == true { break }
                 if self?.discovered.contains(where: { $0.deskId == deskId }) == true { break }
                 try? await Task.sleep(nanoseconds: 100_000_000)
             }

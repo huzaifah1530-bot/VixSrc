@@ -885,11 +885,13 @@ struct CaptionOverlay: View {
 
 /// Caption text scale; matches the desktop's caption size choices.
 enum CaptionSize: Double, CaseIterable, Identifiable {
-    case small = 0.8, medium = 1.0, large = 1.3, extraLarge = 1.6
+    case tiny = 0.5, extraSmall = 0.65, small = 0.8, medium = 1.0, large = 1.3, extraLarge = 1.6
     static let storageKey = "vixsrc_live_caption_scale"
     var id: Double { rawValue }
     var label: String {
         switch self {
+        case .tiny: return "Tiny"
+        case .extraSmall: return "Extra Small"
         case .small: return "Small"
         case .medium: return "Medium"
         case .large: return "Large"
