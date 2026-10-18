@@ -10,6 +10,12 @@ struct StreamURLExtractor {
         let url: URL
         var requestHeaders: [String: String] = [:]
         var httpCookies: [HTTPCookie] = []
+        /// Anime sources only: "Sub" or "Dub", and a "1080p"-style height label.
+        var audio: String? = nil
+        var quality: String? = nil
+        /// Side-loaded WebVTT tracks (anime soft subs). AVPlayer cannot attach
+        /// these to an HLS item, so VideoPlayerManager renders them itself.
+        var subtitles: [ExternalSubtitle] = []
 
         static func == (lhs: Self, rhs: Self) -> Bool {
             lhs.id == rhs.id && lhs.name == rhs.name && lhs.url == rhs.url &&
@@ -410,6 +416,13 @@ struct StreamURLExtractor {
             return false
         }
     }
+}
+
+/// A WebVTT subtitle file that has to be fetched with a specific Referer.
+struct ExternalSubtitle: Hashable, Sendable {
+    let label: String
+    let url: URL
+    let referer: String
 }
 
 /// Determines whether to use native player or WebView embed

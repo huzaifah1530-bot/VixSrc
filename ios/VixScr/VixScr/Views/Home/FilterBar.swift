@@ -11,6 +11,7 @@ struct FilterBar: View {
             Text("All").tag(AppStore.ContentFilter.all)
             Text("Movies").tag(AppStore.ContentFilter.movie)
             Text("TV").tag(AppStore.ContentFilter.tv)
+            Text("Anime").tag(AppStore.ContentFilter.anime)
             Text("Favourites").tag(AppStore.ContentFilter.favorites)
         }
         .pickerStyle(.segmented)

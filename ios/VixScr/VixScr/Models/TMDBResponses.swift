@@ -16,6 +16,9 @@ struct TMDBRawItem: Codable {
     var releaseDate: String?
     var firstAirDate: String?
     var mediaType: String?
+    var genreIds: [Int]?
+    var originalLanguage: String?
+    var originCountry: [String]?
 
     enum CodingKeys: String, CodingKey {
         case id, title, name, overview
@@ -26,6 +29,9 @@ struct TMDBRawItem: Codable {
         case releaseDate = "release_date"
         case firstAirDate = "first_air_date"
         case mediaType = "media_type"
+        case genreIds = "genre_ids"
+        case originalLanguage = "original_language"
+        case originCountry = "origin_country"
     }
 
     func normalized(forcedType: MediaItem.MediaType? = nil) -> MediaItem? {
@@ -55,7 +61,8 @@ struct TMDBRawItem: Codable {
             backdropPath: backdropPath ?? posterPath,
             rating: voteAverage,
             year: year,
-            popularity: popularity ?? 0
+            popularity: popularity ?? 0,
+            anime: AnimeClassifier.isAnime(genreIds: genreIds, originalLanguage: originalLanguage, originCountry: originCountry)
         )
     }
 }
@@ -78,15 +85,22 @@ struct TMDBDetailResponse: Codable {
     var popularity: Double?
     var releaseDate: String?
     var firstAirDate: String?
+    var genres: [Genre]?
+    var originalLanguage: String?
+    var originCountry: [String]?
+
+    struct Genre: Codable { var id: Int }
 
     enum CodingKeys: String, CodingKey {
-        case id, title, name, overview
+        case id, title, name, overview, genres
         case posterPath = "poster_path"
         case backdropPath = "backdrop_path"
         case voteAverage = "vote_average"
         case popularity
         case releaseDate = "release_date"
         case firstAirDate = "first_air_date"
+        case originalLanguage = "original_language"
+        case originCountry = "origin_country"
     }
 
     func normalized(type: MediaItem.MediaType) -> MediaItem? {
@@ -103,7 +117,8 @@ struct TMDBDetailResponse: Codable {
             backdropPath: backdropPath ?? posterPath,
             rating: voteAverage,
             year: year,
-            popularity: popularity ?? 0
+            popularity: popularity ?? 0,
+            anime: AnimeClassifier.isAnime(genreIds: genres?.map(\.id), originalLanguage: originalLanguage, originCountry: originCountry)
         )
     }
 }

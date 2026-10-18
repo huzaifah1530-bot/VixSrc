@@ -20,6 +20,10 @@ struct NativeVideoPlayerView: View {
                 .onTapGesture {
                     toggleControls()
                 }
+
+            // Side-loaded captions sit above the controls' timeline when visible.
+            CaptionOverlay(playerManager: playerManager, bottomInset: showControls ? 120 : 14)
+                .animation(controlsAnimation, value: showControls)
             
             // Loading indicator
             if playerManager.isLoading {
@@ -75,7 +79,7 @@ struct NativeVideoPlayerView: View {
             if error != nil { onPlaybackFailure?() }
         }
         .fullScreenCover(isPresented: $isFullscreen) {
-            SystemVideoPlayerView(player: playerManager.player)
+            SystemVideoPlayerView(playerManager: playerManager)
                 .ignoresSafeArea()
                 .preferredColorScheme(.dark)
         }
@@ -165,29 +169,9 @@ struct VideoPlayerLayer: UIViewRepresentable {
             layer.frame = bounds
             self.layer.addSublayer(layer)
             self.playerLayer = layer
-            if AVPictureInPictureController.isPictureInPictureSupported(),
-               let controller = AVPictureInPictureController(playerLayer: layer) {
-                controller.canStartPictureInPictureAutomaticallyFromInline = true
-                pictureInPictureController = controller
-                // The native AVPlayerViewController used for fullscreen lives
-                // inside a SwiftUI fullScreenCover, so it isn't an inline
-                // presentation and automatic-from-inline PiP doesn't apply.
-                // Start PiP explicitly as the app enters the background.
-                backgroundObserver = NotificationCenter.default.addObserver(
-                    forName: UIApplication.didEnterBackgroundNotification,
-                    object: nil,
-                    queue: .main
-                ) { [weak self] _ in
-                    Task { @MainActor [weak self] in
-                        guard let self,
-                              self.isFullscreen,
-                              self.player?.timeControlStatus == .playing,
-                              let pipController = self.pictureInPictureController,
-                              pipController.isPictureInPicturePossible else { return }
-                        pipController.startPictureInPicture()
-                    }
-                }
-            }
+            // No automatic Picture in Picture: leaving the app should close
+            // playback, not shrink it into the Dynamic Island. PiP is still
+            // available manually from the fullscreen player's controls.
         }
 
         func removeBackgroundObserver() {
@@ -227,8 +211,8 @@ struct PlayerControlsOverlay: View {
                         Image(systemName: "captions.bubble")
                     }
                     .buttonStyle(PlayerButtonStyle())
-                    .disabled(playerManager.subtitleOptions.isEmpty)
-                    .opacity(playerManager.subtitleOptions.isEmpty ? 0.45 : 1)
+                    .disabled(!playerManager.hasAnySubtitles)
+                    .opacity(playerManager.hasAnySubtitles ? 1 : 0.45)
                     .accessibilityLabel("Captions")
                     Button(action: onToggleFullscreen) {
                         Image(systemName: "arrow.up.left.and.arrow.down.right")
@@ -368,12 +352,13 @@ private struct CaptionPicker: View {
             List {
                 Button {
                     playerManager.selectSubtitle(at: nil)
+                    playerManager.selectExternalSubtitle(at: nil)
                     dismiss()
                 } label: {
                     HStack {
                         Text("Off")
                         Spacer()
-                        if playerManager.selectedSubtitleIndex == nil {
+                        if playerManager.selectedSubtitleIndex == nil && playerManager.selectedExternalSubtitleIndex == nil {
                             Image(systemName: "checkmark")
                                 .foregroundStyle(.tint)
                         }
@@ -394,6 +379,21 @@ private struct CaptionPicker: View {
                         }
                     }
                 }
+                ForEach(Array(playerManager.externalSubtitles.enumerated()), id: \.offset) { index, track in
+                    Button {
+                        playerManager.selectExternalSubtitle(at: index)
+                        dismiss()
+                    } label: {
+                        HStack {
+                            Text(track.label)
+                            Spacer()
+                            if playerManager.selectedExternalSubtitleIndex == index {
+                                Image(systemName: "checkmark")
+                                    .foregroundStyle(.tint)
+                            }
+                        }
+                    }
+                }
             }
             .navigationTitle("Captions")
             .navigationBarTitleDisplayMode(.inline)
@@ -406,16 +406,60 @@ private struct CaptionPicker: View {
     }
 }
 
+/// Renders the current side-loaded caption (anime soft subs) in the
+/// standard white-on-shadow subtitle style.
+struct CaptionOverlay: View {
+    @Bindable var playerManager: VideoPlayerManager
+    var bottomInset: CGFloat = 14
+
+    var body: some View {
+        VStack {
+            Spacer()
+            if let caption = playerManager.currentCaption {
+                Text(caption)
+                    .font(.system(.callout, design: .default).weight(.semibold))
+                    .foregroundStyle(.white)
+                    .multilineTextAlignment(.center)
+                    .shadow(color: .black, radius: 2)
+                    .shadow(color: .black.opacity(0.8), radius: 4)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(.black.opacity(0.35), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, bottomInset)
+                    .accessibilityLabel("Caption: \(caption)")
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .allowsHitTesting(false)
+    }
+}
+
 private struct SystemVideoPlayerView: UIViewControllerRepresentable {
-    let player: AVPlayer?
+    let playerManager: VideoPlayerManager
+    private var player: AVPlayer? { playerManager.player }
 
     func makeUIViewController(context: Context) -> AVPlayerViewController {
         let controller = AVPlayerViewController()
         controller.delegate = context.coordinator
         controller.player = player
+        if let overlay = controller.contentOverlayView {
+            let host = UIHostingController(rootView: CaptionOverlay(playerManager: playerManager, bottomInset: 40))
+            host.view.backgroundColor = .clear
+            host.view.isUserInteractionEnabled = false
+            host.view.translatesAutoresizingMaskIntoConstraints = false
+            overlay.addSubview(host.view)
+            NSLayoutConstraint.activate([
+                host.view.leadingAnchor.constraint(equalTo: overlay.leadingAnchor),
+                host.view.trailingAnchor.constraint(equalTo: overlay.trailingAnchor),
+                host.view.topAnchor.constraint(equalTo: overlay.topAnchor),
+                host.view.bottomAnchor.constraint(equalTo: overlay.bottomAnchor),
+            ])
+            context.coordinator.captionHost = host
+        }
         controller.showsPlaybackControls = true
         controller.allowsPictureInPicturePlayback = true
-        controller.canStartPictureInPictureAutomaticallyFromInline = true
+        controller.canStartPictureInPictureAutomaticallyFromInline = false
         controller.entersFullScreenWhenPlaybackBegins = false
         controller.exitsFullScreenWhenPlaybackEnds = false
         // Metadata and poster art are published centrally by VideoPlayerManager.
@@ -430,6 +474,8 @@ private struct SystemVideoPlayerView: UIViewControllerRepresentable {
     }
 
     final class Coordinator: NSObject, AVPlayerViewControllerDelegate {
+        var captionHost: UIViewController?
+
         func playerViewController(
             _ playerViewController: AVPlayerViewController,
             restoreUserInterfaceForPictureInPictureStopWithCompletionHandler completionHandler: @escaping (Bool) -> Void

@@ -10,9 +10,18 @@ struct TVDetails: Codable {
     var numberOfEpisodes: Int?
     var voteAverage: Double?
     var seasons: [SeasonSummary]?
+    var genres: [TMDBDetailResponse.Genre]?
+    var originalLanguage: String?
+    var originCountry: [String]?
+
+    var isAnime: Bool {
+        AnimeClassifier.isAnime(genreIds: genres?.map(\.id), originalLanguage: originalLanguage, originCountry: originCountry)
+    }
 
     enum CodingKeys: String, CodingKey {
-        case id, name, overview
+        case id, name, overview, genres
+        case originalLanguage = "original_language"
+        case originCountry = "origin_country"
         case firstAirDate = "first_air_date"
         case numberOfSeasons = "number_of_seasons"
         case numberOfEpisodes = "number_of_episodes"

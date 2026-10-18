@@ -39,9 +39,115 @@ final class VideoPlayerManager {
 
     private(set) var subtitleOptions: [AVMediaSelectionOption] = []
     private(set) var selectedSubtitleIndex: Int?
+
+    // Side-loaded WebVTT tracks (anime soft subs). Rendered by
+    // `CaptionOverlay` because AVPlayer can't attach them to an HLS item.
+    private(set) var externalSubtitles: [ExternalSubtitle] = []
+    private(set) var selectedExternalSubtitleIndex: Int?
+    private(set) var currentCaption: String?
+    @ObservationIgnored private var externalCues: [SubtitleCue] = []
+    @ObservationIgnored private var subtitleTask: Task<Void, Never>?
+    @ObservationIgnored private var lifecycleObservers: [NSObjectProtocol] = []
+
+    var hasAnySubtitles: Bool { !subtitleOptions.isEmpty || !externalSubtitles.isEmpty }
     
     init() {
         setupAudioSession()
+        observeAppLifecycle()
+    }
+
+    /// Leaving the app stops playback outright. Keeping the audio session and
+    /// Now Playing info alive made iOS shrink the app into the Dynamic Island
+    /// (and Lock Screen player) instead of simply closing it.
+    private func observeAppLifecycle() {
+        let center = NotificationCenter.default
+        lifecycleObservers.append(center.addObserver(
+            forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.handleEnterBackground() }
+        })
+        lifecycleObservers.append(center.addObserver(
+            forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.handleEnterForeground() }
+        })
+    }
+
+    private func handleEnterBackground() {
+        pause()
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        removeRemoteCommands()
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    }
+
+    private func handleEnterForeground() {
+        try? AVAudioSession.sharedInstance().setActive(true)
+        guard player != nil else { return }
+        installRemoteCommands()
+        publishNowPlayingInfo()
+    }
+
+    // MARK: - External subtitles
+
+    func setExternalSubtitles(_ tracks: [ExternalSubtitle], autoSelect: Bool) {
+        externalSubtitles = tracks
+        selectedExternalSubtitleIndex = nil
+        externalCues = []
+        currentCaption = nil
+        subtitleTask?.cancel()
+        if autoSelect, !tracks.isEmpty {
+            let english = tracks.firstIndex { $0.label.lowercased().contains("english") } ?? 0
+            selectExternalSubtitle(at: english)
+        }
+    }
+
+    func selectExternalSubtitle(at index: Int?) {
+        subtitleTask?.cancel()
+        externalCues = []
+        currentCaption = nil
+        guard let index, externalSubtitles.indices.contains(index) else {
+            selectedExternalSubtitleIndex = nil
+            return
+        }
+        // Only one caption source at a time.
+        if selectedSubtitleIndex != nil { selectSubtitle(at: nil) }
+        selectedExternalSubtitleIndex = index
+        let track = externalSubtitles[index]
+        subtitleTask = Task { [weak self] in
+            var request = URLRequest(url: track.url)
+            request.setValue(StreamURLExtractor.userAgent, forHTTPHeaderField: "User-Agent")
+            request.setValue(track.referer, forHTTPHeaderField: "Referer")
+            guard let (data, _) = try? await URLSession.shared.data(for: request), !Task.isCancelled else { return }
+            let cues = WebVTT.parse(String(decoding: data, as: UTF8.self))
+            guard let self, self.selectedExternalSubtitleIndex == index else { return }
+            self.externalCues = cues
+            self.updateCaption(at: self.currentTime)
+        }
+    }
+
+    private func updateCaption(at time: Double) {
+        guard !externalCues.isEmpty else {
+            if currentCaption != nil { currentCaption = nil }
+            return
+        }
+        // Binary search for the last cue starting at or before `time`.
+        var low = 0, high = externalCues.count - 1, found = -1
+        while low <= high {
+            let mid = (low + high) / 2
+            if externalCues[mid].start <= time { found = mid; low = mid + 1 } else { high = mid - 1 }
+        }
+        var lines: [String] = []
+        if found >= 0 {
+            var i = found
+            // Overlapping cues (signs + dialogue) render together.
+            while i >= 0, i >= found - 4 {
+                let cue = externalCues[i]
+                if cue.start <= time, cue.end > time { lines.insert(cue.text, at: 0) }
+                i -= 1
+            }
+        }
+        let text = lines.isEmpty ? nil : lines.joined(separator: "\n")
+        if text != currentCaption { currentCaption = text }
     }
     
     // MARK: - Playback Control
@@ -62,6 +168,11 @@ final class VideoPlayerManager {
             AVURLAssetHTTPUserAgentKey: requestHeaders["User-Agent"] ?? StreamURLExtractor.userAgent
         ]
         if !httpCookies.isEmpty { options[AVURLAssetHTTPCookiesKey] = httpCookies }
+        // Anime CDNs (MegaPlay, VidTube) refuse playlists and segments without
+        // a matching Referer. AVFoundation has no public key for arbitrary
+        // headers; this long-standing private key is what every iOS player uses.
+        let extraHeaders = requestHeaders.filter { $0.key != "User-Agent" }
+        if !extraHeaders.isEmpty { options["AVURLAssetHTTPHeaderFieldsKey"] = extraHeaders }
         let asset = AVURLAsset(url: url, options: options)
         let player = AVPlayer(playerItem: AVPlayerItem(asset: asset))
         self.player = player
@@ -144,6 +255,7 @@ final class VideoPlayerManager {
             postWebRemoteCommand("seek", position: clamped)
         }
         currentTime = clamped
+        updateCaption(at: clamped)
         pendingResumePosition = 0
         publishNowPlayingInfo()
     }
@@ -161,8 +273,8 @@ final class VideoPlayerManager {
     private func setupPeriodicTimeObserver() {
         guard let player else { return }
         
-        // Update every 0.5 seconds
-        let interval = CMTime(seconds: 0.5, preferredTimescale: 600)
+        // Update every 0.25 seconds — fine enough for side-loaded captions.
+        let interval = CMTime(seconds: 0.25, preferredTimescale: 600)
         timeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
             Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -171,6 +283,7 @@ final class VideoPlayerManager {
                 guard seconds.isFinite else { return }
 
                 self.currentTime = seconds
+                self.updateCaption(at: seconds)
 
                 // Notify progress update
                 if self.duration > 0 {
@@ -262,6 +375,7 @@ final class VideoPlayerManager {
         guard let item = player?.currentItem,
               let group = item.asset.mediaSelectionGroup(forMediaCharacteristic: .legible) else { return }
         if let index, subtitleOptions.indices.contains(index) {
+            if selectedExternalSubtitleIndex != nil { selectExternalSubtitle(at: nil) }
             item.select(subtitleOptions[index], in: group)
             selectedSubtitleIndex = index
         } else {
@@ -450,6 +564,11 @@ final class VideoPlayerManager {
         pendingResumePosition = 0
         subtitleOptions = []
         selectedSubtitleIndex = nil
+        subtitleTask?.cancel()
+        externalSubtitles = []
+        selectedExternalSubtitleIndex = nil
+        externalCues = []
+        currentCaption = nil
         nowPlayingArtwork = nil
         nowPlayingArtworkURL = nil
         nowPlayingSubtitle = nil

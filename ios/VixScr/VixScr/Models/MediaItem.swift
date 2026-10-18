@@ -28,6 +28,11 @@ struct MediaItem: Identifiable, Codable, Hashable {
     // Watch progress tracking
     var resumePosition: Double?
     var duration: Double?
+
+    /// Set from TMDB metadata (see `AnimeClassifier`). Optional so items
+    /// saved by older builds still decode.
+    var anime: Bool?
+    var isAnime: Bool { anime == true }
     
     var progress: Double? {
         guard let position = resumePosition, let dur = duration, dur > 0 else { return nil }
@@ -39,7 +44,22 @@ struct MediaItem: Identifiable, Codable, Hashable {
     var posterURL: URL? { TMDBImage.url(path: posterPath, size: .w500) }
     var backdropURL: URL? { TMDBImage.url(path: backdropPath, size: .original) }
 
-    var typeLabel: String { type == .movie ? "Movie" : "TV" }
+    var typeLabel: String {
+        if isAnime { return "Anime" }
+        return type == .movie ? "Movie" : "TV"
+    }
+}
+
+/// TMDB has no anime media type, so anime is inferred: Animation genre (16)
+/// plus Japanese original language or Japanese origin. A heuristic — some
+/// titles with incomplete metadata will be missed.
+enum AnimeClassifier {
+    static let animationGenreId = 16
+
+    static func isAnime(genreIds: [Int]?, originalLanguage: String?, originCountry: [String]?) -> Bool {
+        guard genreIds?.contains(animationGenreId) == true else { return false }
+        return originalLanguage == "ja" || originCountry?.contains("JP") == true
+    }
 }
 
 enum TMDBImage {

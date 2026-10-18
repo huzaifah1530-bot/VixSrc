@@ -67,7 +67,7 @@ struct PlayerSheet: View {
     }
 
     @ViewBuilder private var serverSelectorView: some View {
-        if viewModel.store.servers.count > 1 {
+        if viewModel.store.servers.count + viewModel.store.animeServers.count > 1 {
             ServerSelector(viewModel: viewModel)
         }
     }
@@ -75,20 +75,28 @@ struct PlayerSheet: View {
     @ViewBuilder private var nativeSourceSelectorView: some View {
         if viewModel.nativeSources.count > 1 {
             HStack {
-                Label("Source", systemImage: "antenna.radiowaves.left.and.right")
+                Label(viewModel.isAnimeServerActive ? "Quality" : "Source",
+                  systemImage: viewModel.isAnimeServerActive ? "sparkles.tv" : "antenna.radiowaves.left.and.right")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
                 Menu {
-                    ForEach(Array(viewModel.nativeSources.enumerated()), id: \.offset) { index, source in
-                        Button {
-                            viewModel.switchNativeSource(to: index)
-                        } label: {
-                            if index == viewModel.selectedNativeSourceIndex {
-                                Label(source.name, systemImage: "checkmark")
-                            } else {
-                                Text(source.name)
+                    if viewModel.nativeSources.contains(where: { $0.audio != nil }) {
+                        // Anime: qualities grouped by audio track so the
+                        // viewer can hop between e.g. 1080p Sub and 1080p Dub.
+                        ForEach(["Sub", "Dub"], id: \.self) { audio in
+                            let entries = viewModel.nativeSources.enumerated().filter { $0.element.audio == audio }
+                            if !entries.isEmpty {
+                                Section(audio == "Sub" ? "Subtitled" : "Dubbed") {
+                                    ForEach(entries, id: \.offset) { index, source in
+                                        sourceButton(source.quality ?? source.name, index: index)
+                                    }
+                                }
                             }
+                        }
+                    } else {
+                        ForEach(Array(viewModel.nativeSources.enumerated()), id: \.offset) { index, source in
+                            sourceButton(source.name, index: index)
                         }
                     }
                 } label: {
@@ -100,6 +108,18 @@ struct PlayerSheet: View {
             }
             .padding(14)
             .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+    }
+
+    private func sourceButton(_ title: String, index: Int) -> some View {
+        Button {
+            viewModel.switchNativeSource(to: index)
+        } label: {
+            if index == viewModel.selectedNativeSourceIndex {
+                Label(title, systemImage: "checkmark")
+            } else {
+                Text(title)
+            }
         }
     }
 
@@ -155,7 +175,14 @@ struct PlayerSheet: View {
                     )
                 } else {
                     Color.black
-                    ProgressView().tint(.white)
+                    VStack(spacing: 10) {
+                        ProgressView().tint(.white)
+                        if let status = viewModel.animeStatusMessage {
+                            Text(status)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.white.opacity(0.7))
+                        }
+                    }
                 }
             }
         }
@@ -294,27 +321,57 @@ struct ServerSelector: View {
                 .foregroundStyle(.secondary)
             Spacer()
             Menu {
-                ForEach(Array(viewModel.store.servers.enumerated()), id: \.offset) { index, server in
-                    Button {
-                        viewModel.switchServer(to: index)
-                    } label: {
-                        if index == viewModel.currentServerIndex {
-                            Label(server.name, systemImage: "checkmark")
-                        } else {
-                            Text(server.name)
-                        }
-                    }
+                // Anime titles list anime servers first; everything else
+                // lists regular servers first. A separator splits the groups.
+                if viewModel.selected?.isAnime == true {
+                    animeSection
+                    Divider()
+                    regularSection
+                } else {
+                    regularSection
+                    Divider()
+                    animeSection
                 }
             } label: {
-                let name = viewModel.store.servers.indices.contains(viewModel.currentServerIndex)
-                    ? viewModel.store.servers[viewModel.currentServerIndex].name : "Select"
-                Label(name, systemImage: "chevron.up.chevron.down")
+                Label(viewModel.currentServerName, systemImage: "chevron.up.chevron.down")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.blue)
             }
         }
         .padding(14)
         .background { selectorBackground }
+    }
+
+    @ViewBuilder private var regularSection: some View {
+        if !viewModel.store.servers.isEmpty {
+            Section("Servers") {
+                ForEach(Array(viewModel.store.servers.enumerated()), id: \.offset) { index, server in
+                    serverButton(server.name, selection: .regular(index))
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var animeSection: some View {
+        if !viewModel.store.animeServers.isEmpty {
+            Section("Anime Servers") {
+                ForEach(Array(viewModel.store.animeServers.enumerated()), id: \.offset) { index, server in
+                    serverButton(server.name, selection: .anime(index))
+                }
+            }
+        }
+    }
+
+    private func serverButton(_ name: String, selection: ServerSelection) -> some View {
+        Button {
+            viewModel.switchServer(to: selection)
+        } label: {
+            if selection == viewModel.currentServer {
+                Label(name, systemImage: "checkmark")
+            } else {
+                Text(name)
+            }
+        }
     }
 
     @ViewBuilder

@@ -30,6 +30,7 @@ final class AppStore {
         static let ultraPerfMode = "vixsrc_live_ultra_perf_mode"
         static let servers = "vixsrc_live_servers"
         static let watchProgress = "vixsrc_live_watch_progress"
+        static let animeServers = "vixsrc_live_anime_servers"
     }
 
     /// Optional built-in credential. The Electron app hardcodes one directly
@@ -173,6 +174,20 @@ final class AppStore {
         }
     }
 
+    @ObservationIgnored private var storedAnimeServers: [AnimeServer]
+    var animeServers: [AnimeServer] {
+        get {
+            access(keyPath: \.animeServers)
+            return storedAnimeServers
+        }
+        set {
+            withMutation(keyPath: \.animeServers) {
+                storedAnimeServers = newValue
+                save(newValue, key: Keys.animeServers)
+            }
+        }
+    }
+
     @ObservationIgnored private var storedWatchProgress: [WatchProgress]
     var watchProgress: [WatchProgress] {
         get {
@@ -188,7 +203,7 @@ final class AppStore {
     }
 
     enum ContentFilter: String, CaseIterable {
-        case all, movie, tv, favorites
+        case all, movie, tv, anime, favorites
     }
 
     enum CardSize: String {
@@ -210,6 +225,7 @@ final class AppStore {
         self.storedPerformanceMode = defaults.bool(forKey: Keys.perfMode)
         self.storedUltraPerformanceMode = defaults.bool(forKey: Keys.ultraPerfMode)
         self.storedServers = AppStore.load([StreamServer].self, key: Keys.servers, defaults: defaults) ?? StreamServer.defaults
+        self.storedAnimeServers = AppStore.load([AnimeServer].self, key: Keys.animeServers, defaults: defaults) ?? AnimeServer.defaults
         self.storedWatchProgress = AppStore.load([WatchProgress].self, key: Keys.watchProgress, defaults: defaults) ?? []
     }
 
@@ -308,5 +324,77 @@ final class AppStore {
     func removeServer(at index: Int) {
         guard servers.indices.contains(index) else { return }
         servers.remove(at: index)
+    }
+
+    func addOrUpdateAnimeServer(_ server: AnimeServer, replacing index: Int?) {
+        if let index, animeServers.indices.contains(index) {
+            animeServers[index] = server
+        } else {
+            animeServers.append(server)
+        }
+    }
+
+    func removeAnimeServer(at index: Int) {
+        guard animeServers.indices.contains(index) else { return }
+        animeServers.remove(at: index)
+    }
+
+    // MARK: Backup (export / import)
+
+    /// Everything the app persists, as one versioned JSON document.
+    struct Backup: Codable {
+        var app = "Vela"
+        var version = 1
+        var exportedAt = Date()
+        var credential: String
+        var favorites: [MediaItem]
+        var recents: [MediaItem]
+        var watchProgress: [WatchProgress]
+        var searchHistory: [String]
+        var servers: [StreamServer]
+        var animeServers: [AnimeServer]
+        var contentFilter: String
+        var cardSize: String
+        var performanceMode: Bool
+        var ultraPerformanceMode: Bool
+    }
+
+    func exportBackup() throws -> Data {
+        let backup = Backup(
+            credential: credential,
+            favorites: favorites,
+            recents: recents,
+            watchProgress: watchProgress,
+            searchHistory: searchHistory,
+            servers: servers,
+            animeServers: animeServers,
+            contentFilter: contentFilter.rawValue,
+            cardSize: cardSize.rawValue,
+            performanceMode: performanceMode,
+            ultraPerformanceMode: ultraPerformanceMode
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        return try encoder.encode(backup)
+    }
+
+    /// Replaces all local data with the backup's contents.
+    func importBackup(_ data: Data) throws {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let backup = try decoder.decode(Backup.self, from: data)
+        guard backup.app == "Vela" else { throw CocoaError(.fileReadCorruptFile) }
+        credential = backup.credential
+        favorites = backup.favorites
+        recents = backup.recents
+        watchProgress = backup.watchProgress
+        searchHistory = backup.searchHistory
+        servers = backup.servers.isEmpty ? StreamServer.defaults : backup.servers
+        animeServers = backup.animeServers
+        contentFilter = ContentFilter(rawValue: backup.contentFilter) ?? .all
+        cardSize = CardSize(rawValue: backup.cardSize) ?? .large
+        performanceMode = backup.performanceMode
+        ultraPerformanceMode = backup.ultraPerformanceMode
     }
 }

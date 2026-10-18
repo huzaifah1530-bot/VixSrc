@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Settings tab. Uses a native grouped `Form` — the exact same control
 /// Apple's own Settings app, and most well-behaved iOS apps, build their
@@ -15,6 +16,16 @@ struct SettingsView: View {
     @State private var toastMessage: String?
     @State private var toastTask: Task<Void, Never>?
     @State private var showRestartAlert = false
+    @State private var newAnimeServerName = ""
+    @State private var newAnimeServerURL = ""
+    @State private var editingAnimeIndex: Int?
+    @State private var animeServerStatus: (text: String, isError: Bool)?
+    @State private var isTestingAnimeServer = false
+    @State private var exportDocument: VelaBackupDocument?
+    @State private var isExporting = false
+    @State private var isImporting = false
+    @State private var showImportConfirm = false
+    @State private var pendingImportURL: URL?
 
     var body: some View {
         NavigationStack {
@@ -23,6 +34,8 @@ struct SettingsView: View {
                 performanceSection
                 cardSizeSection
                 serverManagementSection
+                animeServerSection
+                backupSection
                 searchHistorySection
                 aboutSection
             }
@@ -215,6 +228,163 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: - Anime servers
+
+    private var animeServerSection: some View {
+        Section {
+            ForEach(Array(store.animeServers.enumerated()), id: \.offset) { index, server in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(server.name).font(.subheadline.weight(.semibold))
+                    Text(server.base).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+                .swipeActions(edge: .trailing) {
+                    Button(role: .destructive) {
+                        store.removeAnimeServer(at: index)
+                        showToast("\(server.name) removed")
+                    } label: {
+                        Label("Delete", systemImage: "trash")
+                    }
+                    Button {
+                        editingAnimeIndex = index
+                        newAnimeServerName = server.name
+                        newAnimeServerURL = server.base
+                    } label: {
+                        Label("Edit", systemImage: "pencil")
+                    }
+                    .tint(.blue)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                TextField("Name", text: $newAnimeServerName)
+                TextField("https://animekaitv.to", text: $newAnimeServerURL)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .keyboardType(.URL)
+
+                HStack {
+                    if let status = animeServerStatus {
+                        Text(status.text)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(status.isError ? .red : .green)
+                    }
+                    Spacer()
+                    Button {
+                        Task { await addOrUpdateAnimeServer() }
+                    } label: {
+                        if isTestingAnimeServer {
+                            ProgressView()
+                        } else {
+                            Text(editingAnimeIndex == nil ? "Add" : "Update")
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isTestingAnimeServer)
+                }
+            }
+            .padding(.top, 4)
+
+            if store.animeServers.isEmpty {
+                Button("Restore Default Anime Servers") {
+                    store.animeServers = AnimeServer.defaults
+                    showToast("Anime servers restored")
+                }
+            }
+        } header: {
+            Text("Anime Servers")
+        } footer: {
+            Text("AnimeKai-compatible sites used for anime. They play in the native player with Sub and Dub qualities, and are listed first when you watch anime. Each is tested with a search before saving.")
+        }
+    }
+
+    private func addOrUpdateAnimeServer() async {
+        let name = newAnimeServerName.trimmingCharacters(in: .whitespaces)
+        var url = newAnimeServerURL.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty, !url.isEmpty else {
+            animeServerStatus = ("Enter both a name and a URL", true)
+            return
+        }
+        if !url.hasPrefix("http://") && !url.hasPrefix("https://") { url = "https://" + url }
+        if url.hasSuffix("/") { url.removeLast() }
+
+        isTestingAnimeServer = true
+        animeServerStatus = ("Testing server with a search...", false)
+        let reachable = await testServer(URL(string: url + "/filter?keyword=naruto"))
+        isTestingAnimeServer = false
+
+        guard reachable else {
+            animeServerStatus = ("That URL does not seem quite right. The server did not respond.", true)
+            return
+        }
+        store.addOrUpdateAnimeServer(AnimeServer(name: name, base: url), replacing: editingAnimeIndex)
+        animeServerStatus = (editingAnimeIndex == nil ? "Anime server added" : "Anime server updated", false)
+        editingAnimeIndex = nil
+        newAnimeServerName = ""
+        newAnimeServerURL = ""
+        showToast("Anime servers updated")
+    }
+
+    // MARK: - Backup
+
+    private var backupSection: some View {
+        Section {
+            Button {
+                do {
+                    exportDocument = VelaBackupDocument(data: try store.exportBackup())
+                    isExporting = true
+                } catch {
+                    showToast("Couldn't create backup")
+                }
+            } label: {
+                Label("Export Vela Data", systemImage: "square.and.arrow.up")
+            }
+            Button {
+                isImporting = true
+            } label: {
+                Label("Import Vela Data", systemImage: "square.and.arrow.down")
+            }
+        } header: {
+            Text("Backup")
+        } footer: {
+            Text("Exports your TMDB key, favourites, watch history and timings, search history, servers and preferences to a file. The file contains your API key, so keep it private. Importing replaces everything on this device.")
+        }
+        .fileExporter(
+            isPresented: $isExporting,
+            document: exportDocument,
+            contentType: .json,
+            defaultFilename: "Vela Backup \(Date().formatted(.iso8601.year().month().day()))"
+        ) { result in
+            if case .success = result { showToast("Vela data exported") }
+            exportDocument = nil
+        }
+        .fileImporter(isPresented: $isImporting, allowedContentTypes: [.json]) { result in
+            if case .success(let url) = result {
+                pendingImportURL = url
+                showImportConfirm = true
+            }
+        }
+        .alert("Import Vela Data?", isPresented: $showImportConfirm) {
+            Button("Import", role: .destructive) { performImport() }
+            Button("Cancel", role: .cancel) { pendingImportURL = nil }
+        } message: {
+            Text("This replaces your current key, history, favourites and settings with the backup.")
+        }
+    }
+
+    private func performImport() {
+        guard let url = pendingImportURL else { return }
+        pendingImportURL = nil
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        do {
+            try store.importBackup(try Data(contentsOf: url))
+            credentialText = store.credential
+            showToast("Vela data imported")
+        } catch {
+            showToast("That file isn't a valid Vela backup")
+        }
+    }
+
     private func addOrUpdateServer() async {
         let name = newServerName.trimmingCharacters(in: .whitespaces)
         var url = newServerURL.trimmingCharacters(in: .whitespaces)
@@ -271,6 +441,23 @@ struct SettingsView: View {
         }
         store.credential = value
         showToast("TMDB key saved")
+    }
+}
+
+/// JSON backup file handed to `fileExporter`.
+struct VelaBackupDocument: FileDocument {
+    static var readableContentTypes: [UTType] { [.json] }
+    var data: Data
+
+    init(data: Data) { self.data = data }
+
+    init(configuration: ReadConfiguration) throws {
+        guard let data = configuration.file.regularFileContents else { throw CocoaError(.fileReadCorruptFile) }
+        self.data = data
+    }
+
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
+        FileWrapper(regularFileWithContents: data)
     }
 }
 
