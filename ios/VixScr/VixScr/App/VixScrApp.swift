@@ -114,6 +114,7 @@ extension Notification.Name {
 struct RootView: View {
     @Environment(TabRouter.self) private var router
     @Environment(AnimeViewModel.self) private var animeViewModel
+    @Environment(AppStore.self) private var store
     @Environment(\.glassFidelity) private var glassFidelity
 
     var body: some View {
@@ -129,8 +130,10 @@ struct RootView: View {
                     Tab("Home", systemImage: "house.fill", value: AppTab.home) {
                         HomeView()
                     }
-                    Tab("Anime", systemImage: "play.tv.fill", value: AppTab.anime) {
-                        AnimeView(viewModel: animeViewModel)
+                    if store.animeEnabled {
+                        Tab("Anime", systemImage: "play.tv.fill", value: AppTab.anime) {
+                            AnimeView(viewModel: animeViewModel)
+                        }
                     }
                     Tab("Favourites", systemImage: "heart.fill", value: AppTab.favorites) {
                         FavoritesView()
@@ -145,9 +148,11 @@ struct RootView: View {
                     HomeView()
                         .tabItem { Label("Home", systemImage: "house.fill") }
                         .tag(AppTab.home)
-                    AnimeView(viewModel: animeViewModel)
-                        .tabItem { Label("Anime", systemImage: "play.tv.fill") }
-                        .tag(AppTab.anime)
+                    if store.animeEnabled {
+                        AnimeView(viewModel: animeViewModel)
+                            .tabItem { Label("Anime", systemImage: "play.tv.fill") }
+                            .tag(AppTab.anime)
+                    }
                     FavoritesView()
                         .tabItem { Label("Favourites", systemImage: "heart.fill") }
                         .tag(AppTab.favorites)
@@ -168,6 +173,13 @@ struct RootView: View {
             // iOS 26, same as it does on iOS 17-25.
             .onChange(of: glassFidelity, initial: true) { _, fidelity in
                 applyBarAppearance(fidelity: fidelity)
+            }
+            // Leave the Anime tab if it is switched off.
+            .onChange(of: store.animeEnabled) { _, enabled in
+                if !enabled {
+                    if router.selection == .anime { router.selection = .home }
+                    animeViewModel.closePlayer()
+                }
             }
     }
 

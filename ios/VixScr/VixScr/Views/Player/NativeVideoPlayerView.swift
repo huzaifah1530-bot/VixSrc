@@ -32,8 +32,9 @@ struct NativeVideoPlayerView: View {
             PlayerSurface(playerManager: playerManager, isFullscreen: true, options: options) {
                 setFullscreen(false)
             }
+            // Video and controls stay inside the safe area so nothing sits
+            // under the Dynamic Island / notch; only the black fills edges.
             .background(Color.black.ignoresSafeArea())
-            .ignoresSafeArea()
             .statusBarHidden()
             .persistentSystemOverlays(.hidden)
             .preferredColorScheme(.dark)
@@ -71,6 +72,8 @@ private struct PlayerSurface: View {
     @GestureState private var holdingSide: Side?
     @State private var boostSide: Side?
     @State private var lastHoldEnded = Date.distantPast
+    @State private var showSpeedBadge = false
+    @State private var speedBadgeTask: Task<Void, Never>?
 
     enum Side { case left, right }
 
@@ -140,17 +143,22 @@ private struct PlayerSurface: View {
             if let side {
                 boostSide = side
                 playerManager.beginSpeedBoost()
+                // The 2x badge shows for 3s, then gets out of the way.
+                showSpeedBadge = true
+                speedBadgeTask?.cancel()
+                speedBadgeTask = Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 3_000_000_000)
+                    guard !Task.isCancelled else { return }
+                    showSpeedBadge = false
+                }
                 UIImpactFeedbackGenerator(style: .medium).impactOccurred()
             } else if boostSide != nil {
                 boostSide = nil
                 lastHoldEnded = Date()
                 playerManager.endSpeedBoost()
+                speedBadgeTask?.cancel()
+                showSpeedBadge = false
             }
-        }
-        .sheet(isPresented: $showCaptions) {
-            CaptionPicker(playerManager: playerManager)
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
         }
     }
 
@@ -262,7 +270,7 @@ private struct PlayerSurface: View {
     @ViewBuilder
     private var speedBadge: some View {
         VStack {
-            if playerManager.isSpeedBoosted {
+            if playerManager.isSpeedBoosted && showSpeedBadge {
                 HStack(spacing: 6) {
                     Text("2×")
                         .font(.subheadline.weight(.bold).monospacedDigit())
@@ -279,7 +287,7 @@ private struct PlayerSurface: View {
             }
             Spacer()
         }
-        .animation(.spring(response: 0.2, dampingFraction: 0.8), value: playerManager.isSpeedBoosted)
+        .animation(.spring(response: 0.25, dampingFraction: 0.65), value: playerManager.isSpeedBoosted && showSpeedBadge)
         .allowsHitTesting(false)
     }
 
@@ -343,6 +351,48 @@ private struct PlayerSurface: View {
         }
     }
 
+    private var captionsMenu: some View {
+        let captionsOn = playerManager.selectedSubtitleIndex != nil || playerManager.selectedExternalSubtitleIndex != nil
+        return Menu {
+            Section("Captions") {
+                Button {
+                    playerManager.selectSubtitle(at: nil)
+                    playerManager.selectExternalSubtitle(at: nil)
+                } label: {
+                    if !captionsOn { Label("Off", systemImage: "checkmark") } else { Text("Off") }
+                }
+                ForEach(Array(playerManager.subtitleOptions.enumerated()), id: \.offset) { index, option in
+                    Button {
+                        playerManager.selectSubtitle(at: index)
+                    } label: {
+                        if playerManager.selectedSubtitleIndex == index {
+                            Label(option.displayName, systemImage: "checkmark")
+                        } else {
+                            Text(option.displayName)
+                        }
+                    }
+                }
+                ForEach(Array(playerManager.externalSubtitles.enumerated()), id: \.offset) { index, track in
+                    Button {
+                        playerManager.selectExternalSubtitle(at: index)
+                    } label: {
+                        if playerManager.selectedExternalSubtitleIndex == index {
+                            Label(track.label, systemImage: "checkmark")
+                        } else {
+                            Text(track.label)
+                        }
+                    }
+                }
+            }
+        } label: {
+            GlassIcon(systemImage: captionsOn ? "captions.bubble.fill" : "captions.bubble", size: isFullscreen ? 44 : 36)
+        }
+        .accessibilityLabel("Captions")
+        .disabled(!playerManager.hasAnySubtitles)
+        .opacity(playerManager.hasAnySubtitles ? 1 : 0.4)
+        .simultaneousGesture(TapGesture().onEnded { reveal(autoHide: false) })
+    }
+
     @ViewBuilder private var optionMenus: some View {
         let size: CGFloat = isFullscreen ? 44 : 36
         if options.sources.count > 1 {
@@ -404,15 +454,7 @@ private struct PlayerSurface: View {
             }
             Spacer()
             optionMenus
-            GlassIconButton(systemImage: playerManager.selectedSubtitleIndex != nil || playerManager.selectedExternalSubtitleIndex != nil
-                            ? "captions.bubble.fill" : "captions.bubble",
-                            size: isFullscreen ? 44 : 36,
-                            label: "Captions") {
-                showCaptions = true
-                reveal(autoHide: true)
-            }
-            .disabled(!playerManager.hasAnySubtitles)
-            .opacity(playerManager.hasAnySubtitles ? 1 : 0.4)
+            captionsMenu
 
             GlassIconButton(systemImage: isFullscreen ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
                             size: isFullscreen ? 44 : 36,
@@ -494,19 +536,27 @@ private struct SkipButton: View {
     let seconds: Int
     let size: CGFloat
     let action: () -> Void
-    @State private var taps = 0
+    @State private var angle: Double = 0
+    @State private var pop = false
 
     var body: some View {
         Button {
-            taps += 1
+            // A full turn in the skip direction with a quick pop.
+            withAnimation(.spring(response: 0.42, dampingFraction: 0.72)) {
+                angle += forward ? 360 : -360
+            }
+            withAnimation(.spring(response: 0.16, dampingFraction: 0.5)) { pop = true }
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 140_000_000)
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.55)) { pop = false }
+            }
             action()
         } label: {
             Image(systemName: forward ? "goforward.\(seconds)" : "gobackward.\(seconds)")
                 .font(.system(size: size, weight: .medium))
                 .foregroundStyle(.white)
-                .symbolEffect(.bounce, value: taps)
-                .rotationEffect(.degrees(Double(taps % 2 == 0 ? 0 : (forward ? 20 : -20))))
-                .animation(.spring(response: 0.18, dampingFraction: 0.6), value: taps)
+                .rotationEffect(.degrees(angle))
+                .scaleEffect(pop ? 1.22 : 1)
                 .frame(width: size * 1.9, height: size * 1.9)
                 .contentShape(Circle())
         }

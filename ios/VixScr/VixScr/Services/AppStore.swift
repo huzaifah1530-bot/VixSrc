@@ -33,6 +33,7 @@ final class AppStore {
         static let animeServers = "vixsrc_live_anime_servers"
         static let animeSearchHistory = "vixsrc_live_anime_search_history"
         static let seekInterval = "vixsrc_live_seek_interval"
+        static let animeEnabled = "vixsrc_live_anime_enabled"
     }
 
     /// Optional built-in credential. The Electron app hardcodes one directly
@@ -150,6 +151,21 @@ final class AppStore {
         }
     }
 
+    /// Shows the Anime tab and enables anime servers. On by default.
+    @ObservationIgnored private var storedAnimeEnabled: Bool
+    var animeEnabled: Bool {
+        get {
+            access(keyPath: \.animeEnabled)
+            return storedAnimeEnabled
+        }
+        set {
+            withMutation(keyPath: \.animeEnabled) {
+                storedAnimeEnabled = newValue
+                defaults.set(newValue, forKey: Keys.animeEnabled)
+            }
+        }
+    }
+
     @ObservationIgnored private var storedCardSize: CardSize
     var cardSize: CardSize {
         get {
@@ -254,6 +270,7 @@ final class AppStore {
         self.storedContentFilter = ContentFilter(rawValue: defaults.string(forKey: Keys.contentFilter) ?? "all") ?? .all
         self.storedSearchHistory = defaults.stringArray(forKey: Keys.searchHistory) ?? []
         self.storedAnimeSearchHistory = defaults.stringArray(forKey: Keys.animeSearchHistory) ?? []
+        self.storedAnimeEnabled = defaults.object(forKey: Keys.animeEnabled) as? Bool ?? true
         let savedSeek = defaults.integer(forKey: Keys.seekInterval)
         self.storedSeekInterval = AppStore.seekIntervalOptions.contains(savedSeek) ? savedSeek : 10
         self.storedCardSize = CardSize(rawValue: defaults.string(forKey: Keys.cardSize) ?? "large") ?? .large
@@ -398,6 +415,7 @@ final class AppStore {
         var searchHistory: [String]
         var animeSearchHistory: [String]?
         var seekInterval: Int?
+        var animeEnabled: Bool?
         var servers: [StreamServer]
         var animeServers: [AnimeServer]
         var contentFilter: String
@@ -415,6 +433,7 @@ final class AppStore {
             searchHistory: searchHistory,
             animeSearchHistory: animeSearchHistory,
             seekInterval: seekInterval,
+            animeEnabled: animeEnabled,
             servers: servers,
             animeServers: animeServers,
             contentFilter: contentFilter.rawValue,
@@ -440,6 +459,7 @@ final class AppStore {
         watchProgress = backup.watchProgress
         searchHistory = backup.searchHistory
         animeSearchHistory = backup.animeSearchHistory ?? []
+        animeEnabled = backup.animeEnabled ?? true
         if let seek = backup.seekInterval, AppStore.seekIntervalOptions.contains(seek) { seekInterval = seek }
         servers = backup.servers.isEmpty ? StreamServer.defaults : backup.servers
         animeServers = backup.animeServers

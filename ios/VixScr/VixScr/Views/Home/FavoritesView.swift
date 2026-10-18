@@ -69,6 +69,7 @@ struct FavoritesView: View {
     private func open(_ item: MediaItem) async {
         // Anime-tab titles play in the Anime tab's player.
         if item.isAnimeCatalog {
+            guard store.animeEnabled else { return }
             router.selection = .anime
             animeViewModel.open(item)
             return

@@ -35,7 +35,10 @@ struct SettingsView: View {
                 cardSizeSection
                 playerSection
                 serverManagementSection
+                animeToggleSection
                 animeServerSection
+                    .disabled(!store.animeEnabled)
+                    .opacity(store.animeEnabled ? 1 : 0.45)
                 backupSection
                 searchHistorySection
                 aboutSection
@@ -248,6 +251,17 @@ struct SettingsView: View {
     }
 
     // MARK: - Anime servers
+
+    private var animeToggleSection: some View {
+        Section {
+            Toggle("Anime", isOn: Binding(
+                get: { store.animeEnabled },
+                set: { store.animeEnabled = $0 }
+            ))
+        } footer: {
+            Text("Shows the Anime tab. Turn off to hide it and disable anime servers.")
+        }
+    }
 
     private var animeServerSection: some View {
         Section {
