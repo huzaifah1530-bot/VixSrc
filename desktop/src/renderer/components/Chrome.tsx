@@ -135,7 +135,7 @@ export function Sidebar() {
         {items.map(i => (
           <button key={i.label} className={cx('sidebar-item', section === i.route.name && 'is-active')} aria-current={section === i.route.name ? 'page' : undefined}
             title={collapsed ? i.label : undefined}
-            onClick={() => { if (section !== i.route.name) setQuery(''); root(i.route) }}>
+            onClick={() => { setQuery(''); root(i.route); document.querySelector('.content')?.scrollTo({ top: 0, behavior: 'smooth' }) }}>
             <Icon name={i.icon} size={16} fill={section === i.route.name} />
             {!collapsed && <span>{i.label}</span>}
           </button>
