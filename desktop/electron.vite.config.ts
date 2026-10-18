@@ -4,7 +4,8 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
+    // @noble/ciphers is ESM-only, so it's bundled rather than required.
+    plugins: [externalizeDepsPlugin({ exclude: ['@noble/ciphers'] })],
     resolve: { alias: { '@shared': resolve('src/shared') } }
   },
   preload: {

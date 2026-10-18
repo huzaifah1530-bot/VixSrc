@@ -30,7 +30,9 @@ const paths: Record<string, string> = {
   star: 'M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8L3.5 9.7l5.9-.9z',
   film: 'M4 4h16v16H4zM8 4v16M16 4v16M4 8h4M4 12h4M4 16h4M16 8h4M16 12h4M16 16h4',
   tv: 'M3 6h18v12H3zM8 21h8M12 18v3',
-  clock: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7v5l3 2'
+  clock: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7v5l3 2',
+  phone: 'M8 2.5h8a1.5 1.5 0 0 1 1.5 1.5v16a1.5 1.5 0 0 1-1.5 1.5H8A1.5 1.5 0 0 1 6.5 20V4A1.5 1.5 0 0 1 8 2.5zM10.5 18.5h3',
+  sync: 'M20 8a8 8 0 0 0-14.3-2.4L4 7.5M4 3.5v4h4M4 16a8 8 0 0 0 14.3 2.4L20 16.5M20 20.5v-4h-4'
 }
 
 export type IconName = keyof typeof paths

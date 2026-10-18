@@ -31,6 +31,7 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 credentialSection
+                devicesSection
                 performanceSection
                 cardSizeSection
                 playerSection
@@ -99,6 +100,23 @@ struct SettingsView: View {
             Text("TMDB API Key")
         } footer: {
             Text("VixSrc is currently the only streaming API we've tested that doesn't display ads. You can add your own APIs below. The app blocks pop-ups and redirects, but this may not work with untested APIs.")
+        }
+    }
+
+    private var devicesSection: some View {
+        Section {
+            NavigationLink {
+                DevicesView()
+            } label: {
+                HStack {
+                    Label("Devices", systemImage: "desktopcomputer")
+                    Spacer()
+                    Text(DeviceLink.shared.connectedDesktop?.name ?? (DeviceLink.shared.paired.isEmpty ? "Connect" : "Not connected"))
+                        .foregroundStyle(.secondary)
+                }
+            }
+        } footer: {
+            Text("Pair with Vela on your computer to play there from this iPhone and keep your library in sync.")
         }
     }
 

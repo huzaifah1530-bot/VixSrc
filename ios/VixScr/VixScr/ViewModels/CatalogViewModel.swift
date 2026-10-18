@@ -572,10 +572,28 @@ final class CatalogViewModel {
         showToast("Switched to \(currentServerName)")
     }
 
-    /// Builds the stream for the selected movie / episode on the current server.
-    private func startPlaybackForCurrentSelection() {
+    /// Builds the stream for the selected movie / episode on the current
+    /// server, or hands it to the paired computer when that's the target.
+    func startPlaybackForCurrentSelection() {
         guard let item = selected else { return }
         rejectedNativeStreamURLs.removeAll()
+        if DeviceLink.shared.routesPlayback {
+            if item.type == .tv && (selectedSeason == nil || selectedEpisode == nil) { return }
+            streamResolutionTask?.cancel()
+            isResolvingStream = false
+            playerManager.cleanup()
+            currentStreamURL = nil
+            currentNativeVideoURL = nil
+            nativeSources = []
+            var extra: [String: Any] = ["server": activeServer?.name ?? ""]
+            if item.type == .tv, let season = selectedSeason, let episode = selectedEpisode {
+                extra["season"] = season.seasonNumber
+                extra["episode"] = episode.episodeNumber
+                extra["episodeTitle"] = episode.name ?? ""
+            }
+            DeviceLink.shared.playOnDesktop("play-tmdb", item: item, extra: extra)
+            return
+        }
         if item.type == .movie {
             currentStreamURL = activeServer?.movieURL(tmdbId: item.tmdbId)
         } else if let season = selectedSeason, let episode = selectedEpisode {
@@ -587,6 +605,10 @@ final class CatalogViewModel {
     }
 
     func reloadPlayer() {
+        if DeviceLink.shared.routesPlayback {
+            startPlaybackForCurrentSelection()
+            return
+        }
         let url = currentStreamURL
         rejectedNativeStreamURLs.removeAll()
         currentStreamURL = nil

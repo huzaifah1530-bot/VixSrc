@@ -12,6 +12,7 @@ import { useSettings } from '@/stores/settings'
 import { captionAt, parseVtt, type Cue } from '@/lib/vtt'
 import { cx, formatTime } from '@/lib/format'
 import { imageUrl } from '@/lib/tmdb'
+import { registerPlayer } from '@/lib/remote'
 
 type Caption = { kind: 'off' } | { kind: 'external'; index: number } | { kind: 'hls'; index: number }
 
@@ -158,6 +159,19 @@ export function Player() {
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {})
     usePlayer.getState().close()
   }, [save])
+
+  // Lets a paired phone drive this player (see lib/remote.ts).
+  useEffect(() => registerPlayer({
+    state: () => {
+      const v = video.current
+      return v && v.readyState > 0 ? { position: v.currentTime, duration: Number.isFinite(v.duration) ? v.duration : 0, playing: !v.paused && !v.ended } : null
+    },
+    play: () => { video.current?.play().catch(() => {}) },
+    pause: () => video.current?.pause(),
+    toggle,
+    seek: to => { const v = video.current; if (v) v.currentTime = Math.max(0, Math.min(to, (v.duration || to + 1) - 0.5)) },
+    skip: by => { const v = video.current; if (v) v.currentTime = Math.max(0, Math.min(v.currentTime + by, (v.duration || Infinity) - 0.5)) }
+  }), [toggle])
 
   useEffect(() => {
     const onFs = () => setFullscreen(!!document.fullscreenElement)

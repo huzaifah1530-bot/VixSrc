@@ -12,6 +12,9 @@ struct PlayerSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(.hidden, for: .navigationBar)
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    PlaybackTargetMenu { viewModel.startPlaybackForCurrentSelection() }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         viewModel.closePlayer()
@@ -35,6 +38,8 @@ struct PlayerSheet: View {
             }
         }
         .animation(.easeOut(duration: 0.25), value: viewModel.toastMessage)
+        // Link prompts must come from the front-most presentation.
+        .deviceLinkPrompts()
         .preferredColorScheme(.dark)
     }
 
@@ -143,7 +148,11 @@ struct PlayerSheet: View {
     private var playerFrame: some View {
         ZStack {
             Group {
-                if viewModel.currentNativeVideoURL != nil {
+                if DeviceLink.shared.routesPlayback {
+                    RemotePlayerView(poster: viewModel.selected?.backdropURL ?? viewModel.selected?.posterURL) {
+                        viewModel.startPlaybackForCurrentSelection()
+                    }
+                } else if viewModel.currentNativeVideoURL != nil {
                     NativeVideoPlayerView(
                         playerManager: viewModel.playerManager,
                         onPlaybackFailure: {

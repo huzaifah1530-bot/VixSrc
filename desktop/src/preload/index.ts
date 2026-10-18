@@ -32,8 +32,23 @@ const api: VelaApi = {
   saveFile: (name, contents) => ipcRenderer.invoke('save-file', name, contents),
   openFile: () => ipcRenderer.invoke('open-file'),
   openExternal: url => ipcRenderer.send('open-external', url),
+  link: {
+    status: () => ipcRenderer.invoke('link:status'),
+    startPairing: () => ipcRenderer.invoke('link:start-pairing'),
+    cancelPairing: () => ipcRenderer.send('link:cancel-pairing'),
+    disconnect: d => ipcRenderer.send('link:disconnect', d),
+    forget: d => ipcRenderer.send('link:forget', d),
+    update: (d, patch) => ipcRenderer.send('link:update', d, patch),
+    send: (d, msg) => ipcRenderer.send('link:send', d, msg),
+    action: (a, d) => ipcRenderer.send('link:action', a, d)
+  },
+  embed: {
+    state: () => ipcRenderer.invoke('embed:state'),
+    control: (a, v) => ipcRenderer.invoke('embed:control', a, v ?? 0)
+  },
+  showMainWindow: () => ipcRenderer.send('win:show-main'),
   on: ((channel: string, cb: (v: unknown) => void) => {
-    const allowed = ['open-tmdb-id', 'menu', 'update-check-result', 'update-download-progress', 'embed-sniffed', 'maximized']
+    const allowed = ['open-tmdb-id', 'menu', 'update-check-result', 'update-download-progress', 'embed-sniffed', 'maximized', 'link']
     if (!allowed.includes(channel)) return () => {}
     const listener = (_e: unknown, v: unknown) => cb(v)
     ipcRenderer.on(channel, listener)

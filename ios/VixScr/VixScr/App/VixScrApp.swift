@@ -21,6 +21,7 @@ struct VelaApp: App {
 
     init() {
         let store = AppStore()
+        DeviceLink.shared.attach(store: store)
         _store = State(initialValue: store)
         _animeViewModel = State(initialValue: AnimeViewModel(store: store))
     }
@@ -116,6 +117,7 @@ struct RootView: View {
     @Environment(AnimeViewModel.self) private var animeViewModel
     @Environment(AppStore.self) private var store
     @Environment(\.glassFidelity) private var glassFidelity
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         @Bindable var router = router
@@ -174,6 +176,16 @@ struct RootView: View {
             .onChange(of: glassFidelity, initial: true) { _, fidelity in
                 applyBarAppearance(fidelity: fidelity)
             }
+            // iOS suspends background apps, so the computer link closes when
+            // we leave and reconnects when we come back.
+            .onChange(of: scenePhase, initial: true) { _, phase in
+                switch phase {
+                case .active: DeviceLink.shared.appBecameActive()
+                case .background: DeviceLink.shared.appEnteredBackground()
+                default: break
+                }
+            }
+            .deviceLinkPrompts()
             // Leave the Anime tab if it is switched off.
             .onChange(of: store.animeEnabled) { _, enabled in
                 if !enabled {

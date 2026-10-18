@@ -19,6 +19,9 @@ import Observation
 final class AppStore {
     @ObservationIgnored private let defaults: UserDefaults
 
+    /// Called after any value the device link syncs changes (SyncEngine).
+    @ObservationIgnored var onSyncableChange: (() -> Void)?
+
     enum Keys {
         static let credential = "vixsrc_live_tmdb_credential"
         static let favorites = "vixsrc_live_favorites"
@@ -61,6 +64,7 @@ final class AppStore {
             withMutation(keyPath: \.credential) {
                 storedCredential = newValue
                 defaults.set(newValue, forKey: Keys.credential)
+                onSyncableChange?()
             }
         }
     }
@@ -75,6 +79,7 @@ final class AppStore {
             withMutation(keyPath: \.favorites) {
                 storedFavorites = newValue
                 save(newValue, key: Keys.favorites)
+                onSyncableChange?()
             }
         }
     }
@@ -89,6 +94,7 @@ final class AppStore {
             withMutation(keyPath: \.recents) {
                 storedRecents = newValue
                 save(newValue, key: Keys.recents)
+                onSyncableChange?()
             }
         }
     }
@@ -117,6 +123,7 @@ final class AppStore {
             withMutation(keyPath: \.searchHistory) {
                 storedSearchHistory = newValue
                 defaults.set(newValue, forKey: Keys.searchHistory)
+                onSyncableChange?()
             }
         }
     }
@@ -131,6 +138,7 @@ final class AppStore {
             withMutation(keyPath: \.animeSearchHistory) {
                 storedAnimeSearchHistory = newValue
                 defaults.set(newValue, forKey: Keys.animeSearchHistory)
+                onSyncableChange?()
             }
         }
     }
@@ -147,6 +155,7 @@ final class AppStore {
             withMutation(keyPath: \.seekInterval) {
                 storedSeekInterval = newValue
                 defaults.set(newValue, forKey: Keys.seekInterval)
+                onSyncableChange?()
             }
         }
     }
@@ -162,6 +171,7 @@ final class AppStore {
             withMutation(keyPath: \.animeEnabled) {
                 storedAnimeEnabled = newValue
                 defaults.set(newValue, forKey: Keys.animeEnabled)
+                onSyncableChange?()
             }
         }
     }
@@ -218,6 +228,7 @@ final class AppStore {
             withMutation(keyPath: \.servers) {
                 storedServers = newValue
                 save(newValue, key: Keys.servers)
+                onSyncableChange?()
             }
         }
     }
@@ -232,6 +243,7 @@ final class AppStore {
             withMutation(keyPath: \.animeServers) {
                 storedAnimeServers = newValue
                 save(newValue, key: Keys.animeServers)
+                onSyncableChange?()
             }
         }
     }
@@ -246,6 +258,7 @@ final class AppStore {
             withMutation(keyPath: \.watchProgress) {
                 storedWatchProgress = newValue
                 save(newValue, key: Keys.watchProgress)
+                onSyncableChange?()
             }
         }
     }

@@ -44,6 +44,14 @@
 		<key>UIApplicationSupportsMultipleScenes</key>
 		<false/>
 	</dict>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Vela finds and connects to Vela on your computer over your local network so you can play there and keep your library in sync.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_vixscr._tcp</string>
+	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>Vela uses the camera to scan the pairing code shown on your computer.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>

@@ -142,4 +142,20 @@ export interface VelaApi {
   on(channel: 'update-download-progress', cb: (f: number) => void): () => void
   on(channel: 'embed-sniffed', cb: (s: SniffedStream) => void): () => void
   on(channel: 'maximized', cb: (m: boolean) => void): () => void
+  on(channel: 'link', cb: (e: import('./link').LinkEvent) => void): () => void
+  link: {
+    status(): Promise<import('./link').LinkStatus | null>
+    startPairing(): Promise<import('./link').LinkStatus | null>
+    cancelPairing(): void
+    disconnect(deviceId: string): void
+    forget(deviceId: string): void
+    update(deviceId: string, patch: { syncEnabled?: boolean; autoReconnect?: boolean; lastSync?: number }): void
+    send(deviceId: string | null, msg: Record<string, unknown>): void
+    action(action: 'sync-now' | 'fresh-copy-to' | 'fresh-copy-from', deviceId: string): void
+  }
+  embed: {
+    state(): Promise<{ position: number; duration: number; playing: boolean } | null>
+    control(action: 'play' | 'pause' | 'toggle' | 'seek' | 'skip', value?: number): Promise<boolean>
+  }
+  showMainWindow(): void
 }

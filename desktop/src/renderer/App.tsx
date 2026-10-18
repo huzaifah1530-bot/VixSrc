@@ -14,6 +14,8 @@ import { usePlayer } from './stores/player'
 import { exportBackup, importBackup } from './lib/backup'
 import { normalize, tmdb, type RawTmdbItem } from './lib/tmdb'
 import { cx } from './lib/format'
+import { ConnectDialog, OfferDialog } from './features/devices/DeviceDialogs'
+import { startLinkClient } from './stores/link'
 
 function runCommand(cmd: MenuCommand) {
   const nav = useNav.getState()
@@ -68,6 +70,8 @@ export function App() {
     if (!animeEnabled && (route.name === 'anime' || route.name === 'anime-details')) useNav.getState().root({ name: 'home' })
   }, [animeEnabled, route.name])
 
+  useEffect(() => startLinkClient(), [])
+
   useEffect(() => {
     const offs = [
       window.vela.on('menu', runCommand),
@@ -108,6 +112,8 @@ export function App() {
         </div>
       </div>
       {playerOpen && <Player />}
+      <ConnectDialog />
+      <OfferDialog />
       <ContextMenuHost />
       <Toast />
     </div>

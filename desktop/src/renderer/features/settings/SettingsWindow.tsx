@@ -11,12 +11,14 @@ import { exportBackup, importBackup } from '@/lib/backup'
 import { toast } from '@/stores/ui'
 import { cx, uuid } from '@/lib/format'
 import type { UpdateCheckResult } from '@shared/types'
+import { startLinkStatus, useLink } from '@/stores/link'
 
-type Pane = 'general' | 'servers' | 'anime' | 'data'
+type Pane = 'general' | 'servers' | 'anime' | 'devices' | 'data'
 const panes: { id: Pane; label: string; icon: IconName }[] = [
   { id: 'general', label: 'General', icon: 'gear' },
   { id: 'servers', label: 'Servers', icon: 'server' },
   { id: 'anime', label: 'Anime', icon: 'sparkles' },
+  { id: 'devices', label: 'Devices', icon: 'phone' },
   { id: 'data', label: 'Data', icon: 'clock' }
 ]
 
@@ -50,6 +52,7 @@ export function SettingsWindow() {
         {pane === 'general' && <General />}
         {pane === 'servers' && <Servers kind="regular" />}
         {pane === 'anime' && <AnimePane />}
+        {pane === 'devices' && <DevicesPane />}
         {pane === 'data' && <DataPane />}
       </main>
       <Toast />
@@ -205,6 +208,67 @@ function DataPane() {
             ? <><button className="btn small danger" onClick={() => { replaceAll({ recents: [], watchProgress: [] }); setConfirm(false); toast('History cleared') }}>Clear history</button><button className="btn small" onClick={() => setConfirm(false)}>Cancel</button></>
             : <button className="btn small" onClick={() => setConfirm(true)}>Clear…</button>}
         </Field>
+      </Group>
+    </>
+  )
+}
+
+function DevicesPane() {
+  const status = useLink(s => s.status)
+  const [confirm, setConfirm] = useState<{ id: string; dir: 'to' | 'from' } | null>(null)
+  const [forget, setForget] = useState<string | null>(null)
+  useEffect(() => startLinkStatus(), [])
+  const ago = (t: number | null) => {
+    if (!t) return 'never'
+    const m = Math.round((Date.now() - t) / 60000)
+    return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : new Date(t).toLocaleDateString()
+  }
+  return (
+    <>
+      <Group title="This PC" footer="Vela listens on your local network while it’s open. Your iPhone finds it automatically; nothing goes through the internet. Windows may ask to allow Vela through the firewall on private networks.">
+        <Field label={status?.deskName ?? '…'} hint={status ? (status.listening ? `Listening on ${status.addresses.join(', ') || 'no network'} · port ${status.port}` : status.error ?? 'Starting…') : undefined}>
+          <button className="btn btn-primary small" onClick={() => { window.vela.showMainWindow(); window.vela.link.startPairing().then(() => window.vela.window.close()) }}>Connect iPhone…</button>
+        </Field>
+      </Group>
+      <Group title="Paired devices" footer="Turning sync off keeps the pairing. Forgetting a device means it has to scan a new code; data already copied stays on this PC.">
+        {!status?.devices.length && <div className="form-row"><span className="muted">No paired devices yet.</span></div>}
+        {status?.devices.map(d => (
+          <div key={d.deviceId}>
+            <div className="form-row">
+              <div>
+                <div className="device-status">
+                  <span className={cx('server-dot', d.connected && 'ok')} aria-hidden="true" />
+                  {d.name}
+                  {d.syncEnabled && <span className="device-badge">SYNC</span>}
+                </div>
+                <div className="form-hint">{d.connected ? 'Connected' : `Last seen ${ago(d.lastSeen)}`} · {d.syncEnabled ? `Synced ${ago(d.lastSync)}` : 'Sync off'}</div>
+              </div>
+              <div className="form-control">
+                {d.connected && <button className="btn small" onClick={() => window.vela.link.disconnect(d.deviceId)}>Disconnect</button>}
+                {forget === d.deviceId
+                  ? <><button className="btn small danger" onClick={() => { window.vela.link.forget(d.deviceId); setForget(null) }}>Forget</button><button className="btn small" onClick={() => setForget(null)}>Cancel</button></>
+                  : <button className="btn small" onClick={() => setForget(d.deviceId)}>Forget…</button>}
+              </div>
+            </div>
+            <Field label="Keep saved data in sync"><Toggle label={`Sync with ${d.name}`} checked={d.syncEnabled} onChange={v => window.vela.link.update(d.deviceId, { syncEnabled: v })} /></Field>
+            <Field label="Allow automatic reconnect" hint="When off, the phone has to connect from its Devices screen"><Toggle label="Automatic reconnect" checked={d.autoReconnect} onChange={v => window.vela.link.update(d.deviceId, { autoReconnect: v })} /></Field>
+            <Field label="Copy saved data" hint={d.connected ? 'Replaces the other device’s data with a fresh copy' : 'Connect the phone first'}>
+              {confirm?.id === d.deviceId ? (
+                <>
+                  <span className="form-hint">{confirm.dir === 'from' ? 'Replace this PC’s data?' : `${d.name} will ask to confirm`}</span>
+                  <button className="btn small btn-primary" onClick={() => { window.vela.link.action(confirm.dir === 'to' ? 'fresh-copy-to' : 'fresh-copy-from', d.deviceId); setConfirm(null) }}>Copy</button>
+                  <button className="btn small" onClick={() => setConfirm(null)}>Cancel</button>
+                </>
+              ) : (
+                <>
+                  <button className="btn small" disabled={!d.connected} onClick={() => setConfirm({ id: d.deviceId, dir: 'to' })}>This PC → {d.name}</button>
+                  <button className="btn small" disabled={!d.connected} onClick={() => setConfirm({ id: d.deviceId, dir: 'from' })}>{d.name} → This PC</button>
+                </>
+              )}
+            </Field>
+            <Field label="Sync now"><button className="btn small" disabled={!d.connected || !d.syncEnabled} onClick={() => { window.vela.link.action('sync-now', d.deviceId); toast('Syncing…') }}><Icon name="sync" size={12} />Sync now</button></Field>
+          </div>
+        ))}
       </Group>
     </>
   )

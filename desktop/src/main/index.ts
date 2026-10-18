@@ -7,6 +7,9 @@ import { resolveStreams } from './resolvers/streams'
 import * as anime from './resolvers/animekai'
 import { applyUpdate, checkForUpdate } from './updater'
 import { getResponse, getText, DESKTOP_UA } from './http'
+import { LinkServer } from './link/server'
+import { embedControl, embedState } from './link/embedBridge'
+import type { LinkEvent } from '@shared/link'
 
 const DEFAULT_TMDB_CREDENTIAL = 'ce5e1892fe2fdf9006a6b4dfabe1fea4'
 const PROTOCOLS = ['vela', 'vixscr'] // vixscr:// kept so old links still open
@@ -27,6 +30,18 @@ app.setName('Vela')
 let mainWindow: BrowserWindow | null = null
 let settingsWindow: BrowserWindow | null = null
 let pendingId: string | null = null
+let link: LinkServer | null = null
+
+/** Link events go to every window; messages/actions only to the main one. */
+function emitLink(e: LinkEvent) {
+  const mainOnly = e.type === 'message' || e.type === 'action' || e.type === 'connected' || e.type === 'paired'
+  for (const w of [mainWindow, settingsWindow]) {
+    if (!w || w.isDestroyed()) continue
+    if (mainOnly && w !== mainWindow) { if (e.type !== 'paired') continue }
+    w.webContents.send('link', e)
+  }
+  if (e.type === 'pair-request' && mainWindow) { if (mainWindow.isMinimized()) mainWindow.restore(); mainWindow.show(); mainWindow.focus() }
+}
 
 function extractId(argv: string[]) {
   for (const arg of argv) {
@@ -175,6 +190,26 @@ function registerIpc() {
     const r = await dialog.showOpenDialog(w!, { properties: ['openFile'], filters: [{ name: 'Vela Backup', extensions: ['json'] }] })
     return r.canceled || !r.filePaths[0] ? null : readFileSync(r.filePaths[0], 'utf8')
   })
+  // ── Device link ─────────────────────────────────────────────────────
+  const id = (v: unknown) => (typeof v === 'string' && v.length <= 64 ? v : '')
+  ipcMain.handle('link:status', () => link?.status() ?? null)
+  ipcMain.handle('link:start-pairing', () => link?.startPairing() ?? null)
+  ipcMain.on('link:cancel-pairing', () => link?.cancelPairing())
+  ipcMain.on('link:disconnect', (_e, d) => link?.disconnect(id(d)))
+  ipcMain.on('link:forget', (_e, d) => link?.forget(id(d)))
+  ipcMain.on('link:update', (_e, d, patch) => { if (patch && typeof patch === 'object') link?.update(id(d), patch) })
+  ipcMain.on('link:send', (e, d, msg) => {
+    // Only the main window speaks for the app (commands, state, sync).
+    if (e.sender !== mainWindow?.webContents || !msg || typeof msg !== 'object') return
+    link?.send(d === null ? null : id(d), msg)
+  })
+  ipcMain.on('link:action', (_e, action, d) => {
+    if (['sync-now', 'fresh-copy-to', 'fresh-copy-from'].includes(action)) emitLink({ type: 'action', action, deviceId: id(d) })
+  })
+  ipcMain.handle('embed:state', () => embedState())
+  ipcMain.handle('embed:control', (_e, action: string, value: number) => embedControl(String(action), Number(value)))
+  ipcMain.on('win:show-main', () => { if (mainWindow) { if (mainWindow.isMinimized()) mainWindow.restore(); mainWindow.show() } })
+
   ipcMain.on('open-external', (_e, url: string) => { if (/^https:\/\//.test(url)) shell.openExternal(url) })
 }
 
@@ -199,6 +234,12 @@ if (!app.requestSingleInstanceLock()) {
     registerIpc()
     pendingId = extractId(launchArgs(process.argv))
     createMainWindow()
+    link = new LinkServer(emitLink)
+    link.start()
+    // Dev-only hook for scripts/phone-sim.ts: publish a pairing link to a file.
+    if (!app.isPackaged && process.env.VELA_LINK_TEST) {
+      setTimeout(() => link?.startPairing().then(s => s.pairing && writeFileSync(process.env.VELA_LINK_TEST!, s.pairing.link)), 3000)
+    }
 
     checkForUpdate()
       .then(r => mainWindow?.webContents.send('update-check-result', r))
@@ -206,4 +247,5 @@ if (!app.requestSingleInstanceLock()) {
   })
 
   app.on('window-all-closed', () => app.quit())
+  app.on('before-quit', () => link?.stop())
 }

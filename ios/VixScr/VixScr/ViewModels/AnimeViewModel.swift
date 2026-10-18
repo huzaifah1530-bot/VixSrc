@@ -245,6 +245,14 @@ final class AnimeViewModel {
         store.addRecent(item, season: 1, episode: episode.intNumber, episodeTitle: episode.title == "Episode \(episode.number)" ? nil : episode.title)
         playerManager.setNowPlayingMetadata(title: item.title, subtitle: nowPlayingSubtitle, artworkURL: item.posterURL)
         resetPlayback()
+        if DeviceLink.shared.routesPlayback {
+            // The computer looks the show up in its own anime catalogue.
+            let slug = slugsByServer[0] ?? item.animeSlug ?? ""
+            DeviceLink.shared.playOnDesktop("play-anime", item: item, extra: [
+                "slug": slug, "episode": episode.number, "server": server.name
+            ])
+            return
+        }
         isResolvingStream = true
         statusMessage = "Loading episode \(episode.number)…"
         let progressKey = currentProgressID
@@ -272,6 +280,12 @@ final class AnimeViewModel {
     /// same episode number is played.
     func switchServer(to index: Int) {
         guard store.animeServers.indices.contains(index), index != currentServerIndex, let item = selected else { return }
+        if DeviceLink.shared.routesPlayback {
+            // The computer finds the show on the other site itself.
+            currentServerIndex = index
+            DeviceLink.shared.command("server", ["name": store.animeServers[index].name, "index": index])
+            return
+        }
         let resume = selectedEpisode?.intNumber
         currentServerIndex = index
         details = nil
@@ -344,6 +358,11 @@ final class AnimeViewModel {
             currentNativeVideoURL = nil
             statusMessage = "None of the streams would play. Try another server."
         }
+    }
+
+    /// Re-runs the current episode on whichever device is now the target.
+    func replayOnCurrentTarget() {
+        if let episode = selectedEpisode { selectEpisode(episode) }
     }
 
     func reload() {

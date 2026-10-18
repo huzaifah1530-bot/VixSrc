@@ -6,6 +6,7 @@ import { useNav, useSearch, useRefresh, type Route } from '@/stores/ui'
 import { useSettings, type ContentFilter } from '@/stores/settings'
 import { useLibrary } from '@/stores/library'
 import { cx } from '@/lib/format'
+import { useLink } from '@/stores/link'
 
 /** Greys the traffic lights only when the window itself is inactive, like macOS. */
 export function useWindowFocusClass() {
@@ -82,9 +83,21 @@ export function Toolbar() {
           )}
         </div>
       )}
+      <ConnectButton />
       <button className="tb-btn" aria-label="Refresh" title="Refresh (Ctrl+R)" onClick={bump}><Icon name="refresh" /></button>
       <button className="tb-btn" aria-label="Menu" title="Menu" onClick={e => { const r = e.currentTarget.getBoundingClientRect(); window.vela.window.popupMenu(r.left, r.bottom + 6) }}><Icon name="ellipsis" stroke={3} /></button>
     </header>
+  )
+}
+
+function ConnectButton() {
+  const status = useLink(s => s.status)
+  const live = (status?.devices ?? []).filter(d => d.connected)
+  const label = live.length ? `Connected to ${live.map(d => d.name).join(', ')}` : 'Connect iPhone'
+  return (
+    <button className={cx('tb-btn', live.length > 0 && 'is-linked')} aria-label={label} title={label} onClick={() => useLink.getState().openConnect()}>
+      <Icon name="phone" />
+    </button>
   )
 }
 
