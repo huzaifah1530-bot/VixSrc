@@ -4,7 +4,7 @@ const base = process.argv[2] ?? 'ws://127.0.0.1:8787'
 const room = 'TESTROOM' + Math.random().toString(36).slice(2, 8)
 
 function open(peer) {
-  const ws = new WebSocket(`${base}/room/${room}?peer=${peer}`)
+  const ws = new WebSocket(`${base}/room/${room}?peer=${peer}&s=secret-for-${peer}`)
   const q = [], waiters = []
   ws.onmessage = e => { const m = e.data === 'pong' ? { pong: true } : JSON.parse(e.data); const w = waiters.shift(); w ? w(m) : q.push(m) }
   const next = (ms = 4000) => q.length ? Promise.resolve(q.shift()) : new Promise((res, rej) => { const t = setTimeout(() => rej(new Error(peer + ' timeout')), ms); waiters.push(m => { clearTimeout(t); res(m) }) })
@@ -39,4 +39,7 @@ c.send('ping'); assert.equal((await c.next()).pong, true); console.log('ok auto-
 c.ws.close(); assert.equal((await a.next()).sys, 'leave'); console.log('ok leave announced')
 
 a.send({ d: 'x'.repeat(20000) }); await assert.rejects(b.next(600)); console.log('ok oversized message dropped')
+const thief = new WebSocket(`${base}/room/${room}?peer=peerAAAA&s=not-the-real-secret-xx`)
+const stolen = await new Promise(res => { thief.onopen = () => res(true); thief.onerror = () => res(false); thief.onclose = () => res(false) })
+assert.equal(stolen, false); console.log('ok another device cannot take an existing peer id')
 console.log('\nrelay smoke test passed'); process.exit(0)

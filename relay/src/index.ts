@@ -31,6 +31,8 @@ export default {
       if (req.headers.get('Upgrade')?.toLowerCase() !== 'websocket') return new Response('Expected WebSocket', { status: 426 })
       const peer = url.searchParams.get('peer') ?? ''
       if (!PEER_ID.test(peer)) return new Response('Bad peer id', { status: 400 })
+      const secret = url.searchParams.get('s') ?? ''
+      if (secret.length < 16 || secret.length > 128) return new Response('Bad peer secret', { status: 400 })
       return env.ROOMS.get(env.ROOMS.idFromName(parts[1])).fetch(req)
     }
 
@@ -67,10 +69,19 @@ export class Room implements DurableObject {
   }
 
   async fetch(req: Request): Promise<Response> {
-    const peer = new URL(req.url).searchParams.get('peer')!
+    const url = new URL(req.url)
+    const peer = url.searchParams.get('peer')!
     const existing = this.peers()
     if (existing.length >= MAX_PEERS) return new Response('Room is full', { status: 429 })
     await this.loadKeep()
+
+    // A peer id belongs to whoever first used it in this room: later
+    // connections must present the same secret. Stops anyone with the link
+    // from taking over someone else's id (e.g. the host's) to send as them.
+    const digest = await sha256(url.searchParams.get('s')!)
+    const known = await this.state.storage.get<string>('p:' + peer)
+    if (known && known !== digest) return new Response('Peer id taken', { status: 403 })
+    if (!known) await this.state.storage.put('p:' + peer, digest)
 
     const pair = new WebSocketPair()
     const [client, server] = [pair[0], pair[1]]
@@ -109,7 +120,11 @@ export class Room implements DurableObject {
     }
   }
 
-  async webSocketClose(ws: WebSocket) { this.left(ws) }
+  async webSocketClose(ws: WebSocket, code: number) {
+    // Finish the close handshake, or the client sits in "closing" forever.
+    try { ws.close(code === 1005 || code === 1006 ? 1000 : code, 'closed') } catch { /* already closed */ }
+    this.left(ws)
+  }
   async webSocketError(ws: WebSocket) { this.left(ws) }
 
   private async left(ws: WebSocket) {
@@ -131,6 +146,11 @@ export class Room implements DurableObject {
       try { p.ws.send(text) } catch { /* closing */ }
     }
   }
+}
+
+async function sha256(text: string): Promise<string> {
+  const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text))
+  return btoa(String.fromCharCode(...new Uint8Array(hash)))
 }
 
 function invitePage(room: string): Response {
