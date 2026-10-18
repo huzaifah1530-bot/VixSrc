@@ -237,6 +237,7 @@ final class PartyCore {
         if prev == nil || force || s.cfg.n > prev!.cfg.n { cfg = s.cfg }
         let mediaChanged = prev?.tl.media?.key != tl.media?.key
         state = PartyRoomState(v: PartyRules.version, tl: tl, cfg: cfg)
+        if mediaChanged { resetProgress(Date()); stalled = false }
         if mediaChanged || force { onMedia?(tl.media, force || prev == nil, tl.by == me) }
         onChange?()
     }
@@ -250,14 +251,16 @@ final class PartyCore {
 
     // MARK: User actions
 
-    private func bump(_ change: (inout PartyTimeline) -> Void) -> Bool {
+    private func bump(keepHold: Bool = false, _ change: (inout PartyTimeline) -> Void) -> Bool {
         guard var current = state, connected, transport?.isOpen == true else { onToast?("Reconnecting to the party…"); return false }
         guard canControl() else { onToast?("The host is controlling playback"); return false }
         let now = transport?.now() ?? 0
         var tl = current.tl
         tl.pos = Self.position(tl, now: now)
         tl.at = now
-        tl.hold = false
+        // A seek during a "waiting for…" hold keeps the hold so the room
+        // still resumes by itself; play / pause / new media ends it.
+        if !keepHold { tl.hold = false }
         change(&tl)
         tl.n = current.tl.n + 1
         tl.by = me
@@ -269,7 +272,7 @@ final class PartyCore {
 
     @discardableResult func play() -> Bool { bump { $0.playing = true } }
     @discardableResult func pause() -> Bool { bump { $0.playing = false } }
-    @discardableResult func seek(_ pos: Double) -> Bool { bump { $0.pos = max(0, pos) } }
+    @discardableResult func seek(_ pos: Double) -> Bool { bump(keepHold: true) { $0.pos = max(0, pos) } }
     @discardableResult func skip(_ by: Double) -> Bool { seek(target().pos + by) }
 
     /// Only the host (or acting host) picks what the room watches. `nil` = browsing.
@@ -343,6 +346,8 @@ final class PartyCore {
             wantSince = nil
         } else {
             if wantSince == nil { wantSince = now }
+            // Position jumped back (new episode, reload): restart measuring.
+            if samples.count >= 2, localPos < samples[samples.count - 2].pos - 1 { resetProgress(now) }
             if let old = samples.first(where: { now.timeIntervalSince($0.t) >= PartyRules.stallWindow }) {
                 let moved = localPos - old.pos
                 notMoving = moved < 0.3
@@ -355,7 +360,7 @@ final class PartyCore {
         // The room is waiting for us: keep trying to play where it stopped.
         if holdingForMe {
             let seek: Double? = abs(localPos - t.pos) > 3 ? t.pos : nil
-            if seek != nil { samples = []; wantSince = now }
+            if seek != nil { resetProgress(now) }
             return PartyCorrection(play: true, rate: 1, seek: seek, drift: localPos - t.pos)
         }
 
@@ -388,9 +393,11 @@ final class PartyCore {
                 if hardSyncs.count >= 3 { hardSyncs = []; onStruggling?() }
             }
         }
-        if c.seek != nil { samples = []; wantSince = now }
+        if c.seek != nil { resetProgress(now) }
         return c
     }
+
+    private func resetProgress(_ now: Date) { samples = []; wantSince = now }
 
     /// No player yet / loading the room's media (counts as buffering).
     func setLoading(_ on: Bool, error: String? = nil) {

@@ -244,20 +244,43 @@ struct PartyPasteBanner: View {
                     }
                     .labelStyle(.titleOnly)
                     .buttonBorderShape(.capsule)
-                    Button { dismiss() } label: { Image(systemName: "xmark").font(.caption.weight(.bold)) }
-                        .accessibilityLabel("Dismiss")
+                    Button { dismiss() } label: {
+                        Image(systemName: "xmark")
+                            .font(.caption.weight(.bold))
+                            .frame(width: 32, height: 32) // a real tap target
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Dismiss")
                 }
                 .foregroundStyle(.white)
-                .padding(.horizontal, 14).padding(.vertical, 8)
-                .vixGlass(.strong, cornerRadius: 22)
+                .padding(.leading, 14).padding(.trailing, 4).padding(.vertical, 4)
+                // Non-interactive glass: the interactive kind swallowed the
+                // taps meant for the buttons, so the banner couldn't be closed.
+                .vixGlass(.regular, cornerRadius: 22)
+                // Swipe it away too.
+                .gesture(DragGesture(minimumDistance: 10).onEnded { if $0.translation.height < -10 { dismiss() } })
                 .padding(.top, 6)
                 .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
         .animation(.easeOut(duration: 0.25), value: show)
         .onChange(of: scenePhase, initial: true) { _, phase in if phase == .active { check() } }
-        .onChange(of: PartyPasteFlag.shared.found) { _, found in show = found }
+        .onChange(of: PartyPasteFlag.shared.found) { _, found in
+            // Ignore a late detection result for a clipboard already dismissed.
+            guard found, UIPasteboard.general.changeCount != lastChange else { show = false; return }
+            show = true
+            // Never sticks around: hides itself after 12 seconds.
+            hideTask?.cancel()
+            hideTask = Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 12_000_000_000)
+                guard !Task.isCancelled else { return }
+                dismiss()
+            }
+        }
     }
+
+    @State private var hideTask: Task<Void, Never>?
 
     private func check() {
         let pb = UIPasteboard.general
@@ -279,6 +302,7 @@ struct PartyPasteBanner: View {
     }
 
     private func dismiss() {
+        hideTask?.cancel()
         show = false
         PartyPasteFlag.shared.found = false
         lastChange = UIPasteboard.general.changeCount

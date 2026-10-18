@@ -297,6 +297,7 @@ export class PartyCore {
     if (!prev || force || s.cfg.n > prev.cfg.n) cfg = s.cfg
     const mediaChanged = (prev?.tl.media?.key ?? null) !== (tl!.media?.key ?? null)
     this.state = { v: PARTY_VERSION, tl: tl!, cfg: cfg! }
+    if (mediaChanged) { this.resetProgress(Date.now()); this.stalled = false }
     if (mediaChanged || force) this.events.onMedia?.(tl!.media, tl!, { initial: force || !prev, mine: tl!.by === this.me })
     this.events.onChange?.()
   }
@@ -316,7 +317,9 @@ export class PartyCore {
     const cur = this.state.tl
     this.state = {
       ...this.state,
-      tl: { ...cur, pos: positionAt(cur, now), at: now, hold: false, ...change, n: cur.n + 1, by: this.me }
+      // A seek during a "waiting for…" hold keeps the hold, so the room
+      // still resumes by itself; an explicit play / pause ends it.
+      tl: { ...cur, pos: positionAt(cur, now), at: now, hold: change.playing === undefined && change.media === undefined ? cur.hold : false, ...change, n: cur.n + 1, by: this.me }
     }
     this.publishState()
     return true
@@ -385,6 +388,10 @@ export class PartyCore {
       this.wantSince = 0
     } else {
       if (!this.wantSince) this.wantSince = now
+      // Position jumped back (new episode, local reload): restart measuring
+      // rather than reading it as "not moving".
+      const prevSample = this.samples[this.samples.length - 2]
+      if (prevSample && local.pos < prevSample.pos - 1) this.resetProgress(now)
       const old = this.samples.find(s => now - s.t >= STALL_WINDOW_MS)
       if (old) {
         const moved = local.pos - old.pos
