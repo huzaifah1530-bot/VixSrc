@@ -121,7 +121,7 @@ struct SettingsView: View {
         }
     }
 
-    private var devicesSection: some View {
+    @ViewBuilder private var devicesSection: some View {
         partySection
         Section {
             NavigationLink {
