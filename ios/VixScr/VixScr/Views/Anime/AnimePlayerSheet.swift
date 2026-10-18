@@ -73,7 +73,8 @@ struct AnimePlayerSheet: View {
             if viewModel.currentNativeVideoURL != nil {
                 NativeVideoPlayerView(
                     playerManager: viewModel.playerManager,
-                    onPlaybackFailure: { viewModel.rejectCurrentSource() }
+                    onPlaybackFailure: { viewModel.rejectCurrentSource() },
+                    options: playerOptions
                 )
             } else {
                 Color.black
@@ -101,6 +102,24 @@ struct AnimePlayerSheet: View {
             RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .stroke(Color.white.opacity(0.2), lineWidth: 1)
         )
+    }
+
+    private var playerOptions: PlayerOptions {
+        var options = PlayerOptions()
+        options.sources = viewModel.nativeSources.enumerated().map {
+            PlayerOptions.Choice(id: $0.offset, title: $0.element.quality ?? $0.element.name,
+                                 section: $0.element.audio == "Dub" ? "Dubbed" : "Subtitled")
+        }
+        options.selectedSource = viewModel.selectedNativeSourceIndex
+        options.onSelectSource = { viewModel.switchSource(to: $0) }
+        options.servers = viewModel.store.animeServers.map(\.name)
+        options.selectedServer = viewModel.currentServerIndex
+        options.onSelectServer = { viewModel.switchServer(to: $0) }
+        if let next = viewModel.nextEpisode {
+            options.nextEpisodeLabel = "E\(next.number)"
+            options.onNextEpisode = { viewModel.selectEpisode(next) }
+        }
+        return options
     }
 
     // MARK: - Quality (Sub / Dub)

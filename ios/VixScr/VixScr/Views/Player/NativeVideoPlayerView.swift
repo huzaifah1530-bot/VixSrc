@@ -12,10 +12,11 @@ import UIKit
 struct NativeVideoPlayerView: View {
     @Bindable var playerManager: VideoPlayerManager
     var onPlaybackFailure: (() -> Void)? = nil
+    var options = PlayerOptions()
     @State private var isFullscreen = false
 
     var body: some View {
-        PlayerSurface(playerManager: playerManager, isFullscreen: false) {
+        PlayerSurface(playerManager: playerManager, isFullscreen: false, options: options) {
             setFullscreen(true)
         }
         .onAppear {
@@ -28,7 +29,7 @@ struct NativeVideoPlayerView: View {
             if error != nil { onPlaybackFailure?() }
         }
         .fullScreenCover(isPresented: $isFullscreen, onDismiss: { rotate(to: .portrait) }) {
-            PlayerSurface(playerManager: playerManager, isFullscreen: true) {
+            PlayerSurface(playerManager: playerManager, isFullscreen: true, options: options) {
                 setFullscreen(false)
             }
             .background(Color.black.ignoresSafeArea())
@@ -58,6 +59,7 @@ struct NativeVideoPlayerView: View {
 private struct PlayerSurface: View {
     @Bindable var playerManager: VideoPlayerManager
     let isFullscreen: Bool
+    let options: PlayerOptions
     let onToggleFullscreen: () -> Void
 
     @Environment(AppStore.self) private var store
@@ -78,7 +80,7 @@ private struct PlayerSurface: View {
         var pulse: Int
     }
 
-    private let spring = Animation.spring(response: 0.38, dampingFraction: 0.82)
+    private let spring = Animation.spring(response: 0.2, dampingFraction: 0.9)
 
     var body: some View {
         GeometryReader { geo in
@@ -119,7 +121,6 @@ private struct PlayerSurface: View {
                 if !playerManager.isLoading && playerManager.error == nil {
                     controls
                         .opacity(showControls ? 1 : 0)
-                        .scaleEffect(showControls ? 1 : 0.97)
                         .allowsHitTesting(showControls)
                         .accessibilityHidden(!showControls)
                 }
@@ -168,10 +169,9 @@ private struct PlayerSurface: View {
     private func zone(_ side: Side) -> some View {
         Color.clear
             .contentShape(Rectangle())
-            .gesture(
-                TapGesture(count: 2).onEnded { doubleTap(side) }
-                    .exclusively(before: TapGesture().onEnded { singleTap() })
-            )
+            // One tap recogniser so a single tap responds instantly; a
+            // second tap within 0.28s turns it into a double-tap seek.
+            .onTapGesture { tap(side) }
             .simultaneousGesture(
                 LongPressGesture(minimumDuration: 0.35)
                     .sequenced(before: DragGesture(minimumDistance: 0))
@@ -181,10 +181,26 @@ private struct PlayerSurface: View {
             )
     }
 
-    private func singleTap() {
+    @State private var lastTap: (side: Side, time: Date, controlsBefore: Bool)?
+
+    private func tap(_ side: Side) {
         // A finished hold also ends as a tap; ignore it.
         guard Date().timeIntervalSince(lastHoldEnded) > 0.3 else { return }
-        if seekFeedback != nil { return }
+        let now = Date()
+        // While a seek ripple is showing, every tap on that side keeps seeking.
+        if let feedback = seekFeedback, feedback.side == side {
+            doubleTap(side)
+            lastTap = nil
+            return
+        }
+        if let last = lastTap, last.side == side, now.timeIntervalSince(last.time) < 0.28 {
+            // Undo the instant toggle from the first tap, then seek.
+            showControls = last.controlsBefore
+            lastTap = nil
+            doubleTap(side)
+            return
+        }
+        lastTap = (side, now, showControls)
         toggleControls()
     }
 
@@ -194,7 +210,7 @@ private struct PlayerSurface: View {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
 
         // Consecutive double-taps on the same side add up, YouTube-style.
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+        withAnimation(.spring(response: 0.18, dampingFraction: 0.75)) {
             if var current = seekFeedback, current.side == side {
                 current.seconds += step
                 current.pulse += 1
@@ -205,9 +221,9 @@ private struct PlayerSurface: View {
         }
         feedbackTask?.cancel()
         feedbackTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 750_000_000)
+            try? await Task.sleep(nanoseconds: 650_000_000)
             guard !Task.isCancelled else { return }
-            withAnimation(.easeOut(duration: 0.3)) { seekFeedback = nil }
+            withAnimation(.easeOut(duration: 0.15)) { seekFeedback = nil }
         }
     }
 
@@ -263,7 +279,7 @@ private struct PlayerSurface: View {
             }
             Spacer()
         }
-        .animation(.spring(response: 0.35, dampingFraction: 0.72), value: playerManager.isSpeedBoosted)
+        .animation(.spring(response: 0.2, dampingFraction: 0.8), value: playerManager.isSpeedBoosted)
         .allowsHitTesting(false)
     }
 
@@ -286,6 +302,7 @@ private struct PlayerSurface: View {
                 Spacer(minLength: 0)
                 transport
                 Spacer(minLength: 0)
+                nextEpisodePill
                 PlayerScrubber(playerManager: playerManager, isFullscreen: isFullscreen) {
                     reveal(autoHide: false)
                 } onEnd: {
@@ -295,6 +312,84 @@ private struct PlayerSurface: View {
             .padding(.horizontal, isFullscreen ? 44 : 14)
             .padding(.top, isFullscreen ? 20 : 10)
             .padding(.bottom, isFullscreen ? 20 : 8)
+        }
+    }
+
+    /// In the last 90 seconds of an episode, a Next Episode button sits above
+    /// the timeline whenever the controls are visible.
+    @ViewBuilder private var nextEpisodePill: some View {
+        let remaining = playerManager.duration - playerManager.currentTime
+        if let label = options.nextEpisodeLabel, let action = options.onNextEpisode,
+           playerManager.duration > 0, remaining <= 90 {
+            HStack {
+                Spacer()
+                Button(action: action) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "forward.end.fill")
+                        Text(label).lineLimit(1)
+                    }
+                    .font((isFullscreen ? Font.subheadline : Font.footnote).weight(.semibold))
+                    .foregroundStyle(.black)
+                    .padding(.horizontal, isFullscreen ? 18 : 14)
+                    .padding(.vertical, isFullscreen ? 11 : 8)
+                    .background(.white, in: Capsule())
+                    .shadow(color: .black.opacity(0.3), radius: 8, y: 3)
+                }
+                .buttonStyle(PlayerButtonStyle())
+                .accessibilityLabel("Play next episode, \(label)")
+            }
+            .padding(.bottom, 4)
+            .transition(.move(edge: .trailing).combined(with: .opacity))
+        }
+    }
+
+    @ViewBuilder private var optionMenus: some View {
+        let size: CGFloat = isFullscreen ? 44 : 36
+        if options.sources.count > 1 {
+            Menu {
+                let sections = options.sources.reduce(into: [String]()) { if !$0.contains($1.section) { $0.append($1.section) } }
+                ForEach(sections, id: \.self) { section in
+                    Section(section) {
+                        ForEach(options.sources.filter { $0.section == section }) { choice in
+                            Button {
+                                options.onSelectSource(choice.id)
+                                reveal(autoHide: true)
+                            } label: {
+                                if choice.id == options.selectedSource {
+                                    Label(choice.title, systemImage: "checkmark")
+                                } else {
+                                    Text(choice.title)
+                                }
+                            }
+                        }
+                    }
+                }
+            } label: {
+                GlassIcon(systemImage: "slider.horizontal.3", size: size)
+            }
+            .accessibilityLabel(options.sourceLabel)
+            .simultaneousGesture(TapGesture().onEnded { reveal(autoHide: false) })
+        }
+        if options.servers.count > 1 {
+            Menu {
+                Section("Server") {
+                    ForEach(Array(options.servers.enumerated()), id: \.offset) { index, name in
+                        Button {
+                            options.onSelectServer(index)
+                        } label: {
+                            if index == options.selectedServer {
+                                Label(name, systemImage: "checkmark")
+                            } else {
+                                Text(name)
+                            }
+                        }
+                    }
+                }
+            } label: {
+                GlassIcon(systemImage: "server.rack", size: size)
+            }
+            .accessibilityLabel("Server")
+            .simultaneousGesture(TapGesture().onEnded { reveal(autoHide: false) })
         }
     }
 
@@ -308,6 +403,7 @@ private struct PlayerSurface: View {
                     .shadow(color: .black.opacity(0.4), radius: 4)
             }
             Spacer()
+            optionMenus
             GlassIconButton(systemImage: playerManager.selectedSubtitleIndex != nil || playerManager.selectedExternalSubtitleIndex != nil
                             ? "captions.bubble.fill" : "captions.bubble",
                             size: isFullscreen ? 44 : 36,
@@ -382,7 +478,7 @@ private struct PlayPauseButton: View {
         Button(action: action) {
             Image(systemName: isPlaying ? "pause.fill" : "play.fill")
                 .font(.system(size: size * 0.42, weight: .semibold))
-                .contentTransition(.symbolEffect(.replace.downUp))
+                .contentTransition(.symbolEffect(.replace))
                 .foregroundStyle(.white)
                 .frame(width: size, height: size)
                 .vixGlass(.regular, cornerRadius: 999)
@@ -410,12 +506,51 @@ private struct SkipButton: View {
                 .foregroundStyle(.white)
                 .symbolEffect(.bounce, value: taps)
                 .rotationEffect(.degrees(Double(taps % 2 == 0 ? 0 : (forward ? 20 : -20))))
-                .animation(.spring(response: 0.3, dampingFraction: 0.5), value: taps)
+                .animation(.spring(response: 0.18, dampingFraction: 0.6), value: taps)
                 .frame(width: size * 1.9, height: size * 1.9)
                 .contentShape(Circle())
         }
         .buttonStyle(PlayerButtonStyle())
         .accessibilityLabel(forward ? "Skip forward \(seconds) seconds" : "Skip back \(seconds) seconds")
+    }
+}
+
+/// Extra controls a screen can hand the player: quality / audio, server,
+/// and a next-episode action. Everything is optional.
+struct PlayerOptions {
+    struct Choice: Identifiable {
+        let id: Int
+        let title: String
+        /// Menu group, e.g. "Subtitled" / "Dubbed", or "Source".
+        let section: String
+    }
+
+    var sources: [Choice] = []
+    var selectedSource = 0
+    var sourceLabel = "Quality"
+    var onSelectSource: (Int) -> Void = { _ in }
+
+    var servers: [String] = []
+    var selectedServer = 0
+    var onSelectServer: (Int) -> Void = { _ in }
+
+    var nextEpisodeLabel: String?
+    var onNextEpisode: (() -> Void)?
+}
+
+/// Glass disc icon, used as a Menu label in the top bar.
+private struct GlassIcon: View {
+    let systemImage: String
+    let size: CGFloat
+
+    var body: some View {
+        Image(systemName: systemImage)
+            .font(.system(size: size * 0.4, weight: .semibold))
+            .foregroundStyle(.white)
+            .frame(width: size, height: size)
+            .vixGlass(.regular, cornerRadius: 999)
+            .frame(minWidth: 44, minHeight: 44)
+            .contentShape(Rectangle())
     }
 }
 
@@ -492,7 +627,7 @@ private struct PlayerScrubber: View {
                             onEnd()
                         }
                 )
-                .animation(.spring(response: 0.28, dampingFraction: 0.75), value: isSeeking)
+                .animation(.spring(response: 0.15, dampingFraction: 0.85), value: isSeeking)
             }
             .frame(height: 28)
 
@@ -704,6 +839,6 @@ struct PlayerButtonStyle: ButtonStyle {
             .contentShape(Rectangle())
             .scaleEffect(configuration.isPressed ? 0.86 : 1)
             .opacity(configuration.isPressed ? 0.75 : 1)
-            .animation(.spring(response: 0.25, dampingFraction: 0.6), value: configuration.isPressed)
+            .animation(.spring(response: 0.12, dampingFraction: 0.7), value: configuration.isPressed)
     }
 }

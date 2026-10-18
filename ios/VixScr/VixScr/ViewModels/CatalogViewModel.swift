@@ -506,6 +506,32 @@ final class CatalogViewModel {
     /// season. Returns nil when on the last episode of the last season, or
     /// when no episode is selected yet. The button uses this to offer
     /// "Play Next" without any extra network call.
+    /// The season after the current one, when the current episode is the
+    /// last in its season.
+    private var nextSeason: SeasonSummary? {
+        guard nextEpisode == nil, let current = selectedSeason, let details = tvDetails,
+              let last = episodes.map(\.episodeNumber).max(),
+              selectedEpisode?.episodeNumber == last else { return nil }
+        return details.usableSeasons.first { $0.seasonNumber > current.seasonNumber }
+    }
+
+    /// Label for the player's Next Episode button, crossing seasons.
+    var nextEpisodeLabel: String? {
+        if let next = nextEpisode {
+            return "S\(next.seasonNumber ?? selectedSeason?.seasonNumber ?? 0)E\(next.episodeNumber)" + (next.name.map { " · \($0)" } ?? "")
+        }
+        if let season = nextSeason { return "S\(season.seasonNumber)E1" }
+        return nil
+    }
+
+    func playNextEpisode() async {
+        if let next = nextEpisode {
+            await selectEpisode(next)
+        } else if let season = nextSeason {
+            await selectSeason(season.seasonNumber)
+        }
+    }
+
     var nextEpisode: Episode? {
         guard let current = selectedEpisode else { return nil }
         let sorted = episodes.sorted { $0.episodeNumber < $1.episodeNumber }

@@ -68,9 +68,9 @@ struct PlayerSheet: View {
     }
 
     @ViewBuilder private var nextEpisodeButton: some View {
-        if viewModel.selected?.type == .tv, let next = viewModel.nextEpisode {
-            NextEpisodeButton(episode: next) {
-                Task { await viewModel.selectEpisode(next) }
+        if viewModel.selected?.type == .tv, let label = viewModel.nextEpisodeLabel {
+            NextEpisodeButton(label: label) {
+                Task { await viewModel.playNextEpisode() }
             }
         }
     }
@@ -150,7 +150,8 @@ struct PlayerSheet: View {
                             if let failedURL = viewModel.currentNativeVideoURL {
                                 viewModel.rejectNativeStream(failedURL)
                             }
-                        }
+                        },
+                        options: playerOptions
                     )
                 } else if let url = viewModel.currentStreamURL {
                     StreamWebView(
@@ -178,6 +179,24 @@ struct PlayerSheet: View {
             RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .stroke(Color.white.opacity(0.2), lineWidth: 1)
         )
+    }
+
+    private var playerOptions: PlayerOptions {
+        var options = PlayerOptions()
+        options.sources = viewModel.nativeSources.enumerated().map {
+            PlayerOptions.Choice(id: $0.offset, title: $0.element.name, section: "Source")
+        }
+        options.selectedSource = viewModel.selectedNativeSourceIndex
+        options.sourceLabel = "Source"
+        options.onSelectSource = { viewModel.switchNativeSource(to: $0) }
+        options.servers = viewModel.store.servers.map(\.name)
+        options.selectedServer = viewModel.currentServerIndex
+        options.onSelectServer = { viewModel.switchServer(to: $0) }
+        if viewModel.selected?.type == .tv {
+            options.nextEpisodeLabel = viewModel.nextEpisodeLabel
+            options.onNextEpisode = { Task { await viewModel.playNextEpisode() } }
+        }
+        return options
     }
 
     // MARK: - Action row
