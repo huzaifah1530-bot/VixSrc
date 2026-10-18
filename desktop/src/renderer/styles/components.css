@@ -279,4 +279,4 @@ body.window-inactive .traffic:not(:hover) .tl { background: rgba(255,255,255,.18
 .preview-meta { display: flex; gap: 10px; margin-top: 3px; font-size: 12px; color: var(--text-2); font-weight: 600; }
 .preview-meta span { display: inline-flex; align-items: center; gap: 3px; }
 .preview-desc { margin: 8px 0 12px; font-size: 12px; line-height: 1.45; color: var(--text-2); }
-.btn-icon.small { width: 26px; }
+.btn-icon.small { width: 26px; padding: 0; flex: none; }

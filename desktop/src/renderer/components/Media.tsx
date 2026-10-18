@@ -99,7 +99,7 @@ export function PosterCard({ item, onOpen, onPlay, showProgress }: { item: Media
       onMouseEnter={e => {
         const el = e.currentTarget
         clearTimeout(hoverTimer.current)
-        hoverTimer.current = setTimeout(() => setPreview(el.getBoundingClientRect()), 1500)
+        hoverTimer.current = setTimeout(() => setPreview(el.getBoundingClientRect()), 550)
       }}
       onMouseLeave={() => clearTimeout(hoverTimer.current)}
       onMouseDown={() => clearTimeout(hoverTimer.current)}
@@ -134,7 +134,7 @@ export function PosterCard({ item, onOpen, onPlay, showProgress }: { item: Media
   )
 }
 
-/** Enlarged card shown after hovering a poster for 1.5s. */
+/** Enlarged card shown after hovering a poster for 0.55s. */
 function PosterPreview({ item, rect, meta, progress, favorite, onClose, onOpen, onPlay, onFavorite }: {
   item: MediaItem; rect: DOMRect; meta: string; progress: number; favorite: boolean
   onClose: () => void; onOpen: () => void; onPlay: () => void; onFavorite: () => void
