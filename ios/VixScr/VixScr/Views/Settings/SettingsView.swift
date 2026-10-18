@@ -357,11 +357,16 @@ struct SettingsView: View {
             if case .success = result { showToast("Vela data exported") }
             exportDocument = nil
         }
-        .fileImporter(isPresented: $isImporting, allowedContentTypes: [.json]) { result in
-            if case .success(let url) = result {
+        // UIKit picker in copy mode: works without security-scoped access,
+        // which sandboxed hosts like LiveContainer don't always grant, and
+        // accepts any file so a backup renamed or saved as .txt still opens.
+        .sheet(isPresented: $isImporting) {
+            BackupDocumentPicker { url in
+                isImporting = false
                 pendingImportURL = url
                 showImportConfirm = true
             }
+            .ignoresSafeArea()
         }
         .alert("Import Vela Data?", isPresented: $showImportConfirm) {
             Button("Import", role: .destructive) { performImport() }
@@ -441,6 +446,31 @@ struct SettingsView: View {
         }
         store.credential = value
         showToast("TMDB key saved")
+    }
+}
+
+/// Document picker that copies the chosen file into the app's tmp folder.
+struct BackupDocumentPicker: UIViewControllerRepresentable {
+    let onPick: (URL) -> Void
+
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.json, .plainText, .data, .item], asCopy: true)
+        picker.allowsMultipleSelection = false
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ controller: UIDocumentPickerViewController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator { Coordinator(onPick: onPick) }
+
+    final class Coordinator: NSObject, UIDocumentPickerDelegate {
+        let onPick: (URL) -> Void
+        init(onPick: @escaping (URL) -> Void) { self.onPick = onPick }
+
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+            if let url = urls.first { onPick(url) }
+        }
     }
 }
 

@@ -54,6 +54,9 @@ final class CatalogViewModel {
     private var preferredAnimeQuality = "Auto"
     private var animeResolutionTask: Task<Void, Never>?
     private(set) var animeStatusMessage: String?
+    /// True once the viewer picks a server themselves; failures then stay on
+    /// that server with an error instead of silently switching away.
+    private var serverPickedManually = false
     private(set) var currentStreamURL: URL?
     private(set) var currentNativeVideoURL: URL?
     private(set) var nativeSources: [StreamURLExtractor.ResolvedStream] = []
@@ -409,6 +412,7 @@ final class CatalogViewModel {
         selectedEpisode = nil
         episodes = []
         currentServer = defaultServer(for: item)
+        serverPickedManually = false
         animeStatusMessage = nil
         animeResolutionTask?.cancel()
         currentStreamURL = nil
@@ -440,7 +444,7 @@ final class CatalogViewModel {
             tvDetails = details
             if details.isAnime, selected?.isAnime == false, selected?.id == item.id {
                 selected?.anime = true
-                currentServer = defaultServer(for: selected ?? item)
+                if !serverPickedManually { currentServer = defaultServer(for: selected ?? item) }
             }
             let seasons = details.usableSeasons
             guard let firstSeason = seasons.first else {
@@ -582,6 +586,7 @@ final class CatalogViewModel {
         case .anime(let index): guard store.animeServers.indices.contains(index) else { return }
         }
         currentServer = selection
+        serverPickedManually = true
         startPlaybackForCurrentSelection()
         showToast("Switched to \(currentServerName)")
     }
@@ -666,6 +671,11 @@ final class CatalogViewModel {
     /// drop to the first regular server so playback still starts.
     private func fallBackFromAnime(serverName: String, reason: String) {
         guard case .anime(let index) = currentServer else { return }
+        if serverPickedManually {
+            animeStatusMessage = "\(serverName): \(reason)"
+            showToast("\(serverName): \(reason)")
+            return
+        }
         if store.animeServers.indices.contains(index + 1) {
             currentServer = .anime(index + 1)
             showToast("\(serverName): \(reason). Trying \(currentServerName)")

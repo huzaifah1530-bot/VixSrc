@@ -82,7 +82,7 @@ private struct SearchPosterCard: View {
                         HStack {
                             Text(item.typeLabel.uppercased())
                                 .font(.caption2.weight(.bold))
-                                .padding(.horizontal, 8)
+                                .padding(.horizontal, 10)
                                 .padding(.vertical, 4)
                                 .background(.black.opacity(0.45), in: Capsule())
                                 .foregroundStyle(.white.opacity(0.85))
@@ -97,7 +97,7 @@ private struct SearchPosterCard: View {
                         }
                         Spacer()
                     }
-                    .padding(8)
+                    .padding(12)
 
                     if let watchProgress {
                         VStack {

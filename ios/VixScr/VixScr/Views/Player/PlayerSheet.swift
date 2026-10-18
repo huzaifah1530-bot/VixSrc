@@ -26,6 +26,15 @@ struct PlayerSheet: View {
                 }
             }
         }
+        // The sheet covers Home's toast, so the player shows its own.
+        .overlay(alignment: .bottom) {
+            if let toast = viewModel.toastMessage {
+                ToastView(message: toast)
+                    .padding(.bottom, 24)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(.easeOut(duration: 0.25), value: viewModel.toastMessage)
         .preferredColorScheme(.dark)
     }
 
@@ -176,7 +185,13 @@ struct PlayerSheet: View {
                 } else {
                     Color.black
                     VStack(spacing: 10) {
-                        ProgressView().tint(.white)
+                        if viewModel.isResolvingStream || viewModel.animeStatusMessage == nil {
+                            ProgressView().tint(.white)
+                        } else {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.title2)
+                                .foregroundStyle(.yellow)
+                        }
                         if let status = viewModel.animeStatusMessage {
                             Text(status)
                                 .font(.caption.weight(.semibold))

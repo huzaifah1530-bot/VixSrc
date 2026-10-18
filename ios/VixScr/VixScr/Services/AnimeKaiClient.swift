@@ -183,17 +183,19 @@ struct AnimeKaiClient {
         guard let url = components?.url else { return [] }
         let html = try await getString(url, headers: ["User-Agent": userAgent, "Referer": base + "/"])
 
-        // Each result card is a <div class="item"> holding a `d-title` anchor
-        // (name, href, data-jp) and a "TV" / "MOVIE" badge in `.right`.
+        // Each result card has a `d-title` anchor (name, href, data-jp),
+        // followed by meta labels including the type ("TV", "Movie", "OVA").
         var out: [Candidate] = []
-        let chunks = html.components(separatedBy: "class=\"item\"").dropFirst()
-        for chunk in chunks {
-            guard let tag = firstMatch(#"<a\b[^>]*\bd-title\b[^>]*>([\s\S]*?)</a>"#, in: chunk, group: 0),
-                  let href = attribute("href", in: tag),
+        guard let regex = try? NSRegularExpression(pattern: #"<a\b[^>]*\bd-title\b[^>]*>[\s\S]*?</a>"#, options: [.caseInsensitive]) else { return [] }
+        let ns = html as NSString
+        for match in regex.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
+            let tag = ns.substring(with: match.range)
+            guard let href = attribute("href", in: tag),
                   let slug = firstMatch(#"/(?:watch|anime)/([^/?#"]+)"#, in: href, group: 1) else { continue }
             let name = decodeEntities(stripTags(firstMatch(#">([\s\S]*?)</a>"#, in: tag, group: 1) ?? ""))
             let jp = decodeEntities(attribute("data-jp", in: tag) ?? "")
-            let kind = firstMatch(#"<div class="right">\s*([^<]+?)\s*</div>"#, in: chunk, group: 1) ?? ""
+            let tail = ns.substring(with: NSRange(location: match.range.location, length: min(2500, ns.length - match.range.location)))
+            let kind = firstMatch(#"<label>\s*(TV|MOVIE|OVA|ONA|SPECIAL|MUSIC)\s*</label>"#, in: tail, group: 1) ?? ""
             guard !name.isEmpty, !out.contains(where: { $0.slug == slug }) else { continue }
             out.append(Candidate(slug: slug, name: name, japaneseName: jp, kind: kind))
         }

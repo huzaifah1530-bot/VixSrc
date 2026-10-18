@@ -50,7 +50,7 @@ struct PosterCard: View {
                     HStack {
                         Text(item.typeLabel.uppercased())
                             .font(.caption2.weight(.bold))
-                            .padding(.horizontal, 8)
+                            .padding(.horizontal, 10)
                             .padding(.vertical, 4)
                             .background(.black.opacity(0.45), in: Capsule())
                             .foregroundStyle(.white.opacity(0.85))
@@ -65,7 +65,8 @@ struct PosterCard: View {
                     }
                     Spacer(minLength: 0)
                 }
-                .padding(8)
+                // Clear of the card's rounded corner so badges sit evenly inset.
+                .padding(12)
 
                 if let watchProgress {
                     VStack {
