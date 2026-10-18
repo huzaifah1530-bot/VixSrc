@@ -99,7 +99,10 @@ final class AnimeViewModel {
             homeErrorMessage = "Couldn't reach \(store.animeServers.first?.name ?? "the anime server"). Check your connection or try another anime server in Settings."
         } else {
             homeLoaded = true
-            if hero == nil { hero = homeRows.first?.items.first }
+            if hero == nil, let first = homeRows.first?.items.first {
+                hero = first
+                hero = await withSynopsis(first)
+            }
             startHeroCycle()
         }
         isLoadingHome = false
@@ -115,9 +118,28 @@ final class AnimeViewModel {
                 let items = self.homeRows.first?.items ?? []
                 guard items.count > 1 else { continue }
                 self.heroCycleIndex = (self.heroCycleIndex + 1) % items.count
-                withAnimation(.easeInOut(duration: 0.8)) { self.hero = items[self.heroCycleIndex] }
+                let next = await self.withSynopsis(items[self.heroCycleIndex])
+                guard !Task.isCancelled else { return }
+                withAnimation(.easeInOut(duration: 0.8)) { self.hero = next }
             }
         }
+    }
+
+    /// List cards carry no synopsis, so the hero fetches it (cached by slug).
+    private var synopsisCache: [String: String] = [:]
+
+    private func withSynopsis(_ item: MediaItem) async -> MediaItem {
+        guard let slug = item.animeSlug, let base = catalogBase else { return item }
+        var copy = item
+        if let cached = synopsisCache[slug] {
+            copy.description = cached
+            return copy
+        }
+        if let details = try? await AnimeKaiClient.details(base: base, slug: slug), !details.description.isEmpty {
+            synopsisCache[slug] = details.description
+            copy.description = details.description
+        }
+        return copy
     }
 
     // MARK: - Search

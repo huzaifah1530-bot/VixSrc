@@ -33,6 +33,7 @@ struct SettingsView: View {
                 credentialSection
                 performanceSection
                 cardSizeSection
+                playerSection
                 serverManagementSection
                 animeServerSection
                 backupSection
@@ -128,6 +129,24 @@ struct SettingsView: View {
             Button("Later", role: .cancel) {}
         } message: {
             Text("Performance mode changes take full effect after restarting Vela.")
+        }
+    }
+
+    private var playerSection: some View {
+        Section {
+            Picker("Double-Tap Skip", selection: Binding(
+                get: { store.seekInterval },
+                set: { store.seekInterval = $0 }
+            )) {
+                ForEach(AppStore.seekIntervalOptions, id: \.self) { seconds in
+                    Text("\(seconds)s").tag(seconds)
+                }
+            }
+            .pickerStyle(.segmented)
+        } header: {
+            Text("Player")
+        } footer: {
+            Text("Double-tap the left or right of the video to skip back or forward. Hold either edge for 2× speed.")
         }
     }
 

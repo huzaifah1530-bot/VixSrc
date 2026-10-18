@@ -22,64 +22,92 @@ struct HeroView: View {
         }
     }
 
+    /// Poster-led hero for anime: the poster sits on the left over a
+    /// blurred, darkened copy of itself, with the title and meta beside it
+    /// and the synopsis and Play button spanning the full card below.
     private func posterLayout(_ item: MediaItem) -> some View {
-        HStack(alignment: .top, spacing: 16) {
-            AsyncImage(url: item.posterURL, transaction: Transaction(animation: .easeInOut(duration: 0.35))) { phase in
-                if let image = phase.image {
-                    image.resizable().scaledToFill().transition(.opacity)
-                } else {
-                    Color(white: 0.04)
-                }
-            }
-            .frame(width: 120, height: 180)
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(Color.white.opacity(0.15), lineWidth: 1)
-            )
-            .id(item.posterURL)
-            .accessibilityHidden(true)
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text(tagText.uppercased())
-                    .font(.caption2.weight(.bold))
-                    .tracking(0.5)
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .vixGlass(.regular, cornerRadius: 999)
-
-                Text(item.title)
-                    .font(.title3.weight(.bold))
-                    .foregroundStyle(.white)
-                    .lineLimit(3)
-                    .minimumScaleFactor(0.8)
-
-                Text(item.year)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.white.opacity(0.6))
-                    .lineLimit(1)
-
-                Spacer(minLength: 0)
-
-                HStack(spacing: 10) {
-                    Button(action: onPlay) {
-                        Label("Play", systemImage: "play.fill")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.black)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 44)
-                            .background(.white, in: Capsule())
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .bottom, spacing: 16) {
+                AsyncImage(url: item.posterURL, transaction: Transaction(animation: .easeInOut(duration: 0.35))) { phase in
+                    if let image = phase.image {
+                        image.resizable().scaledToFill().transition(.opacity)
+                    } else {
+                        Color(white: 0.12)
                     }
-                    .buttonStyle(.plain)
-                    FavoriteButton(isFavorite: isFavorite, action: onToggleFavorite)
                 }
+                .frame(width: 138, height: 207)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(Color.white.opacity(0.18), lineWidth: 1)
+                )
+                .shadow(color: .black.opacity(0.5), radius: 18, y: 10)
+                .accessibilityHidden(true)
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(item.title)
+                        .font(.title2.weight(.bold))
+                        .foregroundStyle(.white)
+                        .lineLimit(4)
+                        .minimumScaleFactor(0.75)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if !item.year.isEmpty {
+                        HStack(spacing: 6) {
+                            ForEach(item.year.components(separatedBy: " · "), id: \.self) { meta in
+                                Text(meta)
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.white.opacity(0.85))
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 5)
+                                    .vixGlass(.regular, cornerRadius: 999)
+                            }
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .bottomLeading)
             }
-            .frame(maxWidth: .infinity, minHeight: 180, maxHeight: 180, alignment: .topLeading)
+
+            Text(item.description)
+                .font(.subheadline)
+                .foregroundStyle(.white.opacity(0.75))
+                .lineLimit(3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            HStack(spacing: 12) {
+                Button(action: onPlay) {
+                    Label("Play", systemImage: "play.fill")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.black)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 50)
+                        .background(.white, in: Capsule())
+                }
+                .buttonStyle(.plain)
+                FavoriteButton(isFavorite: isFavorite, action: onToggleFavorite)
+            }
         }
-        .padding(16)
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .frame(maxWidth: 720)
-        .background(Color(white: 0.08))
+        .background {
+            ZStack {
+                Color(white: 0.08)
+                if glassFidelity != .opaque, let url = item.posterURL {
+                    AsyncImage(url: url) { phase in
+                        if let image = phase.image {
+                            image.resizable().scaledToFill()
+                                .blur(radius: 40)
+                                .opacity(0.55)
+                                .transition(.opacity)
+                        }
+                    }
+                }
+                LinearGradient(colors: [.black.opacity(0.15), .black.opacity(0.75)],
+                               startPoint: .top, endPoint: .bottom)
+            }
+            .clipped()
+        }
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .id(item.id)
         .transition(.opacity)

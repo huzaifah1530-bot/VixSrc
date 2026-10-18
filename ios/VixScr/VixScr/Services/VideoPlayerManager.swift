@@ -238,6 +238,27 @@ final class VideoPlayerManager {
         publishNowPlayingInfo()
     }
     
+    /// Title (and episode, when known) shown in the fullscreen top bar.
+    var nowPlayingDisplayTitle: String {
+        guard let nowPlayingSubtitle, !nowPlayingSubtitle.isEmpty else { return nowPlayingTitle }
+        return "\(nowPlayingTitle) · \(nowPlayingSubtitle)"
+    }
+
+    /// True while the viewer holds the edge of the player for 2× speed.
+    private(set) var isSpeedBoosted = false
+
+    func beginSpeedBoost() {
+        guard let player, !isSpeedBoosted else { return }
+        isSpeedBoosted = true
+        player.rate = 2
+    }
+
+    func endSpeedBoost() {
+        guard isSpeedBoosted else { return }
+        isSpeedBoosted = false
+        player?.rate = 1
+    }
+
     func togglePlayPause() {
         if isPlaying {
             pause()
@@ -555,6 +576,7 @@ final class VideoPlayerManager {
         
         player?.pause()
         player = nil
+        isSpeedBoosted = false
         
         isPlaying = false
         currentTime = 0
