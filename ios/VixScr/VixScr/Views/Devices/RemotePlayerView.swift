@@ -10,7 +10,12 @@ struct RemotePlayerView: View {
     var poster: URL?
     var onPlayHere: () -> Void
 
+    /// Position the thumb shows while dragging and until the computer catches up.
     @State private var scrub: Double?
+    /// Latest dragged value. SwiftUI can report "editing ended" before the
+    /// final value lands, so the send is deferred a beat and reads this.
+    @State private var pendingSeek: Double?
+    @State private var seekGeneration = 0
     @State private var spinBack = 0.0
     @State private var spinForward = 0.0
 
@@ -65,7 +70,6 @@ struct RemotePlayerView: View {
                 }
             }
             Spacer(minLength: 0)
-            if let state, state.open, state.sources.count > 1 { sourceMenu(state) }
         }
         .foregroundStyle(.white)
     }
@@ -143,10 +147,11 @@ struct RemotePlayerView: View {
         let shown = scrub ?? state.position
         return VStack(spacing: 4) {
             if state.controllable && state.duration > 0 {
-                Slider(value: Binding(get: { shown }, set: { scrub = $0 }), in: 0...duration, onEditingChanged: { editing in
-                    if !editing, let target = scrub {
-                        link.command("seek", ["to": target])
-                        scrub = nil
+                Slider(value: Binding(get: { shown }, set: { scrub = $0; pendingSeek = $0 }), in: 0...duration, onEditingChanged: { editing in
+                    if editing {
+                        seekGeneration += 1
+                    } else {
+                        commitSeek()
                     }
                 })
                 .tint(.white)
@@ -163,6 +168,25 @@ struct RemotePlayerView: View {
                     .foregroundStyle(.white.opacity(0.7))
                     .multilineTextAlignment(.center)
             }
+        }
+    }
+
+    /// Sends exactly one seek per drag, with the final value. The thumb keeps
+    /// showing that value until the computer reports it (or 3s pass), so it
+    /// doesn't snap back between frames.
+    private func commitSeek() {
+        let gen = seekGeneration
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 60_000_000)
+            guard gen == seekGeneration, let target = pendingSeek else { return }
+            pendingSeek = nil
+            link.command("seek", ["to": target])
+            for _ in 0..<30 {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                guard gen == seekGeneration else { return }
+                if let pos = link.remote?.position, abs(pos - target) < 3 { break }
+            }
+            if gen == seekGeneration { scrub = nil }
         }
     }
 

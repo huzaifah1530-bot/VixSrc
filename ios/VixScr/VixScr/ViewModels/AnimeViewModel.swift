@@ -184,6 +184,7 @@ final class AnimeViewModel {
         episodeQuery = ""
         currentServerIndex = 0
         slugsByServer = [0: slug]
+        resumeIntent = true
         resetPlayback()
         playerManager.setNowPlayingMetadata(title: item.title, subtitle: nil, artworkURL: item.posterURL)
         isPlayerPresented = true
@@ -248,11 +249,13 @@ final class AnimeViewModel {
         if DeviceLink.shared.routesPlayback {
             // The computer looks the show up in its own anime catalogue.
             let slug = slugsByServer[0] ?? item.animeSlug ?? ""
-            DeviceLink.shared.playOnDesktop("play-anime", item: item, extra: [
-                "slug": slug, "episode": episode.number, "server": server.name
-            ])
+            var extra: [String: Any] = ["slug": slug, "episode": episode.number, "server": server.name]
+            if resumeIntent { extra["resume"] = true }
+            resumeIntent = false
+            DeviceLink.shared.playOnDesktop("play-anime", item: item, extra: extra)
             return
         }
+        resumeIntent = false
         isResolvingStream = true
         statusMessage = "Loading episode \(episode.number)…"
         let progressKey = currentProgressID
@@ -358,6 +361,18 @@ final class AnimeViewModel {
             currentNativeVideoURL = nil
             statusMessage = "None of the streams would play. Try another server."
         }
+    }
+
+    /// True from `open()` until the first playback request goes out.
+    private var resumeIntent = false
+
+    /// The computer is on a different episode of this show: match it here
+    /// without sending another play command.
+    func followRemote(_ state: RemoteState) {
+        guard let item = selected, state.open, state.itemKey == "\(item.type.rawValue):\(item.tmdbId)",
+              let number = state.animeEpisode, selectedEpisode?.number != number,
+              let ep = details?.episodes.first(where: { $0.number == number }) else { return }
+        selectedEpisode = ep
     }
 
     /// Re-runs the current episode on whichever device is now the target.

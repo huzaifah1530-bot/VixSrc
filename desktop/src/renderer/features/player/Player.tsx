@@ -161,8 +161,21 @@ export function Player() {
     usePlayer.getState().close()
   }, [save])
 
+  // Caption list for the remote: side-loaded tracks first, then HLS tracks.
+  const captionApi = useRef({ list: [] as string[], index: -1, set: (_i: number) => {} })
+  captionApi.current = {
+    list: [...(source?.subtitles.map(t => t.label) ?? []), ...hlsTracks],
+    index: caption.kind === 'off' ? -1 : caption.kind === 'external' ? caption.index : (source?.subtitles.length ?? 0) + caption.index,
+    set: (i: number) => {
+      const ext = source?.subtitles.length ?? 0
+      setCaption(i < 0 ? { kind: 'off' } : i < ext ? { kind: 'external', index: i } : { kind: 'hls', index: i - ext })
+    }
+  }
+
   // Lets a paired phone drive this player (see lib/remote.ts).
   useEffect(() => registerPlayer({
+    captions: () => ({ list: captionApi.current.list, index: captionApi.current.index }),
+    setCaption: i => captionApi.current.set(i),
     state: () => {
       const v = video.current
       return v && v.readyState > 0 ? { position: v.currentTime, duration: Number.isFinite(v.duration) ? v.duration : 0, playing: !v.paused && !v.ended } : null

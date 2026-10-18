@@ -7,6 +7,7 @@ import { useSettings } from '@/stores/settings'
 import { imageUrl, itemKey, tmdb, type TvDetails } from '@/lib/tmdb'
 import { seasonsOf } from '@/features/details/actions'
 import { canonicalItem } from './sync'
+import { useLibrary } from '@/stores/library'
 
 // ── Native player handle (registered by <Player>) ────────────────────
 export interface PlayerHandle {
@@ -16,6 +17,8 @@ export interface PlayerHandle {
   toggle(): void
   seek(to: number): void
   skip(by: number): void
+  captions(): { list: string[]; index: number }
+  setCaption(index: number): void
 }
 let handle: PlayerHandle | null = null
 export function registerPlayer(h: PlayerHandle) { handle = h; schedulePublish(); return () => { if (handle === h) handle = null } }
@@ -56,6 +59,8 @@ export function buildState(): RemoteState {
     sources: p.sources.map(x => ({ name: x.name, audio: x.audio ?? null, quality: x.quality ?? null })),
     sourceIndex: p.sourceIndex,
     hasNext: p.open && p.hasNext(),
+    captions: native && handle ? handle.captions().list : [],
+    captionIndex: native && handle ? handle.captions().index : -1,
     status: p.status,
     error: p.error
   }
@@ -92,6 +97,15 @@ function toItem(raw: unknown): MediaItem | null {
   return canonicalItem(r) as unknown as MediaItem
 }
 
+/** This PC's Continue-watching entry for the item, if newer than the phone's. */
+function newerLocalResume(item: MediaItem): MediaItem | null {
+  const mine = useLibrary.getState().recents.find(r => r.type === item.type && r.tmdbId === item.tmdbId)
+  if (!mine || mine.resumeEpisode == null || mine.resumeSeason == null) return null
+  const theirs = Date.parse(String(item.updatedAt ?? '')) || 0
+  const ours = Date.parse(String(mine.updatedAt ?? '')) || 0
+  return ours > theirs ? mine : null
+}
+
 function serverIndex(names: string[], name: unknown, fallback: number) {
   if (typeof name === 'string') {
     const i = names.findIndex(n => n.toLowerCase() === name.toLowerCase())
@@ -118,8 +132,13 @@ export async function runCommand(cmd: Record<string, unknown>): Promise<string |
       if (item.type === 'movie') { usePlayer.getState().playTmdb(item, null, idx); return null }
       if (!isInt(cmd.season) || !isInt(cmd.episode)) return 'missing episode'
       const d = await tmdb<TvDetails>(`/tv/${item.tmdbId}`)
-      const title = typeof cmd.episodeTitle === 'string' ? cmd.episodeTitle.slice(0, 300) : null
-      usePlayer.getState().playTmdb(item, { seasons: seasonsOf(d), season: cmd.season as number, episode: cmd.episode as number, episodeTitle: title }, idx)
+      let season = cmd.season as number, episode = cmd.episode as number
+      let title = typeof cmd.episodeTitle === 'string' ? cmd.episodeTitle.slice(0, 300) : null
+      // "Resume" from the phone: if this PC watched the show more recently,
+      // its episode wins over the phone's (possibly not-yet-synced) one.
+      const mine = cmd.resume === true ? newerLocalResume(item) : null
+      if (mine) { season = mine.resumeSeason!; episode = mine.resumeEpisode!; title = mine.resumeTitle ?? null }
+      usePlayer.getState().playTmdb(item, { seasons: seasonsOf(d), season, episode, episodeTitle: title }, idx)
       return null
     }
     case 'play-anime': {
@@ -130,7 +149,10 @@ export async function runCommand(cmd: Record<string, unknown>): Promise<string |
       if (!item || !slug || !number) return 'invalid anime command'
       if (!catalog || !s.animeEnabled) return 'Anime is turned off on this PC'
       const details = await window.vela.anime.details(catalog.base, slug)
-      const ep: AnimeEpisode | undefined = details.episodes.find(e => e.number === number)
+      const mine = cmd.resume === true ? newerLocalResume({ ...item, tmdbId: 'kai:' + slug }) : null
+      const ep: AnimeEpisode | undefined =
+        (mine && details.episodes.find(e => Math.floor(Number(e.number)) === mine.resumeEpisode)) ||
+        details.episodes.find(e => e.number === number)
       if (!ep) return 'Episode not found on this PC'
       window.vela.showMainWindow()
       const animeItem = { ...item, tmdbId: 'kai:' + slug, anime: true }
@@ -164,6 +186,13 @@ export async function runCommand(cmd: Record<string, unknown>): Promise<string |
     case 'skip': return isNum(cmd.by) && Math.abs(cmd.by as number) <= 600 ? transport('skip', cmd.by as number) : 'invalid skip'
     case 'next': if (!p.hasNext()) return 'No next episode'; p.next(); return null
     case 'source': if (!isInt(cmd.index) || !p.sources[cmd.index as number]) return 'invalid source'; p.selectSource(cmd.index as number); return null
+    case 'caption': {
+      if (!native || !handle) return 'Captions can only be changed in Vela’s own player'
+      const i = cmd.index
+      if (!Number.isInteger(i) || (i as number) < -1 || (i as number) >= handle.captions().list.length) return 'invalid caption'
+      handle.setCaption(i as number)
+      return null
+    }
     case 'server': {
       const names = (p.kind === 'anime' ? s.animeServers : s.servers).map(x => x.name)
       const idx = serverIndex(names, cmd.name, isInt(cmd.index) ? (cmd.index as number) : p.serverIndex)

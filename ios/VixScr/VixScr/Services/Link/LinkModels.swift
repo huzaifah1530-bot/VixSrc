@@ -30,6 +30,10 @@ struct RemoteState: Codable, Equatable, Sendable {
     var sources: [Source]
     var sourceIndex: Int
     var hasNext: Bool
+    /// Caption tracks on the computer's player (older desktops omit these).
+    var captions: [String]?
+    /// -1 = captions off.
+    var captionIndex: Int?
     var status: String?
     var error: String?
 }

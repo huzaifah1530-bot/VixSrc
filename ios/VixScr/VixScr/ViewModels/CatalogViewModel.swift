@@ -61,6 +61,8 @@ final class CatalogViewModel {
     private var rejectedNativeStreamURLs: Set<URL> = []
 
     private var castTask: Task<Void, Never>?
+    /// True from `open()` until the first playback request goes out.
+    private var resumeIntent = false
 
     // Toasts
     var toastMessage: String?
@@ -406,6 +408,7 @@ final class CatalogViewModel {
         playerManager.cleanup()
         playerManager.setNowPlayingMetadata(title: item.title, subtitle: nil, artworkURL: item.posterURL)
         cast = []
+        resumeIntent = true
         isPlayerPresented = true
 
         // Cancel any in-flight cast fetch, otherwise a slow response for a
@@ -553,6 +556,28 @@ final class CatalogViewModel {
         store.servers.indices.contains(currentServerIndex) ? store.servers[currentServerIndex].name : "Select"
     }
 
+    /// The computer is playing a different episode of this show (it resumed
+    /// from its own, newer place): move the phone's selection to match
+    /// without sending another play command.
+    func followRemote(_ state: RemoteState) async {
+        guard let item = selected, item.type == .tv, state.open,
+              state.itemKey == "\(item.type.rawValue):\(item.tmdbId)",
+              let s = state.season, let e = state.episode else { return }
+        if selectedSeason?.seasonNumber == s, selectedEpisode?.episodeNumber == e { return }
+        if selectedSeason?.seasonNumber != s,
+           let meta = tvDetails?.usableSeasons.first(where: { $0.seasonNumber == s }) {
+            selectedSeason = meta
+            if let details = try? await client.season(tvId: item.tmdbId, seasonNumber: s, credential: store.credential) {
+                episodes = (details.episodes ?? []).map { ep -> Episode in
+                    var x = ep
+                    x.seasonNumber = s
+                    return x
+                }
+            }
+        }
+        if let ep = episodes.first(where: { $0.episodeNumber == e }) { selectedEpisode = ep }
+    }
+
     @MainActor
     func selectEpisode(_ episode: Episode) async {
         selectedEpisode = episode
@@ -586,6 +611,10 @@ final class CatalogViewModel {
             currentNativeVideoURL = nil
             nativeSources = []
             var extra: [String: Any] = ["server": activeServer?.name ?? ""]
+            // Opened via Resume / Continue watching rather than a chosen
+            // episode: the computer keeps its own place if it's newer.
+            if resumeIntent { extra["resume"] = true }
+            resumeIntent = false
             if item.type == .tv, let season = selectedSeason, let episode = selectedEpisode {
                 extra["season"] = season.seasonNumber
                 extra["episode"] = episode.episodeNumber
@@ -594,6 +623,7 @@ final class CatalogViewModel {
             DeviceLink.shared.playOnDesktop("play-tmdb", item: item, extra: extra)
             return
         }
+        resumeIntent = false
         if item.type == .movie {
             currentStreamURL = activeServer?.movieURL(tmdbId: item.tmdbId)
         } else if let season = selectedSeason, let episode = selectedEpisode {

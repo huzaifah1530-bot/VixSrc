@@ -54,6 +54,9 @@ export interface RemoteState {
   sources: { name: string; audio: string | null; quality: string | null }[]
   sourceIndex: number
   hasNext: boolean
+  /** Caption tracks on the PC's player; captionIndex -1 = off. */
+  captions: string[]
+  captionIndex: number
   status: string | null
   error: string | null
 }
@@ -66,6 +69,7 @@ export type RemoteCommand =
   | { action: 'skip'; by: number }
   | { action: 'server'; name: string; index?: number }
   | { action: 'source'; index: number }
+  | { action: 'caption'; index: number }
 
 export type LinkEvent =
   | { type: 'status'; status: LinkStatus }

@@ -15,6 +15,8 @@ const DEFAULT_TMDB_CREDENTIAL = 'ce5e1892fe2fdf9006a6b4dfabe1fea4'
 const PROTOCOLS = ['vela', 'vixscr'] // vixscr:// kept so old links still open
 
 app.setName('Vela')
+// Dev-only: run against a throwaway profile (scripts/phone-sim.ts).
+if (!app.isPackaged && process.env.VELA_USER_DATA) app.setPath('userData', process.env.VELA_USER_DATA)
 
 // ── One-time migration from the v1 "VixScr" profile ───────────────────
 // Both apps load from file://, so copying Local Storage makes the old

@@ -23,7 +23,11 @@ struct AnimePlayerSheet: View {
                             onSelect: { viewModel.switchServer(to: $0) }
                         )
                     }
-                    qualitySelector
+                    if DeviceLink.shared.routesPlayback {
+                        RemoteOptionsView()
+                    } else {
+                        qualitySelector
+                    }
                     actionRow
                     if let item = viewModel.selected {
                         Text(item.description)
@@ -68,6 +72,10 @@ struct AnimePlayerSheet: View {
         .animation(.easeOut(duration: 0.25), value: viewModel.toastMessage)
         // Link prompts must come from the front-most presentation.
         .deviceLinkPrompts()
+        .onChange(of: DeviceLink.shared.remote) { _, state in
+            guard DeviceLink.shared.routesPlayback, DeviceLink.shared.shouldFollowRemote, let state else { return }
+            viewModel.followRemote(state)
+        }
         .preferredColorScheme(.dark)
     }
 

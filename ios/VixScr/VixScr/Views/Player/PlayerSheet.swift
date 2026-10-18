@@ -40,6 +40,11 @@ struct PlayerSheet: View {
         .animation(.easeOut(duration: 0.25), value: viewModel.toastMessage)
         // Link prompts must come from the front-most presentation.
         .deviceLinkPrompts()
+        // Keep the episode list in step with what the computer is playing.
+        .onChange(of: DeviceLink.shared.remote) { _, state in
+            guard DeviceLink.shared.routesPlayback, DeviceLink.shared.shouldFollowRemote, let state else { return }
+            Task { await viewModel.followRemote(state) }
+        }
         .preferredColorScheme(.dark)
     }
 
@@ -54,6 +59,10 @@ struct PlayerSheet: View {
                     .padding(.horizontal, 20)
                 serverSelectorView
                     .padding(.horizontal, 20)
+                if DeviceLink.shared.routesPlayback {
+                    RemoteOptionsView()
+                        .padding(.horizontal, 20)
+                }
                 nativeSourceSelectorView
                     .padding(.horizontal, 20)
                 actionRow

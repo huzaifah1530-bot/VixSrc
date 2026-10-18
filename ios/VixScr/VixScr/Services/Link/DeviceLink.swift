@@ -80,6 +80,12 @@ final class DeviceLink {
     @ObservationIgnored private var suppressReconnect = false
     @ObservationIgnored private var toastTask: Task<Void, Never>?
     @ObservationIgnored private var hostIndex = 0
+    @ObservationIgnored private var lastPlayRequest = Date.distantPast
+
+    /// Whether the phone should adopt the computer's episode. False for a
+    /// few seconds after we asked for a title, so the computer's previous
+    /// episode can't overwrite the one the user just picked.
+    var shouldFollowRemote: Bool { Date().timeIntervalSince(lastPlayRequest) > 5 }
 
     private static let targetKey = "vela_link_playback_target"
     private static let lastDeskKey = "vela_link_last_desk"
@@ -572,6 +578,7 @@ final class DeviceLink {
         msg["id"] = UUID().uuidString
         msg["action"] = action
         msg["item"] = itemObject
+        lastPlayRequest = Date()
         if isConnected(to: target.deskId) {
             send(msg)
         } else {

@@ -102,6 +102,39 @@ async function main() {
   c.send({ t: 'cmd', id: 'c4', action: 'skip', by: 30, session: 'movie:999' })
   assert.equal((await c.until(m => m.t === 'ack' && m.id === 'c4')).error, 'stale'); console.log('ok stale command rejected')
 
+  // Rapid seeks: every command applies, the last one wins.
+  for (const [i, min] of [20, 50, 0, 7].entries()) c.send({ t: 'cmd', id: 'rs' + i, action: 'seek', to: min * 60, session })
+  const acked = new Set<string>()
+  await c.until(m => { if (m.t === 'ack' && String(m.id).startsWith('rs')) { assert.equal(m.ok, true, m.error); acked.add(m.id) } return acked.size === 4 })
+  const settled = await c.until(m => m.t === 'state' && Math.abs(m.s.position - 420) < 5, 15000)
+  console.log('ok rapid seeks 20→50→0→7 min all applied, ended at', settled.s.position.toFixed(1))
+
+  // Captions list + caption command
+  const withCaps = await c.until(m => m.t === 'state' && Array.isArray(m.s.captions))
+  console.log('ok captions exposed:', withCaps.s.captions.length, 'tracks, index', withCaps.s.captionIndex)
+  if (withCaps.s.captions.length) {
+    c.send({ t: 'cmd', id: 'cap1', action: 'caption', index: 0, session })
+    assert.equal((await c.until(m => m.t === 'ack' && m.id === 'cap1')).ok, true)
+    await c.until(m => m.t === 'state' && m.s.captionIndex === 0, 5000); console.log('ok caption switched on PC')
+  }
+  c.send({ t: 'cmd', id: 'cap2', action: 'caption', index: 99, session })
+  assert.equal((await c.until(m => m.t === 'ack' && m.id === 'cap2')).ok, false); console.log('ok invalid caption rejected')
+
+  // Resume intent: the PC's newer place beats the phone's stale episode.
+  const show = { type: 'tv', tmdbId: '1399', title: 'Game of Thrones', description: '', year: '2011', popularity: 0 }
+  c.send({ t: 'cmd', id: 'ep5', action: 'play-tmdb', item: show, season: 1, episode: 5 })
+  await c.until(m => m.t === 'state' && m.s.episode === 5, 20000)
+  c.send({ t: 'cmd', id: 'res', action: 'play-tmdb', resume: true, item: { ...show, resumeSeason: 1, resumeEpisode: 3, updatedAt: '2020-01-01T00:00:00Z' }, season: 1, episode: 3 })
+  assert.equal((await c.until(m => m.t === 'ack' && m.id === 'res')).ok, true)
+  await new Promise(r => setTimeout(r, 2500))
+  const resumed = await c.until(m => m.t === 'state' && m.s.open)
+  assert.equal(resumed.s.episode, 5, 'resume kept the PC episode'); console.log('ok resume from phone (E3, stale) continued at PC episode E5')
+  c.send({ t: 'cmd', id: 'ep3', action: 'play-tmdb', item: show, season: 1, episode: 3 })
+  await c.until(m => m.t === 'state' && m.s.episode === 3, 20000); console.log('ok explicitly picked E3 still plays E3')
+  c.send({ t: 'cmd', id: 'back', action: 'play-tmdb', item: { type: 'movie', tmdbId: '157336', title: 'Interstellar', description: '', year: '2014', popularity: 0 } })
+  const movie = await c.until(m => m.t === 'state' && m.s.itemKey === 'movie:157336' && m.s.mode === 'native', 45000)
+  Object.assign(playing, movie)
+
   // Sync round trip
   c.send({ t: 'sync-config', enabled: true })
   c.send({ t: 'sync-doc', mode: 'merge', reply: true, doc: { v: 1, settings: { seekInterval: { v: 15, at: Date.now() } }, favorites: [{ key: 'movie:27205', item: { type: 'movie', tmdbId: '27205', title: 'Inception', description: '', year: '2010', popularity: 0 }, at: Date.now() }] } })
