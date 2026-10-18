@@ -23,6 +23,7 @@ export function Player() {
   const volume = useSettings(s => s.volume)
   const muted = useSettings(s => s.muted)
   const setSettings = useSettings(s => s.set)
+  const captionScale = useSettings(s => s.captionScale ?? 1)
 
   const root = useRef<HTMLDivElement>(null)
   const video = useRef<HTMLVideoElement>(null)
@@ -259,7 +260,8 @@ export function Player() {
   const qualityLabel = source ? (source.quality ? `${source.quality}${source.audio ? ' · ' + source.audio : ''}` : source.name) : 'Quality'
 
   return (
-    <div ref={root} className={cx('player', !controls && 'is-idle', fullscreen && 'is-fullscreen')} onMouseMove={poke} role="dialog" aria-label={`Playing ${p.item?.title ?? ''}`}>
+    <div ref={root} className={cx('player', !controls && 'is-idle', fullscreen && 'is-fullscreen')} onMouseMove={poke}
+      style={{ '--caption-scale': captionScale } as React.CSSProperties} role="dialog" aria-label={`Playing ${p.item?.title ?? ''}`}>
       {native ? (
         <video
           ref={video}

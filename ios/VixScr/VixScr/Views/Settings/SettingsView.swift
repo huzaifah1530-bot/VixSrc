@@ -26,6 +26,7 @@ struct SettingsView: View {
     @State private var isImporting = false
     @State private var showImportConfirm = false
     @State private var pendingImportURL: URL?
+    @AppStorage(CaptionSize.storageKey) private var captionScale = CaptionSize.medium.rawValue
 
     var body: some View {
         NavigationStack {
@@ -164,10 +165,15 @@ struct SettingsView: View {
                 }
             }
             .pickerStyle(.segmented)
+            Picker("Caption Size", selection: $captionScale) {
+                ForEach(CaptionSize.allCases) { size in
+                    Text(size.label).tag(size.rawValue)
+                }
+            }
         } header: {
             Text("Player")
         } footer: {
-            Text("Double-tap the left or right of the video to skip back or forward. Hold either edge for 2× speed.")
+            Text("Double-tap the left or right of the video to skip back or forward. Hold either edge for 2× speed. Caption Size applies to subtitles Vela draws itself, such as anime subtitles.")
         }
     }
 

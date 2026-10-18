@@ -857,13 +857,15 @@ private struct CaptionPicker: View {
 struct CaptionOverlay: View {
     @Bindable var playerManager: VideoPlayerManager
     var bottomInset: CGFloat = 14
+    /// Settings › Player › Caption Size.
+    @AppStorage(CaptionSize.storageKey) private var captionScale = CaptionSize.medium.rawValue
 
     var body: some View {
         VStack {
             Spacer()
             if let caption = playerManager.currentCaption {
                 Text(caption)
-                    .font(.system(.callout, design: .default).weight(.semibold))
+                    .font(.system(size: 16 * captionScale, weight: .semibold))
                     .foregroundStyle(.white)
                     .multilineTextAlignment(.center)
                     .shadow(color: .black, radius: 2)
@@ -878,6 +880,21 @@ struct CaptionOverlay: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .allowsHitTesting(false)
+    }
+}
+
+/// Caption text scale; matches the desktop's caption size choices.
+enum CaptionSize: Double, CaseIterable, Identifiable {
+    case small = 0.8, medium = 1.0, large = 1.3, extraLarge = 1.6
+    static let storageKey = "vixsrc_live_caption_scale"
+    var id: Double { rawValue }
+    var label: String {
+        switch self {
+        case .small: return "Small"
+        case .medium: return "Medium"
+        case .large: return "Large"
+        case .extraLarge: return "Extra Large"
+        }
     }
 }
 

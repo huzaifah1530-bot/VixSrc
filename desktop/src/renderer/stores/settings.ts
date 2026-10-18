@@ -16,6 +16,7 @@ export const DEFAULT_ANIME_SERVERS: AnimeServer[] = [
   { id: uuid(), name: 'AniKoto', base: 'https://anikototv.to' }
 ]
 export const SEEK_OPTIONS = [5, 10, 15, 30] as const
+export const CAPTION_SIZES = [{ v: 0.8, label: 'Small' }, { v: 1, label: 'Medium' }, { v: 1.3, label: 'Large' }, { v: 1.6, label: 'Extra Large' }] as const
 export type ContentFilter = 'all' | 'movie' | 'tv'
 export type CardSize = 'compact' | 'large'
 
@@ -32,6 +33,8 @@ export interface SettingsState {
   sidebarCollapsed: boolean
   volume: number
   muted: boolean
+  /** Caption text scale, same steps as iOS (0.8, 1, 1.3, 1.6). */
+  captionScale: number
   set: (patch: Partial<Omit<SettingsState, 'set'>>) => void
 }
 
@@ -53,6 +56,7 @@ export const useSettings = create<SettingsState>()(
       sidebarCollapsed: false,
       volume: 1,
       muted: false,
+      captionScale: 1,
       ...(fresh ? legacySettings() : {}),
       set: patch => set(patch)
     }),

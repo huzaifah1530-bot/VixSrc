@@ -5,7 +5,7 @@ import type { StreamServer } from '@shared/types'
 import { Icon, type IconName } from '@/components/Icon'
 import { Toast } from '@/components/Media'
 import { TrafficLights, useWindowFocusClass } from '@/components/Chrome'
-import { DEFAULT_ANIME_SERVERS, DEFAULT_SERVERS, SEEK_OPTIONS, useSettings } from '@/stores/settings'
+import { CAPTION_SIZES, DEFAULT_ANIME_SERVERS, DEFAULT_SERVERS, SEEK_OPTIONS, useSettings } from '@/stores/settings'
 import { useLibrary } from '@/stores/library'
 import { exportBackup, importBackup } from '@/lib/backup'
 import { toast } from '@/stores/ui'
@@ -97,6 +97,9 @@ function General() {
       <Group title="Playback">
         <Field label="Skip interval" hint="Arrow keys, J / L and the skip buttons">
           <div className="segmented small">{SEEK_OPTIONS.map(v => <button key={v} className={cx('seg', s.seekInterval === v && 'is-active')} onClick={() => s.set({ seekInterval: v })}>{v}s</button>)}</div>
+        </Field>
+        <Field label="Caption size" hint="Subtitles drawn by Vela’s player">
+          <div className="segmented small">{CAPTION_SIZES.map(c => <button key={c.v} className={cx('seg', (s.captionScale ?? 1) === c.v && 'is-active')} onClick={() => s.set({ captionScale: c.v })}>{c.label}</button>)}</div>
         </Field>
       </Group>
       <Group title="Appearance" footer="Performance modes turn off the glass blur on slower PCs. Ultra also removes translucency.">
