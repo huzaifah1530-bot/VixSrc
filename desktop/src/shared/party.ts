@@ -327,9 +327,9 @@ export class PartyCore {
   seek(pos: number) { return this.bump({ pos: Math.max(0, pos) }) }
   skip(by: number) { return this.state ? this.seek(this.target().pos + by) : false }
   /** Only the host (or acting host) picks what the room watches. `null` = browsing. */
-  setMedia(media: PartyMedia | null) {
+  setMedia(media: PartyMedia | null, startAt = 0) {
     if (!this.isLeader) { this.events.onToast?.('Only the host can change what’s playing'); return false }
-    const ok = this.bump({ media, pos: 0, playing: media !== null })
+    const ok = this.bump({ media, pos: Math.max(0, startAt), playing: media !== null })
     if (ok) this.events.onMedia?.(media, this.state!.tl, { initial: false, mine: true })
     return ok
   }
@@ -374,6 +374,9 @@ export class PartyCore {
     const holdingForMe = !!this.state?.tl.hold && this.stalled
     // At the end of the video "not moving" is expected, not a stall.
     const want = (t.playing || holdingForMe) && !local.ended
+    // Sitting at the end while the room still plays: the host moves it on
+    // (retried every tick, so a missed "ended" event can't strand the room).
+    if (local.ended && t.playing && this.isLeader) void this.ended()
 
     this.samples = [...this.samples.filter(s => now - s.t < 2500), { t: now, pos: local.pos }]
     let notMoving = false
@@ -398,6 +401,18 @@ export class PartyCore {
       const seek = Math.abs(local.pos - t.pos) > 3 ? t.pos : null
       if (seek !== null) this.resetProgress(now)
       return { play: true, rate: 1, seek, drift: local.pos - t.pos }
+    }
+
+    // Alone in the room: this player *is* the timeline. Instead of chasing
+    // it (clock-sync adjustments would make it hunt and stutter), quietly
+    // re-anchor the timeline to where we actually are.
+    if (this.isLeader && this.peers.size === 0 && t.playing && local.playing && this.connected) {
+      if (Math.abs(local.pos - t.pos) > 1) {
+        const tl = this.state!.tl
+        this.state = { ...this.state!, tl: { ...tl, pos: local.pos, at: this.transport.now(), n: tl.n + 1, by: this.me } }
+        this.publishState()
+      }
+      return { play: true, rate: 1, seek: null, drift: 0 }
     }
 
     let c = correction(local, t)
@@ -480,7 +495,8 @@ export class PartyCore {
     const waitingOn = stalled.filter(p => !this.excluded.has(p.id)).slice(0, WAIT_MAX_PEERS)
     const meStalled = this.myBuffering
     const cooling = now - this.lastResume < REHOLD_COOLDOWN_MS
-    if (cfg.waitForAll && tl.playing && !cooling && (waitingOn.length || meStalled) && tl.media) {
+    // Alone, there's nobody to hold the room for: the timeline just follows us.
+    if (cfg.waitForAll && tl.playing && !cooling && (waitingOn.length || (meStalled && this.peers.size > 0)) && tl.media) {
       this.bumpAsLeader({ playing: false, hold: true })
     } else if (tl.hold && !tl.playing && !waitingOn.length && !meStalled) {
       this.lastResume = now

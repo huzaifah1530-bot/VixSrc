@@ -239,8 +239,9 @@ usePlayer.subscribe((s, prev) => {
   const roomKey = core.state?.tl.media?.key ?? null
   if ((media?.key ?? null) === roomKey) return
   if (core.isLeader) {
-    // Host picked something else (or went back to browsing): the room follows.
-    core.setMedia(media)
+    // Host picked something else (or went back to browsing): the room
+    // follows, starting where the host resumes rather than 0:00.
+    core.setMedia(media, s.open ? s.resumeAt : 0)
   } else if (s.open || roomKey) {
     // A viewer going their own way leaves the party.
     leaveParty(true)
@@ -253,6 +254,8 @@ export function answerFollow(follow: boolean) {
   const prompt = useParty.getState().prompt
   useParty.setState({ prompt: null, following: follow })
   if (!follow) { leaveParty(); return }
+  // Remember it: coming back with the same link keeps following.
+  if (conn) localStorage.setItem('vela_party_following_' + conn.invite.room, '1')
   if (prompt?.media) loadMedia(prompt.media)
   else if (usePlayer.getState().open) { loadingFromRoom = '(browsing)'; usePlayer.getState().close(); setTimeout(() => { loadingFromRoom = null }, 500) }
 }
@@ -290,7 +293,10 @@ function begin(invite: Invite, creating: boolean) {
       if (p.open) toast('Watch party started — share the link')
     }
   }
-  useParty.setState({ active: true, link: inviteLink(invite), status: 'connecting', panelOpen: true, offset: 0, following: false, prompt: null })
+  // Rejoining a party you've been in: you're following the host already.
+  const rejoining = !creating && (!!localStorage.getItem('vela_party_following_' + invite.room) || !!JSON.parse(localStorage.getItem(IDENTITY_KEY) ?? '{}')[invite.room + ':seen'])
+  useParty.setState({ active: true, link: inviteLink(invite), status: 'connecting', panelOpen: true, offset: 0, following: rejoining, prompt: null })
+  const seen = JSON.parse(localStorage.getItem(IDENTITY_KEY) ?? '{}'); seen[invite.room + ':seen'] = true; localStorage.setItem(IDENTITY_KEY, JSON.stringify(seen))
   conn.open().catch(err => toast('Couldn’t start the party: ' + (err as Error).message))
   loop = setInterval(() => { syncOnce().catch(() => {}) }, 500)
   window.addEventListener('online', onNetwork)

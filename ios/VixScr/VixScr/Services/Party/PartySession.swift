@@ -12,6 +12,8 @@ protocol PartyPlayerHost: AnyObject {
     func nextPartyMedia(after media: PartyMedia) async -> PartyMedia?
     /// Steps quality down within the same audio; returns the new label.
     func stepDownQuality() -> String?
+    /// Where this screen will resume the current media (saved progress).
+    var partyResumePosition: Double { get }
 }
 
 extension Notification.Name {
@@ -114,7 +116,10 @@ final class PartySession {
         self.creating = creating
         aliases = [:]
         offset = 0
-        following = false
+        // Rejoining a party you've been in: you're following the host already.
+        let seenKey = "vela_party_seen_" + invite.room
+        following = !creating && UserDefaults.standard.bool(forKey: seenKey)
+        UserDefaults.standard.set(true, forKey: seenKey)
         prompt = nil
         link = invite.link
         active = true
@@ -226,7 +231,9 @@ final class PartySession {
         // While loading what the room asked for, local changes are ours.
         guard media.key != room, loadingKey == nil else { return }
         if core.isLeader {
-            core.setMedia(media) // the host picked something else: the room follows
+            // The host picked something else: the room follows, starting
+            // where the host resumes (not 0:00).
+            core.setMedia(media, startAt: host?.partyResumePosition ?? 0)
         } else {
             leave()               // a viewer going their own way leaves
             show("You left the watch party")
@@ -288,8 +295,9 @@ final class PartySession {
             return
         }
         core.setLoading(false)
-        let ended = pm.duration > 0 && pm.currentTime >= pm.duration - 0.6
-        let c = core.sync(localPos: pm.currentTime - offset, localPlaying: pm.isPlaying, ended: ended, quiet: quiet)
+        let pos = pm.livePosition
+        let ended = pm.duration > 0 && pos >= pm.duration - 0.6
+        let c = core.sync(localPos: pos - offset, localPlaying: pm.isPlaying, ended: ended, quiet: quiet)
         if ended && c.play { core.tick(); return } // the host is moving the room on
         if let seek = c.seek { pm.rawSeek(to: seek + offset) }
         if c.play && !pm.isPlaying { pm.rawPlay() }

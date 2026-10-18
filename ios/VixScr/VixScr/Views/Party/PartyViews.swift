@@ -217,6 +217,11 @@ struct PartyDock: View {
     }
 }
 
+@MainActor @Observable final class PartyPasteFlag {
+    static let shared = PartyPasteFlag()
+    var found = false
+}
+
 /// Shown when something that looks like a link is on the clipboard — for
 /// LiveContainer, where tapping an invite link can't open Vela directly.
 struct PartyPasteBanner: View {
@@ -251,20 +256,31 @@ struct PartyPasteBanner: View {
         }
         .animation(.easeOut(duration: 0.25), value: show)
         .onChange(of: scenePhase, initial: true) { _, phase in if phase == .active { check() } }
+        .onChange(of: PartyPasteFlag.shared.found) { _, found in show = found }
     }
 
     private func check() {
         let pb = UIPasteboard.general
         guard pb.changeCount != lastChange, !party.active else { return }
         // Pattern detection doesn't read the clipboard, so no paste prompt.
-        pb.detectPatterns(for: [\.probableWebURL]) { result in
-            let found = (try? result.get())?.contains(\.probableWebURL) == true
-            Task { @MainActor in show = found }
+        // The completion runs on a background queue. It must not be
+        // main-actor isolated (that crashed the app at launch with a link
+        // on the clipboard), so it only hands a Bool back to the main actor.
+        let update: @Sendable (Bool) -> Void = { found in
+            Task { @MainActor in PartyPasteFlag.shared.found = found }
         }
+        pb.detectPatterns(for: [\.probableWebURL], completionHandler: Self.patternHandler(update))
+    }
+
+    /// Built outside any actor so the closure isn't main-actor isolated.
+    nonisolated static func patternHandler(_ update: @escaping @Sendable (Bool) -> Void)
+        -> @Sendable (Result<Set<PartialKeyPath<UIPasteboard.DetectedValues>>, Error>) -> Void {
+        { result in update((try? result.get())?.contains(\UIPasteboard.DetectedValues.probableWebURL) == true) }
     }
 
     private func dismiss() {
         show = false
+        PartyPasteFlag.shared.found = false
         lastChange = UIPasteboard.general.changeCount
         UserDefaults.standard.set(lastChange, forKey: "vela_party_paste_seen")
     }

@@ -62,6 +62,7 @@ extension CatalogViewModel: PartyPlayerHost {
     }
 
     func stepDownQuality() -> String? { nil }
+    var partyResumePosition: Double { playbackResumePosition }
 }
 
 extension AnimeViewModel: PartyPlayerHost {
@@ -98,6 +99,13 @@ extension AnimeViewModel: PartyPlayerHost {
         m.key = "anime:\(slug):\(next.number)"
         m.episode = .string(next.number)
         return m
+    }
+
+    var partyResumePosition: Double {
+        guard let item = selected, let ep = selectedEpisode,
+              let p = store.progress(for: "tv:\(item.tmdbId):1:\(ep.intNumber)"),
+              p.position > 0, p.progress < 0.95 else { return 0 }
+        return p.position
     }
 
     func stepDownQuality() -> String? {

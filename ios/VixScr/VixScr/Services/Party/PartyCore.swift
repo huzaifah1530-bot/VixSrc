@@ -273,9 +273,9 @@ final class PartyCore {
     @discardableResult func skip(_ by: Double) -> Bool { seek(target().pos + by) }
 
     /// Only the host (or acting host) picks what the room watches. `nil` = browsing.
-    @discardableResult func setMedia(_ media: PartyMedia?) -> Bool {
+    @discardableResult func setMedia(_ media: PartyMedia?, startAt: Double = 0) -> Bool {
         guard isLeader else { onToast?("Only the host can change what's playing"); return false }
-        let ok = bump { $0.media = media; $0.pos = 0; $0.playing = media != nil }
+        let ok = bump { $0.media = media; $0.pos = max(0, startAt); $0.playing = media != nil }
         if ok { onMedia?(media, false, true) }
         return ok
     }
@@ -332,6 +332,9 @@ final class PartyCore {
         let t = target()
         let holdingForMe = state?.tl.hold == true && stalled
         let want = (t.playing || holdingForMe) && !ended
+        // At the end while the room still plays: the host moves it on
+        // (retried every tick, so a missed "ended" event can't strand the room).
+        if ended && t.playing && isLeader { self.ended() }
 
         samples = samples.filter { now.timeIntervalSince($0.t) < 2.5 } + [(now, localPos)]
         var notMoving = false
@@ -354,6 +357,20 @@ final class PartyCore {
             let seek: Double? = abs(localPos - t.pos) > 3 ? t.pos : nil
             if seek != nil { samples = []; wantSince = now }
             return PartyCorrection(play: true, rate: 1, seek: seek, drift: localPos - t.pos)
+        }
+
+        // Alone in the room: this player is the timeline. Re-anchor instead
+        // of chasing (clock-sync adjustments made a solo host hunt and stutter).
+        if isLeader && peers.isEmpty && t.playing && localPlaying && connected, var current = state {
+            if abs(localPos - t.pos) > 1 {
+                current.tl.pos = localPos
+                current.tl.at = transport?.now() ?? 0
+                current.tl.n += 1
+                current.tl.by = me
+                state = current
+                publish()
+            }
+            return PartyCorrection(play: true, rate: 1, seek: nil, drift: 0)
         }
 
         var c = Self.correction(localPos: localPos, localPlaying: localPlaying, target: (t.playing, t.pos))
@@ -421,7 +438,8 @@ final class PartyCore {
         let waitingOn = stalled.filter { !excluded.contains($0.id) }.prefix(PartyRules.waitMaxPeers)
         let tl = current.tl
         let cooling = now.timeIntervalSince(lastResume) < PartyRules.reholdCooldown
-        if current.cfg.waitForAll && tl.playing && !cooling && (!waitingOn.isEmpty || myBuffering) && tl.media != nil {
+        // Alone, there's nobody to hold the room for: the timeline just follows us.
+        if current.cfg.waitForAll && tl.playing && !cooling && (!waitingOn.isEmpty || (myBuffering && !peers.isEmpty)) && tl.media != nil {
             bumpAsLeader(&current) { $0.playing = false; $0.hold = true }
         } else if tl.hold && !tl.playing && waitingOn.isEmpty && !myBuffering {
             lastResume = now

@@ -80,12 +80,13 @@ async function soloHost() {
   await solo.start()
   solo.core.create(movie, 0, true)
   await sleep(6000)
-  const holdsBefore = solo.core.state!.tl.n
-  // A short network hiccup.
+  // A short network hiccup: alone, nobody is waited for — the room's
+  // timeline simply follows this player.
   solo.stalled = true
-  await until(() => solo.core.state!.tl.hold, 8000, 'solo holds while stuck')
-  await sleep(2000); solo.stalled = false
-  await until(() => solo.playing && !solo.core.state!.tl.hold, 6000, 'solo resumes')
+  await sleep(5000)
+  assert.equal(solo.core.state!.tl.hold, false, 'never holds when alone')
+  assert.ok(Math.abs(solo.core.target().pos - solo.pos) < 1.5, 'timeline followed the stuck player')
+  solo.stalled = false
   await sleep(2000)
   const n = solo.core.state!.tl.n
   const p0 = solo.pos
@@ -97,8 +98,8 @@ async function soloHost() {
   if (trace.length) console.log(trace.join('\n'))
   assert.equal(solo.core.state!.tl.n, n, 'no more holds after recovering')
   assert.ok(solo.pos - p0 > 9, 'kept playing ' + (solo.pos - p0))
-  assert.ok(n - holdsBefore <= 2, 'one hold + one resume, got ' + (n - holdsBefore))
-  ok(`a host alone pauses once for a real hiccup, then plays on without freezing (${(solo.pos - p0).toFixed(1)}s in 10s)`)
+  ok(`a host alone never holds or chases the clock; plays smoothly after a hiccup (${(solo.pos - p0).toFixed(1)}s in 10s, ${solo.seeks} jumps)`)
+  assert.equal(solo.seeks, 0, 'no jumps when alone')
   solo.stop()
 }
 

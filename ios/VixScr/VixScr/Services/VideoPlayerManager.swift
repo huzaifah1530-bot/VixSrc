@@ -272,6 +272,15 @@ final class VideoPlayerManager {
         pendingResumePosition = 0
         updateCaption(at: clamped)
     }
+    /// The player's real position right now. `currentTime` only updates on
+    /// the periodic observer, so it lags by up to its interval; syncing
+    /// against it made the party "correct" drift that wasn't there.
+    var livePosition: Double {
+        guard let player else { return currentTime }
+        let t = player.currentTime().seconds
+        return t.isFinite ? t : currentTime
+    }
+
     func setRate(_ rate: Float) {
         guard let player, player.timeControlStatus != .paused, !isSpeedBoosted, player.rate != rate else { return }
         player.rate = rate
