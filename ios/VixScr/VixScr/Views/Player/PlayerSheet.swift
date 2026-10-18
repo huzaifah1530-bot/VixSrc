@@ -44,6 +44,7 @@ struct PlayerSheet: View {
         // Link prompts must come from the front-most presentation.
         .deviceLinkPrompts()
         .overlay(alignment: .top) { PartyBanner() }
+        .partyPrompts()
         .onAppear { if PartySession.shared.active { PartySession.shared.attach(viewModel) } }
         // Keep the episode list in step with what the computer is playing.
         .onChange(of: DeviceLink.shared.remote) { _, state in

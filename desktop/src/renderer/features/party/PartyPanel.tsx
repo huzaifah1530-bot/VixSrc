@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Icon } from '@/components/Icon'
-import { party, startParty, leaveParty, joinParty, useParty } from '@/lib/party'
+import { answerFollow, party, startParty, leaveParty, joinParty, useParty } from '@/lib/party'
 import { toast } from '@/stores/ui'
 import { cx } from '@/lib/format'
 
@@ -105,6 +105,44 @@ export function JoinPartyDialog({ onClose }: { onClose: () => void }) {
         <div className="sheet-actions">
           <button className="btn" onClick={onClose}>Cancel</button>
           <button className="btn btn-primary" onClick={() => { if (joinParty(text)) onClose() }}>Join</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/** Always-visible party pill (outside the player) + the panel when open. */
+export function PartyDock() {
+  const s = useParty()
+  if (!s.active) return null
+  const hostAway = !s.isHost
+  return (
+    <>
+      <button className="party-dock glass-strong" onClick={() => useParty.setState(x => ({ panelOpen: !x.panelOpen }))} aria-label="Watch party">
+        <Icon name="people" size={14} />
+        <span>{s.status === 'reconnecting' ? 'Reconnecting…' : `${s.peers.length + 1} in party`}</span>
+        <span className="muted">{s.isHost ? '· pick something to watch' : hostAway ? '· waiting for the host' : ''}</span>
+      </button>
+      <div className="party-dock-panel"><PartyPanel /></div>
+    </>
+  )
+}
+
+/** "The host moved on — follow?" Shown to viewers once; "follow" sticks. */
+export function FollowPrompt() {
+  const prompt = useParty(s => s.prompt)
+  if (!prompt) return null
+  return (
+    <div className="sheet-backdrop">
+      <div className="sheet glass-strong" role="alertdialog" aria-modal="true" aria-labelledby="follow-title">
+        <h2 id="follow-title" className="sheet-title">{prompt.title ? 'The host started something new' : 'The host went back to browsing'}</h2>
+        <p className="muted sheet-sub">
+          {prompt.title ? <>They’re now watching <strong>{prompt.title}</strong>.</> : 'They’re picking what to watch next.'}{' '}
+          Follow them for the rest of the party, or leave.
+        </p>
+        <div className="sheet-actions">
+          <button className="btn" onClick={() => answerFollow(false)}>Leave party</button>
+          <button className="btn btn-primary" onClick={() => answerFollow(true)}>Follow host</button>
         </div>
       </div>
     </div>

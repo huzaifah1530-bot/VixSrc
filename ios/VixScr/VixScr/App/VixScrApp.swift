@@ -197,6 +197,9 @@ struct RootView: View {
                 }
             }
             .deviceLinkPrompts()
+            .partyPrompts()
+            .overlay(alignment: .bottom) { PartyDock() }
+            .overlay(alignment: .top) { PartyPasteBanner() }
             // Leave the Anime tab if it is switched off.
             .onChange(of: store.animeEnabled) { _, enabled in
                 if !enabled {

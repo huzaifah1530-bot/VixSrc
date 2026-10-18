@@ -104,7 +104,25 @@ struct SettingsView: View {
         }
     }
 
+    private var partySection: some View {
+        Section {
+            if PartySession.shared.active {
+                Button("Open Watch Party") { PartySession.shared.sheetOpen = true }
+            } else {
+                PasteButton(payloadType: String.self) { strings in
+                    Task { @MainActor in if let s = strings.first { PartySession.shared.join(s) } }
+                }
+                .labelStyle(.titleAndIcon)
+            }
+        } header: {
+            Text("Watch Together")
+        } footer: {
+            Text("Copy a watch party invite link, then paste it here to join. Useful when tapping the link doesn't open Vela (for example inside LiveContainer).")
+        }
+    }
+
     private var devicesSection: some View {
+        partySection
         Section {
             NavigationLink {
                 DevicesView()

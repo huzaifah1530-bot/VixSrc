@@ -11,6 +11,10 @@ enum PartyRules {
     static let softSync = 0.25
     static let peerTimeout: TimeInterval = 75
     static let aliveEvery: TimeInterval = 30
+    static let stallWindow: TimeInterval = 1.5
+    static let stallGrace: TimeInterval = 2.5
+    static let hardSeekCooldown: TimeInterval = 4
+    static let reholdCooldown: TimeInterval = 3
 }
 
 struct PartyMedia: Codable, Equatable {
@@ -90,7 +94,8 @@ final class PartyCore {
     private var lastSentTimeline = Date.distantPast
     private var lastAlive = Date.distantPast
 
-    var onMedia: ((PartyMedia?) -> Void)?
+    /// Room media changed. `initial` = first state after (re)joining; `mine` = we changed it.
+    var onMedia: ((PartyMedia?, _ initial: Bool, _ mine: Bool) -> Void)?
     var onChange: (() -> Void)?
     var onToast: ((String) -> Void)?
     var onStruggling: (() -> Void)?
@@ -185,7 +190,8 @@ final class PartyCore {
             onChange?()
         case "state":
             guard var s = parse(m["s"]) else { return }
-            let tlOk = s.tl.by == from && canControl(from, under: state?.cfg ?? s.cfg)
+            let mediaChange = state != nil && state!.tl.media?.key != s.tl.media?.key
+            let tlOk = s.tl.by == from && canControl(from, under: state?.cfg ?? s.cfg) && (!mediaChange || from == leader)
             let cfgOk = state == nil || s.cfg == state!.cfg || canConfigure(from)
             if !cfgOk { s.cfg = state!.cfg }
             if !tlOk, let current = state { s.tl = current.tl }
@@ -231,7 +237,7 @@ final class PartyCore {
         if prev == nil || force || s.cfg.n > prev!.cfg.n { cfg = s.cfg }
         let mediaChanged = prev?.tl.media?.key != tl.media?.key
         state = PartyRoomState(v: PartyRules.version, tl: tl, cfg: cfg)
-        if mediaChanged || force { onMedia?(tl.media) }
+        if mediaChanged || force { onMedia?(tl.media, force || prev == nil, tl.by == me) }
         onChange?()
     }
 
@@ -266,9 +272,11 @@ final class PartyCore {
     @discardableResult func seek(_ pos: Double) -> Bool { bump { $0.pos = max(0, pos) } }
     @discardableResult func skip(_ by: Double) -> Bool { seek(target().pos + by) }
 
+    /// Only the host (or acting host) picks what the room watches. `nil` = browsing.
     @discardableResult func setMedia(_ media: PartyMedia?) -> Bool {
-        let ok = bump { $0.media = media; $0.pos = 0; $0.playing = true }
-        if ok { onMedia?(media) }
+        guard isLeader else { onToast?("Only the host can change what's playing"); return false }
+        let ok = bump { $0.media = media; $0.pos = 0; $0.playing = media != nil }
+        if ok { onMedia?(media, false, true) }
         return ok
     }
 
@@ -306,23 +314,81 @@ final class PartyCore {
         return PartyCorrection(play: true, rate: rate, seek: nil, drift: drift)
     }
 
-    func sync(localPos: Double, localPlaying: Bool) -> PartyCorrection {
+    // Stall detection from real progress (see party.ts): the player's own
+    // "waiting" flag flickers on seeks and speed changes, which made a host
+    // hold the room for themselves over and over (the freezing loop).
+    private var samples: [(t: Date, pos: Double)] = []
+    private var wantSince: Date?
+    private var stalled = false
+    private var loading = false
+    private var loadingError: String?
+    private var lastHardSeek = Date.distantPast
+    private var lastHardSeekN = -1
+    private var lastResume = Date.distantPast
+    var buffering: Bool { myBuffering }
+
+    func sync(localPos: Double, localPlaying: Bool, ended: Bool = false, quiet: Bool = false) -> PartyCorrection {
+        let now = Date()
         let t = target()
-        let c = Self.correction(localPos: localPos, localPlaying: localPlaying, target: (t.playing, t.pos))
-        if c.seek != nil && t.playing {
-            let now = Date()
-            hardSyncs = hardSyncs.filter { now.timeIntervalSince($0) < 30 } + [now]
-            if hardSyncs.count >= 3 { hardSyncs = []; onStruggling?() }
+        let holdingForMe = state?.tl.hold == true && stalled
+        let want = (t.playing || holdingForMe) && !ended
+
+        samples = samples.filter { now.timeIntervalSince($0.t) < 2.5 } + [(now, localPos)]
+        var notMoving = false
+        if !want || quiet {
+            stalled = false
+            wantSince = nil
+        } else {
+            if wantSince == nil { wantSince = now }
+            if let old = samples.first(where: { now.timeIntervalSince($0.t) >= PartyRules.stallWindow }) {
+                let moved = localPos - old.pos
+                notMoving = moved < 0.3
+                if notMoving && now.timeIntervalSince(wantSince!) > PartyRules.stallGrace { stalled = true }
+                else if moved > 0.8 { stalled = false }
+            }
         }
+        publishBuffering()
+
+        // The room is waiting for us: keep trying to play where it stopped.
+        if holdingForMe {
+            let seek: Double? = abs(localPos - t.pos) > 3 ? t.pos : nil
+            if seek != nil { samples = []; wantSince = now }
+            return PartyCorrection(play: true, rate: 1, seek: seek, drift: localPos - t.pos)
+        }
+
+        var c = Self.correction(localPos: localPos, localPlaying: localPlaying, target: (t.playing, t.pos))
+        if c.seek != nil && t.playing {
+            if c.drift < 0 && (notMoving || stalled) {
+                // Behind because we're stuck: jumping ahead lands on more unbuffered video.
+                c.seek = nil; c.rate = 1
+            } else if now.timeIntervalSince(lastHardSeek) < PartyRules.hardSeekCooldown && lastHardSeekN == state?.tl.n && abs(c.drift) < 15 {
+                // The last jump is still loading: steer with speed instead.
+                c.seek = nil; c.rate = c.drift > 0 ? 0.9 : 1.1
+            } else {
+                lastHardSeek = now
+                lastHardSeekN = state?.tl.n ?? 0
+                hardSyncs = hardSyncs.filter { now.timeIntervalSince($0) < 30 } + [now]
+                if hardSyncs.count >= 3 { hardSyncs = []; onStruggling?() }
+            }
+        }
+        if c.seek != nil { samples = []; wantSince = now }
         return c
     }
 
-    func setBuffering(_ on: Bool, error: String? = nil) {
-        if on == myBuffering && error == nil { return }
+    /// No player yet / loading the room's media (counts as buffering).
+    func setLoading(_ on: Bool, error: String? = nil) {
+        loading = on
+        loadingError = error
+        publishBuffering()
+    }
+
+    private func publishBuffering() {
+        let on = loading || stalled
+        guard on != myBuffering else { return }
         myBuffering = on
         if connected {
             var msg: [String: Any] = ["k": "buf", "on": on]
-            if let error { msg["error"] = error }
+            if let loadingError { msg["error"] = loadingError }
             transport?.send(msg, keep: false, to: nil)
         }
     }
@@ -354,9 +420,11 @@ final class PartyCore {
         }
         let waitingOn = stalled.filter { !excluded.contains($0.id) }.prefix(PartyRules.waitMaxPeers)
         let tl = current.tl
-        if current.cfg.waitForAll && tl.playing && (!waitingOn.isEmpty || myBuffering) && tl.media != nil {
+        let cooling = now.timeIntervalSince(lastResume) < PartyRules.reholdCooldown
+        if current.cfg.waitForAll && tl.playing && !cooling && (!waitingOn.isEmpty || myBuffering) && tl.media != nil {
             bumpAsLeader(&current) { $0.playing = false; $0.hold = true }
         } else if tl.hold && !tl.playing && waitingOn.isEmpty && !myBuffering {
+            lastResume = now
             bumpAsLeader(&current) { $0.playing = true; $0.hold = false }
         } else if now.timeIntervalSince(lastSentTimeline) > 30 {
             publish()

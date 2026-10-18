@@ -39,6 +39,11 @@ export const WAIT_MAX_PEERS = 8
 export const HARD_SYNC_S = 2
 export const SOFT_SYNC_S = 0.25
 export const HOST_CHECK_MS = 1000
+export const STALL_WINDOW_MS = 1500
+export const STALL_GRACE_MS = 2500
+export const HARD_SEEK_COOLDOWN_MS = 4000
+/** Don't hold the room again for this long after it resumes. */
+export const REHOLD_COOLDOWN_MS = 3000
 
 export type PartyMedia =
   | { kind: 'tmdb'; key: string; item: Record<string, unknown>; season: number | null; episode: number | null; episodeTitle?: string | null; server: string }
@@ -84,8 +89,11 @@ export interface PartyTransport {
 }
 
 export interface PartyEvents {
-  /** The room switched to something this device isn't playing. */
-  onMedia?(media: PartyMedia | null, tl: Timeline): void
+  /**
+   * The room's media changed. `initial` = first state after joining /
+   * reconnecting; `mine` = this device made the change.
+   */
+  onMedia?(media: PartyMedia | null, tl: Timeline, info: { initial: boolean; mine: boolean }): void
   onChange?(): void
   onToast?(msg: string): void
   /** Repeated hard re-syncs: suggest/perform a quality step down. */
@@ -248,7 +256,8 @@ export class PartyCore {
         if (!s) return
         // The timeline part only counts if its author may control; the
         // config part only if its author may configure.
-        const tlOk = s.tl.by === from && this.canControlUnder(from, this.state?.cfg ?? s.cfg)
+        const mediaChange = !!this.state && (this.state.tl.media?.key ?? null) !== (s.tl.media?.key ?? null)
+        const tlOk = s.tl.by === from && this.canControlUnder(from, this.state?.cfg ?? s.cfg) && (!mediaChange || from === this.leader)
         const cfgOk = !this.state || (s.cfg.n === this.state.cfg.n && JSON.stringify(s.cfg) === JSON.stringify(this.state.cfg)) || this.canConfigure(from)
         if (!cfgOk) s.cfg = this.state!.cfg
         if (!tlOk && this.state) s.tl = this.state.tl
@@ -283,13 +292,12 @@ export class PartyCore {
 
   private adopt(s: RoomState, force: boolean) {
     const prev = this.state
-    if ((globalThis as any).process?.env?.PARTY_DEBUG === this.name) console.log(`  [${this.name}] adopt force=${force} incoming n=${s.tl.n} by=${s.tl.by.slice(0, 4)} pos=${s.tl.pos.toFixed(0)} prev n=${prev?.tl.n}`)
     let tl = prev?.tl, cfg = prev?.cfg
     if (!prev || force || newer(s.tl, prev.tl)) tl = s.tl
     if (!prev || force || s.cfg.n > prev.cfg.n) cfg = s.cfg
     const mediaChanged = (prev?.tl.media?.key ?? null) !== (tl!.media?.key ?? null)
     this.state = { v: PARTY_VERSION, tl: tl!, cfg: cfg! }
-    if (mediaChanged || force) this.events.onMedia?.(tl!.media, tl!)
+    if (mediaChanged || force) this.events.onMedia?.(tl!.media, tl!, { initial: force || !prev, mine: tl!.by === this.me })
     this.events.onChange?.()
   }
 
@@ -318,9 +326,11 @@ export class PartyCore {
   pause() { return this.bump({ playing: false }) }
   seek(pos: number) { return this.bump({ pos: Math.max(0, pos) }) }
   skip(by: number) { return this.state ? this.seek(this.target().pos + by) : false }
+  /** Only the host (or acting host) picks what the room watches. `null` = browsing. */
   setMedia(media: PartyMedia | null) {
-    const ok = this.bump({ media, pos: 0, playing: true })
-    if (ok) this.events.onMedia?.(media, this.state!.tl)
+    if (!this.isLeader) { this.events.onToast?.('Only the host can change what’s playing'); return false }
+    const ok = this.bump({ media, pos: 0, playing: media !== null })
+    if (ok) this.events.onMedia?.(media, this.state!.tl, { initial: false, mine: true })
     return ok
   }
 
@@ -338,23 +348,95 @@ export class PartyCore {
     return { media: tl.media, playing: tl.playing, pos: positionAt(tl, this.transport.now()) }
   }
 
-  /** Call from the player loop with this device's position (after the personal offset). */
-  sync(local: { pos: number; playing: boolean }) {
+  // ── Stall detection ──────────────────────────────────────────────────
+  // "Buffering" means: the room wants this player to play, and its position
+  // has barely moved for STALL_WINDOW_MS (after a grace period). It's
+  // measured from real progress, not the player's own "waiting" flag, which
+  // flickers on seeks and speed changes. That flicker used to make a host
+  // hold the room for themselves, pause, "recover", resume and stall again
+  // — the freezing loop.
+  private samples: { t: number; pos: number }[] = []
+  private wantSince = 0
+  private stalled = false
+  private loading = false
+  private lastHardSeek = 0
+  private lastHardSeekN = -1
+  private loadingError: string | null = null
+
+  /**
+   * Call from the player loop with this device's position (after the
+   * personal offset). `quiet` = a personal reload (Sub/Dub, quality) is in
+   * progress: never hold the room for it.
+   */
+  sync(local: { pos: number; playing: boolean; ended?: boolean }, quiet = false) {
+    const now = Date.now()
     const t = this.target()
-    const c = correction(local, t)
-    if (c.seek !== null && t.playing) {
-      const now = Date.now()
-      this.hardSyncs = [...this.hardSyncs.filter(x => now - x < 30_000), now]
-      if (this.hardSyncs.length >= 3) { this.hardSyncs = []; this.events.onStruggling?.() }
+    const holdingForMe = !!this.state?.tl.hold && this.stalled
+    // At the end of the video "not moving" is expected, not a stall.
+    const want = (t.playing || holdingForMe) && !local.ended
+
+    this.samples = [...this.samples.filter(s => now - s.t < 2500), { t: now, pos: local.pos }]
+    let notMoving = false
+    if (!want || quiet) {
+      this.stalled = false
+      this.wantSince = 0
+    } else {
+      if (!this.wantSince) this.wantSince = now
+      const old = this.samples.find(s => now - s.t >= STALL_WINDOW_MS)
+      if (old) {
+        const moved = local.pos - old.pos
+        notMoving = moved < 0.3
+        if (notMoving && now - this.wantSince > STALL_GRACE_MS) this.stalled = true
+        else if (moved > 0.8) this.stalled = false
+      }
     }
+    this.publishBuffering()
+
+    // The room is waiting for us: keep trying to play where it stopped
+    // (pausing here would hide whether we've recovered).
+    if (holdingForMe) {
+      const seek = Math.abs(local.pos - t.pos) > 3 ? t.pos : null
+      if (seek !== null) this.resetProgress(now)
+      return { play: true, rate: 1, seek, drift: local.pos - t.pos }
+    }
+
+    let c = correction(local, t)
+    if (c.seek !== null && t.playing) {
+      if (c.drift < 0 && (notMoving || this.stalled)) {
+        // Behind because we're stuck, not slow: jumping ahead would only
+        // land on more unbuffered video. Report the stall instead.
+        c = { ...c, seek: null, rate: 1 }
+      } else if (now - this.lastHardSeek < HARD_SEEK_COOLDOWN_MS && this.lastHardSeekN === this.state?.tl.n && Math.abs(c.drift) < 15) {
+        // A jump is still loading: steer with speed instead of jumping again.
+        c = { ...c, seek: null, rate: c.drift > 0 ? 0.9 : 1.1 }
+      } else {
+        this.lastHardSeek = now
+        this.lastHardSeekN = this.state?.tl.n ?? 0
+        this.hardSyncs = [...this.hardSyncs.filter(x => now - x < 30_000), now]
+        if (this.hardSyncs.length >= 3) { this.hardSyncs = []; this.events.onStruggling?.() }
+      }
+    }
+    if (c.seek !== null) this.resetProgress(now)
     return c
   }
 
-  setBuffering(on: boolean, error: string | null = null) {
-    if (on === this.myBuffering && !error) return
-    this.myBuffering = on
-    if (this.connected) this.transport.send({ k: 'buf', on, error })
+  private resetProgress(now: number) { this.samples = []; this.wantSince = now }
+
+  /** No player yet / loading the room's media (counts as buffering). */
+  setLoading(on: boolean, error: string | null = null) {
+    this.loading = on
+    this.loadingError = error
+    this.publishBuffering()
   }
+
+  private publishBuffering() {
+    const on = this.loading || this.stalled
+    if (on === this.myBuffering) return
+    this.myBuffering = on
+    if (this.connected) this.transport.send({ k: 'buf', on, error: this.loadingError })
+  }
+
+  get buffering() { return this.myBuffering }
 
   /** Local player reached the end of the current media. */
   async ended() {
@@ -373,6 +455,7 @@ export class PartyCore {
 
   // ── Leader duties, call about once a second ─────────────────────────
   private lastAlive = 0
+  private lastResume = 0
 
   tick() {
     // Everyone: a tiny "still here" every 30s, so a viewer whose network died
@@ -396,9 +479,11 @@ export class PartyCore {
     }
     const waitingOn = stalled.filter(p => !this.excluded.has(p.id)).slice(0, WAIT_MAX_PEERS)
     const meStalled = this.myBuffering
-    if (cfg.waitForAll && tl.playing && (waitingOn.length || meStalled) && tl.media) {
+    const cooling = now - this.lastResume < REHOLD_COOLDOWN_MS
+    if (cfg.waitForAll && tl.playing && !cooling && (waitingOn.length || meStalled) && tl.media) {
       this.bumpAsLeader({ playing: false, hold: true })
     } else if (tl.hold && !tl.playing && !waitingOn.length && !meStalled) {
+      this.lastResume = now
       this.bumpAsLeader({ playing: true, hold: false })
     } else if (now - this.lastSentTl > 30_000) {
       // Refresh the relay's copy now and then (cheap, one message).

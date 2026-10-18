@@ -13,7 +13,7 @@ import { captionAt, parseVtt, type Cue } from '@/lib/vtt'
 import { cx, formatTime } from '@/lib/format'
 import { imageUrl } from '@/lib/tmdb'
 import { registerPlayer } from '@/lib/remote'
-import { leaveParty, party, partyActive, useParty } from '@/lib/party'
+import { party, partyActive, useParty } from '@/lib/party'
 import { PartyButton, PartyPanel } from '../party/PartyPanel'
 
 type Caption = { kind: 'off' } | { kind: 'external'; index: number } | { kind: 'hls'; index: number }
@@ -184,8 +184,8 @@ export function Player() {
   }, [])
   const close = useCallback(() => {
     save()
-    // Closing the player leaves the party (otherwise the room would reopen it).
-    if (partyActive()) leaveParty()
+    // In a party: the host closing the player means "back to browsing" (the
+    // room stays open); a viewer closing it leaves (lib/party.ts handles both).
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {})
     usePlayer.getState().close()
   }, [save])

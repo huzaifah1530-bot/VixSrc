@@ -18,7 +18,7 @@ import { ConnectDialog, OfferDialog } from './features/devices/DeviceDialogs'
 import { startLinkClient } from './stores/link'
 import { create } from 'zustand'
 import { joinParty } from './lib/party'
-import { JoinPartyDialog } from './features/party/PartyPanel'
+import { FollowPrompt, JoinPartyDialog, PartyDock } from './features/party/PartyPanel'
 
 const useJoinDialog = create<{ open: boolean }>(() => ({ open: false }))
 
@@ -120,7 +120,8 @@ export function App() {
           {route.name === 'anime-details' && <AnimeDetailsPage item={route.item} />}
         </div>
       </div>
-      {playerOpen && <Player />}
+      {playerOpen ? <Player /> : <PartyDock />}
+      <FollowPrompt />
       <ConnectDialog />
       <OfferDialog />
       {joinOpen && <JoinPartyDialog onClose={() => useJoinDialog.setState({ open: false })} />}

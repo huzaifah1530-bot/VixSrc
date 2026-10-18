@@ -120,7 +120,6 @@ export class PartyConnection implements PartyTransport {
 
   private async onFrame(text: string) {
     if (text === 'pong') return
-    if ((globalThis as any).process?.env?.PARTY_DEBUG === this.core?.name) console.log(`  [${this.core.name}] frame ${text.slice(0, 90)}`)
     let m: any
     try { m = JSON.parse(text) } catch { return }
     if (m.sys === 'time' && typeof m.echo === 'number') {

@@ -32,12 +32,16 @@ interface PartyView {
   /** Personal sync nudge in seconds (e.g. a dub that runs a little long). */
   offset: number
   panelOpen: boolean
+  /** Viewer said "follow" once: keep following for the rest of the session. */
+  following: boolean
+  /** The host moved on; waiting for this viewer to choose. */
+  prompt: { media: PartyMedia | null; title: string | null } | null
 }
 
 export const useParty = create<PartyView>(() => ({
   active: false, status: 'closed', link: '', peers: [], me: '', isHost: false, hostId: '', leader: '',
   canControl: true, canConfigure: false, mode: 'everyone', allowed: [], waitForAll: true,
-  waitingOn: [], offset: 0, panelOpen: false
+  waitingOn: [], offset: 0, panelOpen: false, following: false, prompt: null
 }))
 
 let core: PartyCore | null = null
@@ -62,7 +66,16 @@ function displayName() {
 }
 
 // ── Player ↔ room media ──────────────────────────────────────────────
+/** Local media key → the room key it was loaded for (anime slugs differ by site). */
+const aliases = new Map<string, string>()
+
 export function currentMedia(): PartyMedia | null {
+  const m = rawMedia()
+  if (m && aliases.has(m.key)) m.key = aliases.get(m.key)!
+  return m
+}
+
+function rawMedia(): PartyMedia | null {
   const p = usePlayer.getState()
   if (!p.open || !p.item) return null
   const s = useSettings.getState()
@@ -101,9 +114,11 @@ async function loadMedia(media: PartyMedia | null) {
       details = slug ? await window.vela.anime.details(base, slug) : null
     }
     const ep: AnimeEpisode | undefined = details?.episodes.find(e => e.number === media.episode)
-    if (!details || !ep) { core?.setBuffering(true, 'Episode not available on this PC'); toast('This episode isn’t available on your anime server'); return }
+    if (!details || !ep) { core?.setLoading(true, 'Episode not available on this PC'); toast('This episode isn’t available on your anime server'); return }
     const item = { ...(media.item as unknown as MediaItem), tmdbId: 'kai:' + details.show.slug, anime: true }
     usePlayer.getState().playAnime(item, details, ep, byName(s.animeServers, media.server))
+    const local = rawMedia()?.key
+    if (local && local !== media.key) aliases.set(local, media.key)
   } catch (err) {
     toast('Couldn’t open what the party is watching: ' + (err as Error).message)
   } finally {
@@ -156,9 +171,14 @@ function refresh() {
 async function syncOnce() {
   if (!core?.state) return
   const target = core.target()
-  if (target.media && currentMedia()?.key !== target.media.key) {
+  const quiet = Date.now() < quietUntil
+  // The host is browsing: followers just wait.
+  if (!target.media) { core.setLoading(false); core.tick(); return }
+  if (currentMedia()?.key !== target.media.key) {
+    // Waiting for this viewer to answer "follow the host?" — don't load.
+    if (useParty.getState().prompt) { core.tick(); return }
     if (loadingFromRoom !== target.media.key) loadMedia(target.media)
-    core.setBuffering(true)
+    core.setLoading(true)
     core.tick()
     return
   }
@@ -167,24 +187,26 @@ async function syncOnce() {
   const h = playerHandle()
   if (p.sources.length && h) {
     const st = h.state()
-    if (!st) { core.setBuffering(Date.now() > quietUntil); core.tick(); return }
-    const c = core.sync({ pos: st.position - offset, playing: st.playing })
+    if (!st) { core.setLoading(!quiet); core.tick(); return }
+    core.setLoading(false)
+    const ended = st.duration > 0 && st.position >= st.duration - 0.6
+    const c = core.sync({ pos: st.position - offset, playing: st.playing, ended }, quiet)
+    if (ended && c.play) { core.tick(); return } // the leader is moving the room on
     if (c.seek !== null) h.raw.seek(c.seek + offset)
     if (c.play && !st.playing) h.raw.play()
     if (!c.play && st.playing) h.raw.pause()
     h.raw.setRate(c.rate)
-    core.setBuffering(h.raw.waiting() && c.play && Date.now() > quietUntil)
   } else if (p.embedUrl) {
     // Web players: no speed control, so only coarse corrections.
     const st = await window.vela.embed.state().catch(() => null)
+    core.setLoading(!st && !quiet)
     if (st) {
-      const c = core.sync({ pos: st.position - offset, playing: st.playing })
+      const c = core.sync({ pos: st.position - offset, playing: st.playing }, quiet)
       if (c.seek !== null) window.vela.embed.control('seek', c.seek + offset)
       if (c.play !== st.playing) window.vela.embed.control(c.play ? 'play' : 'pause')
     }
-    core.setBuffering(!st && Date.now() > quietUntil)
   } else {
-    core.setBuffering(p.resolving && Date.now() > quietUntil)
+    core.setLoading(!quiet)
   }
   core.tick()
 }
@@ -211,17 +233,40 @@ function onStruggling() {
 usePlayer.subscribe((s, prev) => {
   if (!core) return
   if (s.progressId === prev.progressId && s.sourceIndex !== prev.sourceIndex) quietUntil = Date.now() + 8000
-  // A local change of title / episode becomes the room's, if allowed.
-  if (s.progressId !== prev.progressId || s.item?.tmdbId !== prev.item?.tmdbId) {
-    const media = currentMedia()
-    const roomKey = core.state?.tl.media?.key
-    if (!media || media.key === roomKey || media.key === loadingFromRoom) return
-    if (!core.setMedia(media)) {
-      // Not allowed: go back to what the party is watching.
-      setTimeout(() => core?.state?.tl.media && loadMedia(core.state.tl.media), 300)
-    }
+  const changed = s.open !== prev.open || s.progressId !== prev.progressId || s.item?.tmdbId !== prev.item?.tmdbId
+  if (!changed || loadingFromRoom) return
+  const media = s.open ? currentMedia() : null
+  const roomKey = core.state?.tl.media?.key ?? null
+  if ((media?.key ?? null) === roomKey) return
+  if (core.isLeader) {
+    // Host picked something else (or went back to browsing): the room follows.
+    core.setMedia(media)
+  } else if (s.open || roomKey) {
+    // A viewer going their own way leaves the party.
+    leaveParty(true)
+    toast('You left the watch party')
   }
 })
+
+/** Viewer's answer to "the host moved on — follow them?" */
+export function answerFollow(follow: boolean) {
+  const prompt = useParty.getState().prompt
+  useParty.setState({ prompt: null, following: follow })
+  if (!follow) { leaveParty(); return }
+  if (prompt?.media) loadMedia(prompt.media)
+  else if (usePlayer.getState().open) { loadingFromRoom = '(browsing)'; usePlayer.getState().close(); setTimeout(() => { loadingFromRoom = null }, 500) }
+}
+
+function onRoomMedia(media: PartyMedia | null, info: { initial: boolean; mine: boolean }) {
+  if (info.mine) return
+  const s = useParty.getState()
+  if (info.initial || s.following) {
+    if (media) loadMedia(media)
+    else if (usePlayer.getState().open) { loadingFromRoom = '(browsing)'; usePlayer.getState().close(); setTimeout(() => { loadingFromRoom = null }, 500) }
+    return
+  }
+  useParty.setState({ prompt: { media, title: media ? String((media.item as any).title ?? 'something else') + (media.kind === 'tmdb' && media.episode ? ` · S${media.season}E${media.episode}` : media.kind === 'anime' ? ` · E${media.episode}` : '') : null } })
+}
 
 // ── Public API ───────────────────────────────────────────────────────
 function begin(invite: Invite, creating: boolean) {
@@ -229,7 +274,7 @@ function begin(invite: Invite, creating: boolean) {
   const id = identityFor(invite.room)
   conn = new PartyConnection(PARTY_RELAY, invite, id.peer, id.secret)
   core = new PartyCore(id.peer, displayName(), 'pc', conn, {
-    onMedia: m => loadMedia(m),
+    onMedia: (m, _tl, info) => onRoomMedia(m, info),
     onChange: refresh,
     onToast: toast,
     onStruggling,
@@ -245,7 +290,7 @@ function begin(invite: Invite, creating: boolean) {
       if (p.open) toast('Watch party started — share the link')
     }
   }
-  useParty.setState({ active: true, link: inviteLink(invite), status: 'connecting', panelOpen: true, offset: 0 })
+  useParty.setState({ active: true, link: inviteLink(invite), status: 'connecting', panelOpen: true, offset: 0, following: false, prompt: null })
   conn.open().catch(err => toast('Couldn’t start the party: ' + (err as Error).message))
   loop = setInterval(() => { syncOnce().catch(() => {}) }, 500)
   window.addEventListener('online', onNetwork)
@@ -271,7 +316,7 @@ export function leaveParty(silent = false) {
   const was = !!core
   core = null
   conn = null
-  useParty.setState({ active: false, status: 'closed', peers: [], panelOpen: false, waitingOn: [] })
+  useParty.setState({ active: false, status: 'closed', peers: [], panelOpen: false, waitingOn: [], prompt: null, following: false })
   if (was && !silent) toast('Left the watch party')
 }
 

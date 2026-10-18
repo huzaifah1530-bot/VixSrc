@@ -159,9 +159,14 @@ function invitePage(room: string): Response {
 <style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#000;color:#fff;font:15px -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
 .card{max-width:380px;padding:32px;border-radius:24px;background:linear-gradient(135deg,rgba(255,255,255,.16),rgba(255,255,255,.04));border:1px solid rgba(255,255,255,.18);text-align:center}
 h1{margin:0 0 8px;font-size:26px;letter-spacing:-.04em}p{color:rgba(255,255,255,.62);line-height:1.5}
-a.btn{display:inline-block;margin-top:12px;padding:12px 22px;border-radius:999px;background:#fff;color:#000;font-weight:700;text-decoration:none}</style></head>
+.btn{display:inline-block;margin:12px 4px 0;padding:12px 22px;border-radius:999px;background:#fff;color:#000;font:700 15px inherit;text-decoration:none;border:0;cursor:pointer}.btn.ghost{background:rgba(255,255,255,.12);color:#fff;border:1px solid rgba(255,255,255,.25)}</style></head>
 <body><div class="card"><h1>Watch together</h1><p>You've been invited to a Vela watch party.</p>
-<a class="btn" id="open" href="#">Open in Vela</a><p style="font-size:13px">Needs Vela on your iPhone or PC.</p></div>
-<script>const l='vela://party/${room}'+location.hash;document.getElementById('open').href=l;location.href=l;</script></body></html>`
+<a class="btn" id="open" href="#">Open in Vela</a>
+<button class="btn ghost" id="copy">Copy invite link</button>
+<p style="font-size:13px">Needs Vela on your iPhone or PC.</p>
+<p style="font-size:13px"><b>Using LiveContainer?</b> Tapping can't open apps inside it. Tap <b>Copy invite link</b>, open Vela, and tap <b>Paste</b> on the banner that appears (or Settings › Watch Together › Paste).</p></div>
+<script>const l='vela://party/${room}'+location.hash;document.getElementById('open').href=l;
+document.getElementById('copy').onclick=async e=>{try{await navigator.clipboard.writeText(location.href)}catch{const t=document.createElement('textarea');t.value=location.href;document.body.appendChild(t);t.select();document.execCommand('copy');t.remove()}e.target.textContent='Copied — now open Vela'};
+location.href=l;</script></body></html>`
   return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' } })
 }

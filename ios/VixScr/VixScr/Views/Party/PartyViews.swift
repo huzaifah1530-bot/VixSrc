@@ -190,6 +190,107 @@ struct PartySheet: View {
     }
 }
 
+/// Floating party pill while browsing (the player has its own button).
+struct PartyDock: View {
+    @State private var party = PartySession.shared
+    var body: some View {
+        if party.active {
+            Button { party.sheetOpen = true } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "person.2.fill")
+                    Text(party.status == .reconnecting ? "Reconnecting…" : "\(party.peers.count + 1) in party")
+                        .font(.subheadline.weight(.semibold))
+                    Text(party.canConfigure ? "· pick something" : "· waiting for host")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .foregroundStyle(.white)
+                .padding(.horizontal, 16).padding(.vertical, 10)
+                .vixGlass(.strong, cornerRadius: 22)
+            }
+            .buttonStyle(.plain)
+            .padding(.bottom, 64)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+            .sheet(isPresented: $party.sheetOpen) { PartySheet() }
+            .accessibilityLabel("Watch party, \(party.peers.count + 1) people")
+        }
+    }
+}
+
+/// Shown when something that looks like a link is on the clipboard — for
+/// LiveContainer, where tapping an invite link can't open Vela directly.
+struct PartyPasteBanner: View {
+    @State private var party = PartySession.shared
+    @State private var show = false
+    @State private var lastChange = UserDefaults.standard.integer(forKey: "vela_party_paste_seen")
+    @Environment(\.scenePhase) private var scenePhase
+
+    var body: some View {
+        Group {
+            if show && !party.active {
+                HStack(spacing: 10) {
+                    Image(systemName: "person.2.fill")
+                    Text("Got a watch party link?").font(.subheadline.weight(.semibold))
+                    PasteButton(payloadType: String.self) { strings in
+                        Task { @MainActor in
+                            dismiss()
+                            if let text = strings.first { party.join(text) }
+                        }
+                    }
+                    .labelStyle(.titleOnly)
+                    .buttonBorderShape(.capsule)
+                    Button { dismiss() } label: { Image(systemName: "xmark").font(.caption.weight(.bold)) }
+                        .accessibilityLabel("Dismiss")
+                }
+                .foregroundStyle(.white)
+                .padding(.horizontal, 14).padding(.vertical, 8)
+                .vixGlass(.strong, cornerRadius: 22)
+                .padding(.top, 6)
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .animation(.easeOut(duration: 0.25), value: show)
+        .onChange(of: scenePhase, initial: true) { _, phase in if phase == .active { check() } }
+    }
+
+    private func check() {
+        let pb = UIPasteboard.general
+        guard pb.changeCount != lastChange, !party.active else { return }
+        // Pattern detection doesn't read the clipboard, so no paste prompt.
+        pb.detectPatterns(for: [\.probableWebURL]) { result in
+            let found = (try? result.get())?.contains(\.probableWebURL) == true
+            Task { @MainActor in show = found }
+        }
+    }
+
+    private func dismiss() {
+        show = false
+        lastChange = UIPasteboard.general.changeCount
+        UserDefaults.standard.set(lastChange, forKey: "vela_party_paste_seen")
+    }
+}
+
+/// "The host moved on — follow?" Shown to viewers once; following sticks.
+struct PartyPrompts: ViewModifier {
+    @State private var party = PartySession.shared
+    func body(content: Content) -> some View {
+        content.alert(
+            party.prompt?.title != nil ? "The host started something new" : "The host went back to browsing",
+            isPresented: Binding(get: { party.prompt != nil }, set: { if !$0 && party.prompt != nil { party.answerFollow(false) } }),
+            presenting: party.prompt
+        ) { _ in
+            Button("Follow Host") { party.answerFollow(true) }
+            Button("Leave Party", role: .destructive) { party.answerFollow(false) }
+        } message: { p in
+            Text((p.title.map { "They're now watching \($0). " } ?? "They're picking what to watch next. ") + "Follow them for the rest of the party, or leave.")
+        }
+    }
+}
+
+extension View {
+    func partyPrompts() -> some View { modifier(PartyPrompts()) }
+}
+
 /// "Waiting for …" / reconnecting banner shown over the player.
 struct PartyBanner: View {
     @State private var party = PartySession.shared

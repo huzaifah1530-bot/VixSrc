@@ -76,6 +76,7 @@ struct AnimePlayerSheet: View {
         // Link prompts must come from the front-most presentation.
         .deviceLinkPrompts()
         .overlay(alignment: .top) { PartyBanner() }
+        .partyPrompts()
         .onAppear { if PartySession.shared.active { PartySession.shared.attach(viewModel) } }
         .onChange(of: DeviceLink.shared.remote) { _, state in
             guard DeviceLink.shared.routesPlayback, DeviceLink.shared.shouldFollowRemote, let state else { return }

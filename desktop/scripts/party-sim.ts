@@ -26,6 +26,11 @@ class Viewer {
   media: string | null = null
   duration = 7200
   toasts: string[] = []
+  seeks = 0
+  /** Briefly stall after every seek, like a real player re-buffering. */
+  seekStallMs = 0
+  private stallUntil = 0
+  private lastTick = Date.now()
   loop: ReturnType<typeof setInterval>[] = []
   constructor(readonly name: string, invite: Invite, readonly id = newIdentity()) {
     this.conn = new PartyConnection(relay, invite, id.peer, id.secret)
@@ -40,17 +45,19 @@ class Viewer {
     await this.conn.open()
     // "Video" clock.
     this.loop.push(setInterval(() => {
-      if (this.playing && !this.stalled) this.pos += 0.1 * this.rate * this.speed
+      const now = Date.now(), dt = (now - this.lastTick) / 1000
+      this.lastTick = now
+      if (this.playing && !this.stalled && now > this.stallUntil) this.pos += dt * this.rate * this.speed
       if (this.pos >= this.duration && this.playing) { this.playing = false; this.core.ended() }
     }, 100))
     // App sync loop (same cadence as the real players).
     this.loop.push(setInterval(() => {
       if (!this.core.state) return
-      const c = this.core.sync({ pos: this.pos, playing: this.playing })
-      if (c.seek !== null) this.pos = c.seek
+      const c = this.core.sync({ pos: this.pos, playing: this.playing, ended: this.pos >= this.duration })
+      if (c.seek !== null) { this.pos = c.seek; this.stallUntil = Date.now() + this.seekStallMs }
       this.playing = c.play
       this.rate = c.rate
-      this.core.setBuffering(this.stalled)
+      if (c.seek !== null) this.seeks++
       this.core.tick()
     }, 500))
     await until(() => this.conn.status === 'connected', 8000, `${this.name} connect`)
@@ -66,7 +73,37 @@ async function until(pred: () => boolean, ms: number, what: string) {
 }
 const spread = (vs: Viewer[]) => Math.max(...vs.map(v => v.pos)) - Math.min(...vs.map(v => v.pos))
 
+/** The bug report: a host alone in a party kept freezing. */
+async function soloHost() {
+  const solo = new Viewer('Solo', newInvite())
+  solo.seekStallMs = 1500
+  await solo.start()
+  solo.core.create(movie, 0, true)
+  await sleep(6000)
+  const holdsBefore = solo.core.state!.tl.n
+  // A short network hiccup.
+  solo.stalled = true
+  await until(() => solo.core.state!.tl.hold, 8000, 'solo holds while stuck')
+  await sleep(2000); solo.stalled = false
+  await until(() => solo.playing && !solo.core.state!.tl.hold, 6000, 'solo resumes')
+  await sleep(2000)
+  const n = solo.core.state!.tl.n
+  const p0 = solo.pos
+  const trace: string[] = []
+  let lastN = n
+  const tr = setInterval(() => { const t = solo.core.state!.tl; if (t.n !== lastN) { lastN = t.n; trace.push(`n=${t.n} playing=${t.playing} hold=${t.hold} pos=${solo.pos.toFixed(1)} buf=${solo.core.buffering}`) } }, 100)
+  await sleep(10000)
+  clearInterval(tr)
+  if (trace.length) console.log(trace.join('\n'))
+  assert.equal(solo.core.state!.tl.n, n, 'no more holds after recovering')
+  assert.ok(solo.pos - p0 > 9, 'kept playing ' + (solo.pos - p0))
+  assert.ok(n - holdsBefore <= 2, 'one hold + one resume, got ' + (n - holdsBefore))
+  ok(`a host alone pauses once for a real hiccup, then plays on without freezing (${(solo.pos - p0).toFixed(1)}s in 10s)`)
+  solo.stop()
+}
+
 async function main() {
+  await soloHost()
   const invite = newInvite()
   const host = new Viewer('Host', invite)
   await host.start()
@@ -105,7 +142,7 @@ async function main() {
 
   // ── Stall: wait for everyone, then give up after the limit ────────
   b.stalled = true
-  await until(() => !host.playing && host.core.state!.tl.hold, 4000, 'room holds for stalled viewer')
+  await until(() => !host.playing && host.core.state!.tl.hold, 7000, 'room holds for stalled viewer')
   assert.equal(host.core.waitingOn()[0]?.name, 'Ben')
   ok('room pauses while Ben buffers ("waiting for Ben")')
   b.stalled = false
@@ -113,7 +150,7 @@ async function main() {
   ok('room resumes by itself when Ben recovers')
 
   b.stalled = true
-  await until(() => host.core.state!.tl.hold, 4000, 'hold again')
+  await until(() => host.core.state!.tl.hold, 9000, 'hold again')
   await until(() => host.playing && !host.core.state!.tl.hold, WAIT_LIMIT_MS + 5000, 'gives up waiting')
   assert.ok(host.toasts.some(t => t.includes('Carrying on without Ben')))
   ok('after the wait limit the room carries on without the stalled viewer')
@@ -194,12 +231,33 @@ async function main() {
   assert.ok(spread(views) < 1.5, 'converged ' + spread(views))
   ok(`two people seeking at once converge on one result (${views[0].core.state!.tl.pos.toFixed(0)}s)`)
 
+  // ── Only the host changes what's playing ──────────────────────────
+  assert.equal(a.core.setMedia(ep(7)), false)
+  await sleep(1000)
+  assert.ok(views.every(v => v.media === movie.key || v.core.state!.tl.media?.key === movie.key), 'viewer media change ignored')
+  const forgedMedia = { ...a.core.state!, tl: { ...a.core.state!.tl, media: ep(9), n: a.core.state!.tl.n + 9, by: a.id.peer } }
+  a.conn.send({ k: 'state', s: forgedMedia }, { keep: true })
+  await sleep(1200)
+  assert.ok(host2.core.state!.tl.media?.key === movie.key, 'forged media change ignored')
+  ok('viewers can control playback but only the host changes the title (forged attempts ignored)')
+
+  // Host goes back to browsing: the room stays, media is "none".
+  host2.core.setMedia(null)
+  await until(() => views.every(v => v.core.state!.tl.media === null && !v.core.target().playing), 3000, 'browsing')
+  ok('host going back to browsing keeps the party open for everyone')
+
   // ── Episode end: leader advances exactly once ─────────────────────
   host2.core.setMedia(ep(1))
-  await until(() => views.every(v => v.media === 'tv:1399:1:1'), 4000, 'episode 1 everywhere')
+  await until(() => views.every(v => v.media === 'tv:1399:1:1' && v.pos < 5), 4000, 'episode 1 everywhere')
   for (const v of views) v.duration = 30
   host2.core.seek(26)
-  await until(() => views.every(v => v.media === 'tv:1399:1:2'), 12000, 'advanced to episode 2')
+  try {
+    await until(() => views.every(v => v.media === 'tv:1399:1:2'), 12000, 'advanced to episode 2')
+  } catch (e) {
+    const tl = host2.core.state!.tl
+    console.log('tl', JSON.stringify({ ...tl, media: tl.media?.key }), 'waiting', host2.core.waitingOn().map(p => p.name), views.map(v => `${v.name}:${v.pos.toFixed(1)}/${v.playing}/buf=${v.core.buffering}/media=${v.media}`).join(' '))
+    throw e
+  }
   await sleep(2000)
   assert.ok(views.every(v => v.media === 'tv:1399:1:2'), 'not advanced twice')
   ok('at the end of an episode the room moves to the next one, once')

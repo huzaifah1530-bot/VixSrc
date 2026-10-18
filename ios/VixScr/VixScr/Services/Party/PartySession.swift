@@ -95,7 +95,7 @@ final class PartySession {
         conn.core = core
         core.onChange = { [weak self] in self?.refresh() }
         core.onToast = { [weak self] in self?.show($0) }
-        core.onMedia = { [weak self] media in Task { await self?.load(media) } }
+        core.onMedia = { [weak self] media, initial, mine in self?.roomMediaChanged(media, initial: initial, mine: mine) }
         core.onStruggling = { [weak self] in self?.struggling() }
         core.nextMedia = { [weak self] media in await self?.host?.nextPartyMedia(after: media) }
         conn.onStatus = { [weak self] s in
@@ -114,6 +114,8 @@ final class PartySession {
         self.creating = creating
         aliases = [:]
         offset = 0
+        following = false
+        prompt = nil
         link = invite.link
         active = true
         sheetOpen = creating
@@ -135,7 +137,7 @@ final class PartySession {
         host?.playerManager.onEnded = nil
         host?.playerManager.setRate(1)
         core = nil; conn = nil
-        active = false; status = .closed; peers = []; waitingOn = []; sheetOpen = false
+        active = false; status = .closed; peers = []; waitingOn = []; sheetOpen = false; prompt = nil; following = false
         if was && !silent { show("Left the watch party") }
     }
 
@@ -144,18 +146,64 @@ final class PartySession {
 
     // MARK: - Player attachment
 
+    // MARK: - Following the host
+
+    /// Viewer said "follow" once: keep following for the rest of the session.
+    private(set) var following = false
+    /// The host moved on; waiting for this viewer to choose.
+    struct FollowPrompt: Identifiable { let id = UUID(); var media: PartyMedia?; var title: String? }
+    var prompt: FollowPrompt?
+    @ObservationIgnored private var closingForRoom = false
+
+    private func roomMediaChanged(_ media: PartyMedia?, initial: Bool, mine: Bool) {
+        if mine { return }
+        if initial || following {
+            if let media { Task { await load(media) } } else { closeForRoom() }
+            return
+        }
+        var title: String?
+        if let media {
+            if case .string(let t)? = media.item["title"] { title = t }
+            if let s = media.season, let e = media.tmdbEpisode { title = (title ?? "") + " · S\(s)E\(e)" }
+            if let e = media.animeEpisode { title = (title ?? "") + " · E\(e)" }
+        }
+        prompt = FollowPrompt(media: media, title: title ?? (media == nil ? nil : "something new"))
+    }
+
+    func answerFollow(_ follow: Bool) {
+        let p = prompt
+        prompt = nil
+        guard follow else { leave(); return }
+        following = true
+        if let media = p?.media { Task { await load(media) } } else { closeForRoom() }
+    }
+
+    /// The host went back to browsing: close this viewer's player, stay in the party.
+    private func closeForRoom() {
+        guard let host else { return }
+        closingForRoom = true
+        if let vm = host as? CatalogViewModel { vm.closePlayer() } else if let vm = host as? AnimeViewModel { vm.closePlayer() }
+        closingForRoom = false
+    }
+
     /// A player screen appeared (or changed what it plays).
     func attach(_ host: PartyPlayerHost) {
         if self.host !== host { self.host?.playerManager.partyGate = nil; self.host?.playerManager.onEnded = nil }
         self.host = host
         installGate()
+        // The host opening something new (the player appears after open()).
+        if core != nil { localMediaChanged() }
     }
 
+    /// The player closed. Host: the room goes back to browsing (party stays
+    /// open). Viewer: leaves — unless we closed it because the host did.
     func detach(_ host: PartyPlayerHost) {
-        guard self.host === host else { return }
-        // Closing the player leaves the party (otherwise the room would reopen it).
-        leave()
+        guard self.host === host, let core else { return }
+        host.playerManager.partyGate = nil
+        host.playerManager.onEnded = nil
         self.host = nil
+        if closingForRoom { return }
+        if core.isLeader { core.setMedia(nil) } else { leave(); show("You left the watch party") }
     }
 
     private func installGate() {
@@ -177,8 +225,11 @@ final class PartySession {
         let room = core.state?.tl.media?.key
         // While loading what the room asked for, local changes are ours.
         guard media.key != room, loadingKey == nil else { return }
-        if !core.setMedia(media), let roomMedia = core.state?.tl.media {
-            Task { await load(roomMedia) } // not allowed: back to what the party is watching
+        if core.isLeader {
+            core.setMedia(media) // the host picked something else: the room follows
+        } else {
+            leave()               // a viewer going their own way leaves
+            show("You left the watch party")
         }
     }
 
@@ -220,23 +271,30 @@ final class PartySession {
     private func syncOnce() {
         guard let core, core.state != nil else { return }
         let target = core.target()
-        if let media = target.media, currentKeyedMedia()?.key != media.key {
+        let quiet = Date() < quietUntil
+        // The host is browsing: everyone waits.
+        guard let media = target.media else { core.setLoading(false); core.tick(); return }
+        if currentKeyedMedia()?.key != media.key {
+            // Waiting for this viewer to answer "follow the host?"
+            if prompt != nil { core.tick(); return }
             if loadingKey != media.key { Task { await load(media) } }
-            core.setBuffering(true)
+            core.setLoading(true)
             core.tick()
             return
         }
-        guard let pm = host?.playerManager, pm.player != nil else {
-            core.setBuffering(Date() > quietUntil)
+        guard let pm = host?.playerManager, pm.player != nil, pm.duration > 0 || pm.currentTime > 0 else {
+            core.setLoading(!quiet)
             core.tick()
             return
         }
-        let c = core.sync(localPos: pm.currentTime - offset, localPlaying: pm.isPlaying)
+        core.setLoading(false)
+        let ended = pm.duration > 0 && pm.currentTime >= pm.duration - 0.6
+        let c = core.sync(localPos: pm.currentTime - offset, localPlaying: pm.isPlaying, ended: ended, quiet: quiet)
+        if ended && c.play { core.tick(); return } // the host is moving the room on
         if let seek = c.seek { pm.rawSeek(to: seek + offset) }
         if c.play && !pm.isPlaying { pm.rawPlay() }
         if !c.play && pm.isPlaying { pm.rawPause() }
         pm.setRate(c.rate)
-        core.setBuffering(pm.isWaiting && c.play && Date() > quietUntil)
         core.tick()
     }
 
