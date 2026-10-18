@@ -293,7 +293,7 @@ struct SettingsView: View {
         } header: {
             Text("Anime Servers")
         } footer: {
-            Text("AnimeKai-compatible sites used for anime. They play in the native player with Sub and Dub qualities, and are listed first when you watch anime. Each is tested with a search before saving.")
+            Text("AnimeKai-compatible sites that power the Anime tab. The first server supplies the catalogue and search; the others are alternatives in the player. Each is tested with a search before saving.")
         }
     }
 

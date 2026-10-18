@@ -76,7 +76,7 @@ struct PlayerSheet: View {
     }
 
     @ViewBuilder private var serverSelectorView: some View {
-        if viewModel.store.servers.count + viewModel.store.animeServers.count > 1 {
+        if viewModel.store.servers.count > 1 {
             ServerSelector(viewModel: viewModel)
         }
     }
@@ -84,29 +84,13 @@ struct PlayerSheet: View {
     @ViewBuilder private var nativeSourceSelectorView: some View {
         if viewModel.nativeSources.count > 1 {
             HStack {
-                Label(viewModel.isAnimeServerActive ? "Quality" : "Source",
-                  systemImage: viewModel.isAnimeServerActive ? "sparkles.tv" : "antenna.radiowaves.left.and.right")
+                Label("Source", systemImage: "antenna.radiowaves.left.and.right")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
                 Menu {
-                    if viewModel.nativeSources.contains(where: { $0.audio != nil }) {
-                        // Anime: qualities grouped by audio track so the
-                        // viewer can hop between e.g. 1080p Sub and 1080p Dub.
-                        ForEach(["Sub", "Dub"], id: \.self) { audio in
-                            let entries = viewModel.nativeSources.enumerated().filter { $0.element.audio == audio }
-                            if !entries.isEmpty {
-                                Section(audio == "Sub" ? "Subtitled" : "Dubbed") {
-                                    ForEach(entries, id: \.offset) { index, source in
-                                        sourceButton(source.quality ?? source.name, index: index)
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        ForEach(Array(viewModel.nativeSources.enumerated()), id: \.offset) { index, source in
-                            sourceButton(source.name, index: index)
-                        }
+                    ForEach(Array(viewModel.nativeSources.enumerated()), id: \.offset) { index, source in
+                        sourceButton(source.name, index: index)
                     }
                 } label: {
                     Label(viewModel.nativeSources[viewModel.selectedNativeSourceIndex].name,
@@ -184,20 +168,7 @@ struct PlayerSheet: View {
                     )
                 } else {
                     Color.black
-                    VStack(spacing: 10) {
-                        if viewModel.isResolvingStream || viewModel.animeStatusMessage == nil {
-                            ProgressView().tint(.white)
-                        } else {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .font(.title2)
-                                .foregroundStyle(.yellow)
-                        }
-                        if let status = viewModel.animeStatusMessage {
-                            Text(status)
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.white.opacity(0.7))
-                        }
-                    }
+                    ProgressView().tint(.white)
                 }
             }
         }
@@ -265,8 +236,18 @@ struct PlayerSheet: View {
 /// Handles season boundary: if we're on the last episode of a season and
 /// a next season exists, it shows "Next: S2E1 …" and switches season on tap.
 struct NextEpisodeButton: View {
-    let episode: Episode
+    let label: String
     let onTap: () -> Void
+
+    init(episode: Episode, onTap: @escaping () -> Void) {
+        self.label = "S\(episode.seasonNumber ?? 0)E\(episode.episodeNumber) · \(episode.name ?? "Next")"
+        self.onTap = onTap
+    }
+
+    init(label: String, onTap: @escaping () -> Void) {
+        self.label = label
+        self.onTap = onTap
+    }
 
     @Environment(\.glassFidelity) private var fidelity
 
@@ -282,7 +263,7 @@ struct NextEpisodeButton: View {
                         .font(.caption2.weight(.bold))
                         .tracking(0.6)
                         .foregroundStyle(.white.opacity(0.55))
-                    Text("S\(episode.seasonNumber ?? 0)E\(episode.episodeNumber) · \(episode.name ?? "Next")")
+                    Text(label)
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.white)
                         .lineLimit(1)
@@ -326,8 +307,22 @@ struct NextEpisodeButton: View {
 // MARK: - Server selector
 
 struct ServerSelector: View {
-    @Bindable var viewModel: CatalogViewModel
+    let names: [String]
+    let selectedIndex: Int
+    let onSelect: (Int) -> Void
     @Environment(\.glassFidelity) private var fidelity
+
+    init(viewModel: CatalogViewModel) {
+        names = viewModel.store.servers.map(\.name)
+        selectedIndex = viewModel.currentServerIndex
+        onSelect = { viewModel.switchServer(to: $0) }
+    }
+
+    init(names: [String], selectedIndex: Int, onSelect: @escaping (Int) -> Void) {
+        self.names = names
+        self.selectedIndex = selectedIndex
+        self.onSelect = onSelect
+    }
 
     var body: some View {
         HStack {
@@ -336,57 +331,26 @@ struct ServerSelector: View {
                 .foregroundStyle(.secondary)
             Spacer()
             Menu {
-                // Anime titles list anime servers first; everything else
-                // lists regular servers first. A separator splits the groups.
-                if viewModel.selected?.isAnime == true {
-                    animeSection
-                    Divider()
-                    regularSection
-                } else {
-                    regularSection
-                    Divider()
-                    animeSection
+                ForEach(Array(names.enumerated()), id: \.offset) { index, name in
+                    Button {
+                        onSelect(index)
+                    } label: {
+                        if index == selectedIndex {
+                            Label(name, systemImage: "checkmark")
+                        } else {
+                            Text(name)
+                        }
+                    }
                 }
             } label: {
-                Label(viewModel.currentServerName, systemImage: "chevron.up.chevron.down")
+                Label(names.indices.contains(selectedIndex) ? names[selectedIndex] : "Select",
+                      systemImage: "chevron.up.chevron.down")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.blue)
             }
         }
         .padding(14)
         .background { selectorBackground }
-    }
-
-    @ViewBuilder private var regularSection: some View {
-        if !viewModel.store.servers.isEmpty {
-            Section("Servers") {
-                ForEach(Array(viewModel.store.servers.enumerated()), id: \.offset) { index, server in
-                    serverButton(server.name, selection: .regular(index))
-                }
-            }
-        }
-    }
-
-    @ViewBuilder private var animeSection: some View {
-        if !viewModel.store.animeServers.isEmpty {
-            Section("Anime Servers") {
-                ForEach(Array(viewModel.store.animeServers.enumerated()), id: \.offset) { index, server in
-                    serverButton(server.name, selection: .anime(index))
-                }
-            }
-        }
-    }
-
-    private func serverButton(_ name: String, selection: ServerSelection) -> some View {
-        Button {
-            viewModel.switchServer(to: selection)
-        } label: {
-            if selection == viewModel.currentServer {
-                Label(name, systemImage: "checkmark")
-            } else {
-                Text(name)
-            }
-        }
     }
 
     @ViewBuilder

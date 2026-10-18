@@ -6,6 +6,8 @@ import SwiftUI
 /// whole rather than skim past.
 struct FavoritesView: View {
     @Environment(AppStore.self) private var store
+    @Environment(TabRouter.self) private var router
+    @Environment(AnimeViewModel.self) private var animeViewModel
     @State private var viewModel: CatalogViewModel?
 
     private var columns: [GridItem] {
@@ -65,6 +67,12 @@ struct FavoritesView: View {
     }
 
     private func open(_ item: MediaItem) async {
+        // Anime-tab titles play in the Anime tab's player.
+        if item.isAnimeCatalog {
+            router.selection = .anime
+            animeViewModel.open(item)
+            return
+        }
         if viewModel == nil {
             viewModel = CatalogViewModel(store: store)
         }

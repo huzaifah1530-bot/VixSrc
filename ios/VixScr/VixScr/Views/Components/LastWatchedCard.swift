@@ -32,7 +32,7 @@ struct LastWatchedCard: View {
                         .lineLimit(1)
 
                     if let season = item.resumeSeason, let episode = item.resumeEpisode {
-                        Text("S\(season) · E\(episode)\(item.resumeTitle.map { " · \($0)" } ?? "")")
+                        Text((item.isAnimeCatalog ? "E\(episode)" : "S\(season) · E\(episode)") + (item.resumeTitle.map { " · \($0)" } ?? ""))
                             .font(.caption.weight(.medium))
                             .foregroundStyle(.white.opacity(0.55))
                             .lineLimit(1)

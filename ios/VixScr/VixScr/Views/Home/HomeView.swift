@@ -171,7 +171,7 @@ struct HomeView: View {
         // animation context drives all card transitions. Two competing
         // .animation(value:) modifiers on the same container fight each
         // other and produce choppiness — one is always enough.
-        let animationAnchor = (viewModel.hero?.id ?? "") + (store.sortedRecents.first?.id ?? "")
+        let animationAnchor = (viewModel.hero?.id ?? "") + (store.homeRecents.first?.id ?? "")
 
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
@@ -195,7 +195,7 @@ struct HomeView: View {
                     // that item, flipping this condition to false and removing
                     // the card. The VStack (not LazyVStack) fully tracks the
                     // height change so the collapse is smooth.
-                    if let lastWatched = store.sortedRecents.first,
+                    if let lastWatched = store.homeRecents.first,
                        lastWatched.id != viewModel.hero?.id {
                         LastWatchedCard(
                             item: lastWatched,

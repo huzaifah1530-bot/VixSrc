@@ -31,6 +31,7 @@ final class AppStore {
         static let servers = "vixsrc_live_servers"
         static let watchProgress = "vixsrc_live_watch_progress"
         static let animeServers = "vixsrc_live_anime_servers"
+        static let animeSearchHistory = "vixsrc_live_anime_search_history"
     }
 
     /// Optional built-in credential. The Electron app hardcodes one directly
@@ -114,6 +115,20 @@ final class AppStore {
             withMutation(keyPath: \.searchHistory) {
                 storedSearchHistory = newValue
                 defaults.set(newValue, forKey: Keys.searchHistory)
+            }
+        }
+    }
+
+    @ObservationIgnored private var storedAnimeSearchHistory: [String]
+    var animeSearchHistory: [String] {
+        get {
+            access(keyPath: \.animeSearchHistory)
+            return storedAnimeSearchHistory
+        }
+        set {
+            withMutation(keyPath: \.animeSearchHistory) {
+                storedAnimeSearchHistory = newValue
+                defaults.set(newValue, forKey: Keys.animeSearchHistory)
             }
         }
     }
@@ -203,7 +218,7 @@ final class AppStore {
     }
 
     enum ContentFilter: String, CaseIterable {
-        case all, movie, tv, anime, favorites
+        case all, movie, tv, favorites
     }
 
     enum CardSize: String {
@@ -221,6 +236,7 @@ final class AppStore {
         self.storedRecents = AppStore.load([MediaItem].self, key: Keys.recents, defaults: defaults) ?? []
         self.storedContentFilter = ContentFilter(rawValue: defaults.string(forKey: Keys.contentFilter) ?? "all") ?? .all
         self.storedSearchHistory = defaults.stringArray(forKey: Keys.searchHistory) ?? []
+        self.storedAnimeSearchHistory = defaults.stringArray(forKey: Keys.animeSearchHistory) ?? []
         self.storedCardSize = CardSize(rawValue: defaults.string(forKey: Keys.cardSize) ?? "large") ?? .large
         self.storedPerformanceMode = defaults.bool(forKey: Keys.perfMode)
         self.storedUltraPerformanceMode = defaults.bool(forKey: Keys.ultraPerfMode)
@@ -278,6 +294,10 @@ final class AppStore {
         recents.sorted { ($0.updatedAt ?? .distantPast) > ($1.updatedAt ?? .distantPast) }
     }
 
+    /// Home shows only TMDB movies and shows; the Anime tab shows only anime.
+    var homeRecents: [MediaItem] { sortedRecents.filter { !$0.isAnime } }
+    var animeRecents: [MediaItem] { sortedRecents.filter(\.isAnimeCatalog) }
+
     func progress(for id: String) -> WatchProgress? {
         watchProgress.first { $0.id == id }
     }
@@ -309,6 +329,12 @@ final class AppStore {
 
     func clearSearchHistory() {
         searchHistory = []
+    }
+
+    func addAnimeSearchHistory(_ query: String) {
+        let clean = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard clean.count >= 2 else { return }
+        animeSearchHistory = ([clean] + animeSearchHistory.filter { $0.caseInsensitiveCompare(clean) != .orderedSame }).prefix(12).map { $0 }
     }
 
     // MARK: Servers
@@ -351,6 +377,7 @@ final class AppStore {
         var recents: [MediaItem]
         var watchProgress: [WatchProgress]
         var searchHistory: [String]
+        var animeSearchHistory: [String]?
         var servers: [StreamServer]
         var animeServers: [AnimeServer]
         var contentFilter: String
@@ -366,6 +393,7 @@ final class AppStore {
             recents: recents,
             watchProgress: watchProgress,
             searchHistory: searchHistory,
+            animeSearchHistory: animeSearchHistory,
             servers: servers,
             animeServers: animeServers,
             contentFilter: contentFilter.rawValue,
@@ -390,6 +418,7 @@ final class AppStore {
         recents = backup.recents
         watchProgress = backup.watchProgress
         searchHistory = backup.searchHistory
+        animeSearchHistory = backup.animeSearchHistory ?? []
         servers = backup.servers.isEmpty ? StreamServer.defaults : backup.servers
         animeServers = backup.animeServers
         contentFilter = ContentFilter(rawValue: backup.contentFilter) ?? .all

@@ -4,6 +4,7 @@ import Observation
 /// The app's top-level destinations, one per native tab.
 enum AppTab: Hashable {
     case home
+    case anime
     case favorites
     case settings
 }
@@ -29,10 +30,14 @@ final class TabRouter {
             if newValue == .home, old == .home {
                 NotificationCenter.default.post(name: .velaClearSearch, object: nil)
             }
+            if newValue == .anime, old == .anime {
+                NotificationCenter.default.post(name: .velaClearAnimeSearch, object: nil)
+            }
         }
     }
 }
 
 extension Notification.Name {
     static let velaClearSearch = Notification.Name("vela.clearSearch")
+    static let velaClearAnimeSearch = Notification.Name("vela.clearAnimeSearch")
 }

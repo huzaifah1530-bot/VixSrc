@@ -44,6 +44,31 @@ struct MediaItem: Identifiable, Codable, Hashable {
     var posterURL: URL? { TMDBImage.url(path: posterPath, size: .w500) }
     var backdropURL: URL? { TMDBImage.url(path: backdropPath, size: .original) }
 
+    /// Anime-tab titles come from the anime site's catalogue, not TMDB.
+    /// They're stored as `kai:<slug>` so every existing card, favourite and
+    /// progress view works unchanged.
+    static let animeCatalogPrefix = "kai:"
+    var isAnimeCatalog: Bool { tmdbId.hasPrefix(Self.animeCatalogPrefix) }
+    var animeSlug: String? { isAnimeCatalog ? String(tmdbId.dropFirst(Self.animeCatalogPrefix.count)) : nil }
+
+    static func anime(_ show: AnimeKaiClient.Show, description: String = "") -> MediaItem {
+        var counts: [String] = []
+        if let sub = show.subCount, sub > 0 { counts.append("Sub \(sub)") }
+        if let dub = show.dubCount, dub > 0 { counts.append("Dub \(dub)") }
+        return MediaItem(
+            tmdbId: animeCatalogPrefix + show.slug,
+            type: .tv,
+            title: show.title,
+            description: description.isEmpty ? (show.japaneseTitle.isEmpty ? show.title : show.japaneseTitle) : description,
+            posterPath: show.posterURL,
+            backdropPath: show.posterURL,
+            rating: nil,
+            year: counts.isEmpty ? show.kind : counts.joined(separator: " · "),
+            popularity: 0,
+            anime: true
+        )
+    }
+
     var typeLabel: String {
         if isAnime { return "Anime" }
         return type == .movie ? "Movie" : "TV"
@@ -71,6 +96,7 @@ enum TMDBImage {
 
     static func url(path: String?, size: Size) -> URL? {
         guard let path, !path.isEmpty else { return nil }
+        if path.hasPrefix("http") { return URL(string: path) }
         return URL(string: "https://image.tmdb.org/t/p/\(size.rawValue)\(path)")
     }
 }

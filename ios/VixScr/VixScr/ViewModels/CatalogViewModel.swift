@@ -48,15 +48,7 @@ final class CatalogViewModel {
     var episodeQuery: String = ""
     private(set) var isLoadingEpisodes = false
     private(set) var episodeErrorMessage: String?
-    private(set) var currentServer: ServerSelection = .regular(0)
-    /// Last audio track / quality picked for anime, carried across episodes.
-    private var preferredAnimeAudio = "Sub"
-    private var preferredAnimeQuality = "Auto"
-    private var animeResolutionTask: Task<Void, Never>?
-    private(set) var animeStatusMessage: String?
-    /// True once the viewer picks a server themselves; failures then stay on
-    /// that server with an error instead of silently switching away.
-    private var serverPickedManually = false
+    private(set) var currentServerIndex = 0
     private(set) var currentStreamURL: URL?
     private(set) var currentNativeVideoURL: URL?
     private(set) var nativeSources: [StreamURLExtractor.ResolvedStream] = []
@@ -83,7 +75,7 @@ final class CatalogViewModel {
 
     var filteredHomeRows: [MediaRow] {
         var rows = homeRows
-        let recents = store.sortedRecents
+        let recents = store.homeRecents
         if !recents.isEmpty, searchQuery.trimmingCharacters(in: .whitespaces).isEmpty {
             rows = [MediaRow(title: "Continue watching", subtitle: "Saved on this device", items: recents)] + rows
         }
@@ -107,7 +99,9 @@ final class CatalogViewModel {
             // TMDB can return the same id twice (e.g. trending + popular
             // overlap), which would otherwise collide in ForEach.
             var seen = Set<String>()
+            // Anime lives in its own tab.
             let items = row.items
+                .filter { !$0.isAnime }
                 .filter(passesContentFilter)
                 .filter { seen.insert($0.id).inserted }
             return MediaRow(title: row.title, subtitle: row.subtitle, items: items)
@@ -116,9 +110,8 @@ final class CatalogViewModel {
 
     private func passesContentFilter(_ item: MediaItem) -> Bool {
         switch store.contentFilter {
-        case .movie: return item.type == .movie && !item.isAnime
-        case .tv: return item.type == .tv && !item.isAnime
-        case .anime: return item.isAnime
+        case .movie: return item.type == .movie
+        case .tv: return item.type == .tv
         case .favorites: return store.isFavorite(item)
         case .all: return true
         }
@@ -160,9 +153,6 @@ final class CatalogViewModel {
             async let tvPopular = client.list("/tv/popular", credential: credential, query: ["page": "1"])
             async let movieTop = client.list("/movie/top_rated", credential: credential, query: ["page": "1"])
             async let tvTop = client.list("/tv/top_rated", credential: credential, query: ["page": "1"])
-            async let animePopular = client.list("/discover/tv", credential: credential, query: [
-                "page": "1", "with_genres": "16", "with_original_language": "ja", "sort_by": "popularity.desc"
-            ])
 
             let (trendingItems, moviePopularItems, tvPopularItems, movieTopItems, tvTopItems) = try await (
                 trending.compactMap { $0.normalized() },
@@ -171,21 +161,16 @@ final class CatalogViewModel {
                 movieTop.compactMap { $0.normalized(forcedType: .movie) },
                 tvTop.compactMap { $0.normalized(forcedType: .tv) }
             )
-            // Optional row: a failure here shouldn't take the whole home down.
-            let animeItems = ((try? await animePopular) ?? []).compactMap { raw -> MediaItem? in
-                var item = raw.normalized(forcedType: .tv)
-                item?.anime = true
-                return item
-            }
 
             homeRows = [
                 MediaRow(title: "Trending this week", subtitle: "Live from TMDB trending", items: trendingItems),
                 MediaRow(title: "Popular movies", subtitle: "Current TMDB movie results", items: moviePopularItems),
-                MediaRow(title: "Popular TV shows", subtitle: "Current TMDB show results", items: tvPopularItems.filter { !$0.isAnime }),
-                MediaRow(title: "Popular anime", subtitle: "Japanese animation on TMDB", items: animeItems),
+                MediaRow(title: "Popular TV shows", subtitle: "Current TMDB show results", items: tvPopularItems),
                 MediaRow(title: "Top rated movies", subtitle: "Highly rated TMDB films", items: movieTopItems),
                 MediaRow(title: "Top rated TV", subtitle: "Highly rated TMDB series", items: tvTopItems)
-            ].filter { !$0.items.isEmpty }
+            ]
+            .map { MediaRow(title: $0.title, subtitle: $0.subtitle, items: $0.items.filter { !$0.isAnime }) }
+            .filter { !$0.items.isEmpty }
 
             if let first = homeRows.flatMap(\.items).first {
                 hero = first
@@ -346,7 +331,7 @@ final class CatalogViewModel {
             guard let self else { return [] }
             do {
                 let raw = try await client.list("/search/multi", credential: store.credential, query: ["query": parsed.titleQuery, "include_adult": "false", "page": "1"])
-                let rawItems = raw.compactMap { $0.normalized() }
+                let rawItems = raw.compactMap { $0.normalized() }.filter { !$0.isAnime }
 
                 var items = FuzzySearch.rankAndFilter(items: rawItems, query: parsed.titleQuery, year: parsed.year)
 
@@ -411,10 +396,7 @@ final class CatalogViewModel {
         selectedSeason = nil
         selectedEpisode = nil
         episodes = []
-        currentServer = defaultServer(for: item)
-        serverPickedManually = false
-        animeStatusMessage = nil
-        animeResolutionTask?.cancel()
+        currentServerIndex = 0
         currentStreamURL = nil
         currentNativeVideoURL = nil
         nativeSources = []
@@ -442,10 +424,6 @@ final class CatalogViewModel {
         do {
             let details = try await client.tvDetails(id: item.tmdbId, credential: store.credential)
             tvDetails = details
-            if details.isAnime, selected?.isAnime == false, selected?.id == item.id {
-                selected?.anime = true
-                if !serverPickedManually { currentServer = defaultServer(for: selected ?? item) }
-            }
             let seasons = details.usableSeasons
             guard let firstSeason = seasons.first else {
                 throw TMDBError.decoding
@@ -539,54 +517,31 @@ final class CatalogViewModel {
     /// The regular server the user last picked. Changing episode must NOT
     /// silently drop back to server 0.
     private var activeServer: StreamServer? {
-        if case .regular(let index) = currentServer, store.servers.indices.contains(index) {
-            return store.servers[index]
+        if store.servers.indices.contains(currentServerIndex) {
+            return store.servers[currentServerIndex]
         }
         return store.servers.first
     }
 
-    var isAnimeServerActive: Bool {
-        if case .anime = currentServer { return true }
-        return false
-    }
-
     var currentServerName: String {
-        switch currentServer {
-        case .regular(let index):
-            return store.servers.indices.contains(index) ? store.servers[index].name : "Select"
-        case .anime(let index):
-            return store.animeServers.indices.contains(index) ? store.animeServers[index].name : "Select"
-        }
-    }
-
-    /// Anime opens on the first anime server; everything else on the first
-    /// regular server.
-    private func defaultServer(for item: MediaItem) -> ServerSelection {
-        if item.isAnime, !store.animeServers.isEmpty { return .anime(0) }
-        if store.servers.isEmpty, !store.animeServers.isEmpty { return .anime(0) }
-        return .regular(0)
+        store.servers.indices.contains(currentServerIndex) ? store.servers[currentServerIndex].name : "Select"
     }
 
     @MainActor
     func selectEpisode(_ episode: Episode) async {
         selectedEpisode = episode
         guard let item = selected, let season = selectedSeason else { return }
-        let episodeLabel = "S\(season.seasonNumber) � E\(episode.episodeNumber)"
-        let subtitle = episode.name.map { "\(episodeLabel) � \($0)" } ?? episodeLabel
+        let episodeLabel = "S\(season.seasonNumber) · E\(episode.episodeNumber)"
+        let subtitle = episode.name.map { "\(episodeLabel) — \($0)" } ?? episodeLabel
         playerManager.setNowPlayingMetadata(title: item.title, subtitle: subtitle, artworkURL: item.posterURL)
         store.addRecent(item, season: season.seasonNumber, episode: episode.episodeNumber, episodeTitle: episode.name)
         startPlaybackForCurrentSelection()
     }
 
     @MainActor
-    func switchServer(to selection: ServerSelection) {
-        guard selected != nil else { return }
-        switch selection {
-        case .regular(let index): guard store.servers.indices.contains(index) else { return }
-        case .anime(let index): guard store.animeServers.indices.contains(index) else { return }
-        }
-        currentServer = selection
-        serverPickedManually = true
+    func switchServer(to index: Int) {
+        guard selected != nil, store.servers.indices.contains(index) else { return }
+        currentServerIndex = index
         startPlaybackForCurrentSelection()
         showToast("Switched to \(currentServerName)")
     }
@@ -594,21 +549,7 @@ final class CatalogViewModel {
     /// Builds the stream for the selected movie / episode on the current server.
     private func startPlaybackForCurrentSelection() {
         guard let item = selected else { return }
-        animeResolutionTask?.cancel()
-        animeStatusMessage = nil
         rejectedNativeStreamURLs.removeAll()
-
-        if case .anime(let index) = currentServer, store.animeServers.indices.contains(index) {
-            streamResolutionTask?.cancel()
-            currentStreamURL = nil
-            currentNativeVideoURL = nil
-            nativeSources = []
-            selectedNativeSourceIndex = 0
-            playerManager.cleanup()
-            resolveAnime(server: store.animeServers[index], item: item)
-            return
-        }
-
         if item.type == .movie {
             currentStreamURL = activeServer?.movieURL(tmdbId: item.tmdbId)
         } else if let season = selectedSeason, let episode = selectedEpisode {
@@ -619,81 +560,7 @@ final class CatalogViewModel {
         resolvePlaybackURL()
     }
 
-    private func resolveAnime(server: AnimeServer, item: MediaItem) {
-        if item.type == .tv, selectedEpisode == nil { return }
-        let season = selectedSeason?.seasonNumber ?? 1
-        let episode = selectedEpisode?.episodeNumber ?? 1
-        let earlier = (tvDetails?.usableSeasons ?? [])
-            .filter { $0.seasonNumber < season }
-            .reduce(0) { $0 + ($1.episodeCount ?? 0) }
-        let request = AnimeKaiClient.Request(
-            base: server.base,
-            tmdbId: item.tmdbId,
-            title: item.title,
-            isMovie: item.type == .movie,
-            season: season,
-            episode: episode,
-            absoluteEpisode: earlier + episode
-        )
-        let selection = currentServer
-        let progressKey = currentProgressID
-        isResolvingStream = true
-        animeStatusMessage = "Finding on \(server.name)�"
-
-        animeResolutionTask = Task { @MainActor [weak self] in
-            do {
-                let streams = try await AnimeKaiClient.streams(for: request)
-                guard let self, !Task.isCancelled, self.currentServer == selection, self.currentProgressID == progressKey else { return }
-                self.isResolvingStream = false
-                self.animeStatusMessage = nil
-                self.nativeSources = streams
-                let index = self.preferredAnimeSourceIndex(in: streams)
-                self.selectedNativeSourceIndex = index
-                self.loadNativeSource(at: index)
-            } catch {
-                guard let self, !Task.isCancelled, self.currentServer == selection, self.currentProgressID == progressKey else { return }
-                self.isResolvingStream = false
-                self.animeStatusMessage = nil
-                self.fallBackFromAnime(serverName: server.name, reason: error.localizedDescription)
-            }
-        }
-    }
-
-    /// Matches the last audio + quality the viewer picked, falling back to
-    /// the same audio at any quality, then the first source.
-    private func preferredAnimeSourceIndex(in streams: [StreamURLExtractor.ResolvedStream]) -> Int {
-        streams.firstIndex { $0.audio == preferredAnimeAudio && $0.quality == preferredAnimeQuality }
-            ?? streams.firstIndex { $0.audio == preferredAnimeAudio }
-            ?? 0
-    }
-
-    /// An anime server couldn't play this: try the next anime server, then
-    /// drop to the first regular server so playback still starts.
-    private func fallBackFromAnime(serverName: String, reason: String) {
-        guard case .anime(let index) = currentServer else { return }
-        if serverPickedManually {
-            animeStatusMessage = "\(serverName): \(reason)"
-            showToast("\(serverName): \(reason)")
-            return
-        }
-        if store.animeServers.indices.contains(index + 1) {
-            currentServer = .anime(index + 1)
-            showToast("\(serverName): \(reason). Trying \(currentServerName)")
-        } else if !store.servers.isEmpty {
-            currentServer = .regular(0)
-            showToast("\(serverName): \(reason). Switched to \(currentServerName)")
-        } else {
-            showToast("\(serverName): \(reason)")
-            return
-        }
-        startPlaybackForCurrentSelection()
-    }
-
     func reloadPlayer() {
-        if isAnimeServerActive {
-            startPlaybackForCurrentSelection()
-            return
-        }
         let url = currentStreamURL
         rejectedNativeStreamURLs.removeAll()
         currentStreamURL = nil
@@ -737,8 +604,6 @@ final class CatalogViewModel {
     func switchNativeSource(to index: Int) {
         guard nativeSources.indices.contains(index) else { return }
         selectedNativeSourceIndex = index
-        if let audio = nativeSources[index].audio { preferredAnimeAudio = audio }
-        if let quality = nativeSources[index].quality { preferredAnimeQuality = quality }
         loadNativeSource(at: index)
     }
 
@@ -763,8 +628,6 @@ final class CatalogViewModel {
             subtitle: nowPlayingEpisodeSubtitle,
             artworkURL: selected?.posterURL
         )
-        // Soft subs only switch on by default for the subtitled track.
-        playerManager.setExternalSubtitles(source.subtitles, autoSelect: source.audio == "Sub")
     }
 
     private var nowPlayingEpisodeSubtitle: String? {
@@ -824,22 +687,6 @@ final class CatalogViewModel {
     func rejectNativeStream(_ url: URL) {
         guard currentNativeVideoURL == url else { return }
         rejectedNativeStreamURLs.insert(url)
-        // Anime: try the next source (same audio track first) before giving up.
-        if isAnimeServerActive {
-            let audio = nativeSources.indices.contains(selectedNativeSourceIndex) ? nativeSources[selectedNativeSourceIndex].audio : nil
-            let untried = nativeSources.indices.filter { !rejectedNativeStreamURLs.contains(nativeSources[$0].url) }
-            if let next = untried.first(where: { nativeSources[$0].audio == audio }) ?? untried.first {
-                selectedNativeSourceIndex = next
-                loadNativeSource(at: next)
-                return
-            }
-            playerManager.cleanup()
-            currentNativeVideoURL = nil
-            nativeSources = []
-            selectedNativeSourceIndex = 0
-            fallBackFromAnime(serverName: currentServerName, reason: "Streams failed to play")
-            return
-        }
         playerManager.cleanup()
         currentNativeVideoURL = nil
         nativeSources = []
@@ -856,8 +703,6 @@ final class CatalogViewModel {
         selectedNativeSourceIndex = 0
         isResolvingStream = false
         streamResolutionTask?.cancel()
-        animeResolutionTask?.cancel()
-        animeStatusMessage = nil
         playerManager.cleanup()
         startHeroCycle()
     }

@@ -112,6 +112,7 @@ struct HeroView: View {
 
     private var tagText: String {
         guard let item else { return "Live TMDB" }
+        if item.isAnimeCatalog { return "Anime" }
         return item.typeLabel + (item.year.isEmpty ? "" : " · \(item.year)")
     }
 

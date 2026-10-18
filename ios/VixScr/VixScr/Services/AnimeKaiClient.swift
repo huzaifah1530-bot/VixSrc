@@ -5,11 +5,10 @@ import CryptoKit
 /// Native port of the AnimeKai / AniKoto Mangayomi extension
 /// (github.com/Mallyd11/mangayomi-anime-extensions, `anikoto.js`).
 ///
-/// The sites have no TMDB mapping, so a TMDB title is matched to the site's
-/// catalogue by name (and season number), then resolved down to HLS
-/// playlists AVPlayer can play directly:
+/// The Anime tab browses the site's own catalogue (no TMDB), then resolves
+/// episodes down to HLS playlists AVPlayer can play directly:
 ///
-///   /filter?keyword=        search, pick the best title + season match
+///   /filter, /most-viewed   catalogue and search
 ///   /watch/{slug}           read the internal anime id (#watch-main data-id)
 ///   /ajax/episode/list/{id} episode list with per-episode server `data-ids`
 ///   /ajax/server/list       sub / dub server groups with `data-link-id`s
@@ -19,16 +18,32 @@ import CryptoKit
 /// The master playlist is then split into per-resolution variants, giving
 /// "1080p · Dub", "720p · Sub", ... sources for the player's quality picker.
 struct AnimeKaiClient {
-    struct Request: Sendable {
-        var base: String
-        var tmdbId: String
+    /// A title card from a list, search or detail page.
+    struct Show: Sendable, Hashable {
+        var slug: String
         var title: String
-        var isMovie: Bool
-        var season: Int
-        var episode: Int
-        /// Episode number counted across every earlier season, for sites that
-        /// list a long-running show (One Piece, Naruto) as one entry.
-        var absoluteEpisode: Int?
+        var japaneseTitle: String
+        var posterURL: String
+        var kind: String
+        var subCount: Int?
+        var dubCount: Int?
+    }
+
+    struct EpisodeInfo: Sendable, Hashable, Identifiable {
+        var number: String
+        var title: String
+        var ids: String
+        var hasSub: Bool
+        var hasDub: Bool
+        var id: String { number }
+        /// Whole-number form used for progress keys and "E5" labels.
+        var intNumber: Int { Int(Double(number) ?? 0) }
+    }
+
+    struct Details: Sendable {
+        var show: Show
+        var description: String
+        var episodes: [EpisodeInfo]
     }
 
     enum ResolveError: LocalizedError {
@@ -37,7 +52,7 @@ struct AnimeKaiClient {
         var errorDescription: String? {
             switch self {
             case .notFound: return "Couldn't find this title"
-            case .episodeMissing: return "This episode isn't available yet"
+            case .episodeMissing: return "This episode isn't available on this server"
             case .noStreams: return "No playable streams found"
             }
         }
@@ -55,41 +70,114 @@ struct AnimeKaiClient {
     /// CDN is the one that reliably outruns playback.
     private static let serverOrder = ["vidplay", "hd", "vidstream", "vidcloud"]
 
-    private static let cache = AnimeKaiCache()
+    private static func clean(_ base: String) -> String {
+        base.hasSuffix("/") ? String(base.dropLast()) : base
+    }
 
-    // MARK: - Public entry point
+    // MARK: - Catalogue
 
-    static func streams(for request: Request) async throws -> [StreamURLExtractor.ResolvedStream] {
-        let base = request.base.hasSuffix("/") ? String(request.base.dropLast()) : request.base
-        let seasonKey = request.isMovie ? 0 : request.season
-        let cacheKey = "\(base)|\(request.tmdbId)|\(seasonKey)"
+    /// A list page such as `/most-viewed` or `/filter?sort=recently_updated`.
+    static func list(base: String, path: String) async throws -> [Show] {
+        let base = clean(base)
+        guard let url = URL(string: base + path) else { return [] }
+        return parseCards(try await getString(url, headers: ["User-Agent": userAgent, "Referer": base + "/"]))
+    }
 
-        var entry = await cache.entry(for: cacheKey)
-        if entry == nil {
-            guard let match = try await findTitle(base: base, request: request) else { throw ResolveError.notFound }
-            let episodes = try await episodeList(base: base, slug: match.slug)
-            guard !episodes.isEmpty else { throw ResolveError.notFound }
-            let resolved = AnimeKaiCache.Entry(slug: match.slug, usesAbsoluteNumbering: match.usesAbsoluteNumbering, episodes: episodes)
-            await cache.store(resolved, for: cacheKey)
-            entry = resolved
+    static func search(base: String, query: String) async throws -> [Show] {
+        let base = clean(base)
+        var components = URLComponents(string: base + "/filter")
+        components?.queryItems = [URLQueryItem(name: "keyword", value: query)]
+        guard let url = components?.url else { return [] }
+        return parseCards(try await getString(url, headers: ["User-Agent": userAgent, "Referer": base + "/"]))
+    }
+
+    /// Finds the same show on another site (slugs differ between sites).
+    static func findSlug(base: String, title: String) async throws -> String? {
+        let results = try await search(base: base, query: title)
+        let target = normalize(title)
+        if let exact = results.first(where: { normalize($0.title) == target || normalize($0.japaneseTitle) == target }) {
+            return exact.slug
         }
-        guard let entry else { throw ResolveError.notFound }
+        return results
+            .map { ($0, max(similarity(target, normalize($0.title)), similarity(target, normalize($0.japaneseTitle)))) }
+            .filter { $0.1 >= 0.6 }
+            .max { $0.1 < $1.1 }?.0.slug
+    }
 
-        let wanted: Int
-        if request.isMovie {
-            wanted = 1
-        } else if entry.usesAbsoluteNumbering, let absolute = request.absoluteEpisode {
-            wanted = absolute
-        } else {
-            wanted = request.episode
+    static func details(base: String, slug: String) async throws -> Details {
+        let base = clean(base)
+        guard let watchURL = URL(string: base + "/watch/" + slug) else { throw ResolveError.notFound }
+        let html = try await getString(watchURL, headers: ["User-Agent": userAgent, "Referer": base + "/"])
+
+        let heading = firstMatch(#"<h1\b[^>]*>([\s\S]*?)</h1>"#, in: html, group: 1).map { decodeEntities(stripTags($0)) } ?? ""
+        let japanese = firstMatch(#"<h1\b[^>]*data-jp="([^"]*)""#, in: html, group: 1).map(decodeEntities) ?? ""
+        let poster = firstMatch(#"itemprop="image"\s+src="([^"]+)""#, in: html, group: 1)
+            ?? firstMatch(#"og:image"\s+content="([^"]+)""#, in: html, group: 1) ?? ""
+        let synopsis = firstMatch(#"class="synopsis[\s\S]*?class="content">([\s\S]*?)</div>"#, in: html, group: 1).map { decodeEntities(stripTags($0)) } ?? ""
+        let kind = firstMatch(#"<label>\s*(TV|MOVIE|OVA|ONA|SPECIAL|MUSIC)\s*</label>"#, in: html, group: 1) ?? ""
+
+        guard let animeId = firstMatch(#"id="watch-main"[^>]*data-id="(\d+)""#, in: html, group: 1)
+                ?? firstMatch(#"data-id="(\d+)"[^>]*id="watch-main""#, in: html, group: 1),
+              let listURL = URL(string: base + "/ajax/episode/list/" + animeId + "?vrf=") else { throw ResolveError.notFound }
+
+        let body = try await getString(listURL, headers: xhrHeaders(referer: watchURL.absoluteString + "/"))
+        let listHTML = resultHTML(from: body)
+
+        var episodes: [EpisodeInfo] = []
+        for anchor in allMatches(#"<a\b[^>]*\bdata-num="[^"]*"[^>]*>[\s\S]*?</a>"#, in: listHTML) {
+            guard let tag = firstMatch(#"^<a\b[^>]*>"#, in: anchor, group: 0),
+                  let num = attribute("data-num", in: tag), let ids = attribute("data-ids", in: tag),
+                  !episodes.contains(where: { $0.number == num }) else { continue }
+            var title = firstMatch(#"d-title[^>]*>([\s\S]*?)</span>"#, in: anchor, group: 1).map { decodeEntities(stripTags($0)) } ?? ""
+            if title.isEmpty || title.lowercased() == "episode \(num)" { title = "Episode \(num)" }
+            episodes.append(EpisodeInfo(
+                number: num,
+                title: title,
+                ids: ids,
+                hasSub: attribute("data-sub", in: tag) == "1",
+                hasDub: attribute("data-dub", in: tag) == "1"
+            ))
         }
-        let episode = entry.episodes.first { $0.number == String(wanted) }
-            ?? request.absoluteEpisode.flatMap { abs in entry.episodes.first { $0.number == String(abs) } }
-            ?? (request.isMovie ? entry.episodes.first : nil)
-        guard let episode, !episode.ids.isEmpty else { throw ResolveError.episodeMissing }
 
+        let show = Show(slug: slug, title: heading.isEmpty ? slug : heading, japaneseTitle: japanese,
+                        posterURL: poster, kind: kind,
+                        subCount: episodes.filter(\.hasSub).count, dubCount: episodes.filter(\.hasDub).count)
+        return Details(show: show, description: synopsis, episodes: episodes)
+    }
+
+    private static func parseCards(_ html: String) -> [Show] {
+        // Each card: poster <img>, sub/dub counts and a type in `.right`,
+        // then a `d-title` anchor (name, href, data-jp).
+        var out: [Show] = []
+        let chunks = html.components(separatedBy: "class=\"item ").dropFirst()
+            + html.components(separatedBy: "class=\"item\"").dropFirst()
+        for chunk in chunks {
+            guard let tag = firstMatch(#"<a\b[^>]*\bd-title\b[^>]*>[\s\S]*?</a>"#, in: chunk, group: 0),
+                  let href = attribute("href", in: tag),
+                  let slug = firstMatch(#"/(?:watch|anime)/([^/?#"]+)"#, in: href, group: 1),
+                  !out.contains(where: { $0.slug == slug }) else { continue }
+            let name = decodeEntities(stripTags(firstMatch(#">([\s\S]*?)</a>"#, in: tag, group: 1) ?? ""))
+            guard !name.isEmpty else { continue }
+            out.append(Show(
+                slug: slug,
+                title: name,
+                japaneseTitle: decodeEntities(attribute("data-jp", in: tag) ?? ""),
+                posterURL: firstMatch(#"<img[^>]*\bsrc="([^"]+)""#, in: chunk, group: 1) ?? "",
+                kind: (firstMatch(#"<div class="right">\s*([^<]+?)\s*</div>"#, in: chunk, group: 1) ?? "").trimmingCharacters(in: .whitespaces),
+                subCount: firstMatch(#"ep-status sub"><span>\s*(\d+)"#, in: chunk, group: 1).flatMap(Int.init),
+                dubCount: firstMatch(#"ep-status dub"><span>\s*(\d+)"#, in: chunk, group: 1).flatMap(Int.init)
+            ))
+        }
+        return out
+    }
+
+    // MARK: - Streams
+
+    /// Resolves an episode's sub and dub tracks into playable sources.
+    static func streams(base: String, episodeIds: String) async throws -> [StreamURLExtractor.ResolvedStream] {
+        let base = clean(base)
         // Server link ids rotate, so always fetch a fresh server list.
-        let groups = try await serverGroups(base: base, ids: episode.ids)
+        let groups = try await serverGroups(base: base, ids: episodeIds)
         async let sub = resolveTrack(base: base, servers: groups.sub, audio: "Sub")
         async let dub = resolveTrack(base: base, servers: groups.dub, audio: "Dub")
         let all = await sub + dub
@@ -117,110 +205,6 @@ struct AnimeKaiClient {
                 subtitles: subtitles
             )
         }
-    }
-
-    // MARK: - Title matching
-
-    private struct Candidate {
-        var slug: String
-        var name: String
-        var japaneseName: String
-        var kind: String
-    }
-
-    private struct Match {
-        var slug: String
-        var usesAbsoluteNumbering: Bool
-    }
-
-    private static func findTitle(base: String, request: Request) async throws -> Match? {
-        let results = try await search(base: base, query: request.title)
-
-        if request.isMovie {
-            let ranked = rank(results, title: request.title, season: nil)
-            let movies = ranked.filter { $0.candidate.kind.uppercased() == "MOVIE" }
-            return (movies.first ?? ranked.first).map { Match(slug: $0.candidate.slug, usesAbsoluteNumbering: false) }
-        }
-
-        let ranked = rank(results, title: request.title, season: request.season)
-        if let exact = ranked.first(where: { seasonNumber(in: $0.candidate.name) == request.season && $0.candidate.kind.uppercased() != "MOVIE" }) {
-            return Match(slug: exact.candidate.slug, usesAbsoluteNumbering: false)
-        }
-
-        if request.season > 1 {
-            // Later seasons are usually separate entries ("... Season 2").
-            let more = try await search(base: base, query: "\(request.title) season \(request.season)")
-            let reranked = rank(more, title: request.title, season: request.season)
-            if let exact = reranked.first(where: { seasonNumber(in: $0.candidate.name) == request.season }) {
-                return Match(slug: exact.candidate.slug, usesAbsoluteNumbering: false)
-            }
-            // No separate entry: assume one continuous listing.
-            if let single = ranked.first(where: { seasonNumber(in: $0.candidate.name) == 1 && $0.candidate.kind.uppercased() == "TV" }) ?? ranked.first {
-                return Match(slug: single.candidate.slug, usesAbsoluteNumbering: true)
-            }
-        }
-        return nil
-    }
-
-    private static func rank(_ candidates: [Candidate], title: String, season: Int?) -> [(candidate: Candidate, score: Double)] {
-        let target = normalize(stripSeason(title))
-        return candidates
-            .map { candidate -> (Candidate, Double) in
-                let english = similarity(target, normalize(stripSeason(candidate.name)))
-                let japanese = similarity(target, normalize(stripSeason(candidate.japaneseName)))
-                var score = max(english, japanese)
-                if candidate.kind.uppercased() == "TV" { score += 0.05 }
-                return (candidate, score)
-            }
-            .filter { $0.1 >= 0.5 }
-            .sorted { $0.1 > $1.1 }
-            .map { (candidate: $0.0, score: $0.1) }
-    }
-
-    private static func search(base: String, query: String) async throws -> [Candidate] {
-        var components = URLComponents(string: base + "/filter")
-        components?.queryItems = [URLQueryItem(name: "keyword", value: query)]
-        guard let url = components?.url else { return [] }
-        let html = try await getString(url, headers: ["User-Agent": userAgent, "Referer": base + "/"])
-
-        // Each result card has a `d-title` anchor (name, href, data-jp),
-        // followed by meta labels including the type ("TV", "Movie", "OVA").
-        var out: [Candidate] = []
-        guard let regex = try? NSRegularExpression(pattern: #"<a\b[^>]*\bd-title\b[^>]*>[\s\S]*?</a>"#, options: [.caseInsensitive]) else { return [] }
-        let ns = html as NSString
-        for match in regex.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
-            let tag = ns.substring(with: match.range)
-            guard let href = attribute("href", in: tag),
-                  let slug = firstMatch(#"/(?:watch|anime)/([^/?#"]+)"#, in: href, group: 1) else { continue }
-            let name = decodeEntities(stripTags(firstMatch(#">([\s\S]*?)</a>"#, in: tag, group: 1) ?? ""))
-            let jp = decodeEntities(attribute("data-jp", in: tag) ?? "")
-            let tail = ns.substring(with: NSRange(location: match.range.location, length: min(2500, ns.length - match.range.location)))
-            let kind = firstMatch(#"<label>\s*(TV|MOVIE|OVA|ONA|SPECIAL|MUSIC)\s*</label>"#, in: tail, group: 1) ?? ""
-            guard !name.isEmpty, !out.contains(where: { $0.slug == slug }) else { continue }
-            out.append(Candidate(slug: slug, name: name, japaneseName: jp, kind: kind))
-        }
-        return out
-    }
-
-    // MARK: - Episodes and servers
-
-    private static func episodeList(base: String, slug: String) async throws -> [AnimeKaiCache.Episode] {
-        guard let watchURL = URL(string: base + "/watch/" + slug) else { return [] }
-        let html = try await getString(watchURL, headers: ["User-Agent": userAgent, "Referer": base + "/"])
-        guard let animeId = firstMatch(#"id="watch-main"[^>]*data-id="(\d+)""#, in: html, group: 1)
-                ?? firstMatch(#"data-id="(\d+)"[^>]*id="watch-main""#, in: html, group: 1),
-              let listURL = URL(string: base + "/ajax/episode/list/" + animeId + "?vrf=") else { return [] }
-
-        let body = try await getString(listURL, headers: xhrHeaders(referer: watchURL.absoluteString + "/"))
-        let listHTML = resultHTML(from: body)
-
-        var episodes: [AnimeKaiCache.Episode] = []
-        for tag in allMatches(#"<a\b[^>]*\bdata-num="[^"]*"[^>]*>"#, in: listHTML) {
-            guard let num = attribute("data-num", in: tag), let ids = attribute("data-ids", in: tag),
-                  !episodes.contains(where: { $0.number == num }) else { continue }
-            episodes.append(AnimeKaiCache.Episode(number: num, ids: ids))
-        }
-        return episodes
     }
 
     private struct ServerEntry {
@@ -524,25 +508,6 @@ struct AnimeKaiClient {
         return out
     }
 
-    /// Season number a site title advertises: "Season 2", "2nd Season",
-    /// "Part 2" style suffixes, or a trailing roman numeral. 1 when absent.
-    static func seasonNumber(in title: String) -> Int {
-        let lower = title.lowercased()
-        if let n = firstMatch(#"season\s*(\d+)"#, in: lower, group: 1).flatMap(Int.init) { return n }
-        if let n = firstMatch(#"(\d+)(?:st|nd|rd|th)\s+season"#, in: lower, group: 1).flatMap(Int.init) { return n }
-        if let roman = firstMatch(#"\s(ii|iii|iv|v|vi)$"#, in: lower, group: 1) {
-            return ["ii": 2, "iii": 3, "iv": 4, "v": 5, "vi": 6][roman] ?? 1
-        }
-        return 1
-    }
-
-    private static func stripSeason(_ title: String) -> String {
-        title
-            .replacingOccurrences(of: #"(?i)\bseason\s*\d+\b"#, with: "", options: .regularExpression)
-            .replacingOccurrences(of: #"(?i)\b\d+(st|nd|rd|th)\s+season\b"#, with: "", options: .regularExpression)
-            .replacingOccurrences(of: #"(?i)\s(ii|iii|iv|v|vi)$"#, with: "", options: .regularExpression)
-    }
-
     private static func normalize(_ text: String) -> String {
         text.folding(options: [.diacriticInsensitive, .caseInsensitive, .widthInsensitive], locale: .current)
             .replacingOccurrences(of: "[^a-z0-9]+", with: " ", options: .regularExpression)
@@ -559,23 +524,4 @@ struct AnimeKaiClient {
         let contains = (b.hasPrefix(a + " ") || a.hasPrefix(b + " ")) ? 0.3 : 0
         return min(0.99, dice + contains)
     }
-}
-
-/// Title → site entry mappings, so moving between episodes skips the search.
-private actor AnimeKaiCache {
-    struct Episode: Sendable {
-        var number: String
-        var ids: String
-    }
-
-    struct Entry: Sendable {
-        var slug: String
-        var usesAbsoluteNumbering: Bool
-        var episodes: [Episode]
-    }
-
-    private var entries: [String: Entry] = [:]
-
-    func entry(for key: String) -> Entry? { entries[key] }
-    func store(_ entry: Entry, for key: String) { entries[key] = entry }
 }

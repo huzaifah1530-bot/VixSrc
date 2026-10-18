@@ -15,8 +15,15 @@ import SwiftUI
 /// so that mechanism is intentionally NOT ported.
 @main
 struct VelaApp: App {
-    @State private var store = AppStore()
+    @State private var store: AppStore
+    @State private var animeViewModel: AnimeViewModel
     @State private var router = TabRouter()
+
+    init() {
+        let store = AppStore()
+        _store = State(initialValue: store)
+        _animeViewModel = State(initialValue: AnimeViewModel(store: store))
+    }
     /// True only on cold start — the very first time this process renders.
     /// Set to false after the fade completes and never set back to true,
     /// so returning from background (warm resume from RAM) shows nothing.
@@ -39,6 +46,7 @@ struct VelaApp: App {
             ZStack {
                 RootView()
                     .environment(store)
+                    .environment(animeViewModel)
                     .environment(router)
 
                 if isLaunching {
@@ -105,6 +113,7 @@ extension Notification.Name {
 /// on iOS 17-25, with no extra drawing code from us either way.
 struct RootView: View {
     @Environment(TabRouter.self) private var router
+    @Environment(AnimeViewModel.self) private var animeViewModel
     @Environment(\.glassFidelity) private var glassFidelity
 
     var body: some View {
@@ -120,6 +129,9 @@ struct RootView: View {
                     Tab("Home", systemImage: "house.fill", value: AppTab.home) {
                         HomeView()
                     }
+                    Tab("Anime", systemImage: "play.tv.fill", value: AppTab.anime) {
+                        AnimeView(viewModel: animeViewModel)
+                    }
                     Tab("Favourites", systemImage: "heart.fill", value: AppTab.favorites) {
                         FavoritesView()
                     }
@@ -133,6 +145,9 @@ struct RootView: View {
                     HomeView()
                         .tabItem { Label("Home", systemImage: "house.fill") }
                         .tag(AppTab.home)
+                    AnimeView(viewModel: animeViewModel)
+                        .tabItem { Label("Anime", systemImage: "play.tv.fill") }
+                        .tag(AppTab.anime)
                     FavoritesView()
                         .tabItem { Label("Favourites", systemImage: "heart.fill") }
                         .tag(AppTab.favorites)

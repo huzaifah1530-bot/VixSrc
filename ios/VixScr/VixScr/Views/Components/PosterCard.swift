@@ -33,7 +33,7 @@ struct PosterCard: View {
                         .font(.caption2.weight(.medium))
                         .foregroundStyle(.white.opacity(0.56))
                     if let season = item.resumeSeason, let episode = item.resumeEpisode {
-                        Text("RESUME S\(season) E\(episode)")
+                        Text(item.isAnimeCatalog ? "RESUME E\(episode)" : "RESUME S\(season) E\(episode)")
                             .font(.caption2.weight(.bold))
                             .lineLimit(1)
                             .padding(.horizontal, 9)

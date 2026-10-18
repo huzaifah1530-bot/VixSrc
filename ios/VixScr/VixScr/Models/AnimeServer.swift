@@ -20,9 +20,3 @@ struct AnimeServer: Codable, Identifiable, Hashable {
     ]
 }
 
-/// Which list the player's current server comes from. Both lists share one
-/// dropdown in the player, split by a separator.
-enum ServerSelection: Hashable {
-    case regular(Int)
-    case anime(Int)
-}
