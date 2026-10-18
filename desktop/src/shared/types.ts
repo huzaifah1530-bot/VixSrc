@@ -102,7 +102,7 @@ export interface SniffedStream {
 export type MenuCommand =
   | 'home' | 'anime' | 'favorites' | 'settings' | 'search' | 'refresh'
   | 'toggle-sidebar' | 'back' | 'forward' | 'play-pause' | 'fullscreen'
-  | 'export' | 'import' | 'check-updates' | 'about'
+  | 'export' | 'import' | 'check-updates' | 'about' | 'join-party'
 
 /** API exposed on `window.vela` by the preload script. */
 export interface VelaApi {
@@ -137,6 +137,7 @@ export interface VelaApi {
   openFile(): Promise<string | null>
   openExternal(url: string): void
   on(channel: 'open-tmdb-id', cb: (id: string) => void): () => void
+  on(channel: 'open-party', cb: (link: string) => void): () => void
   on(channel: 'menu', cb: (cmd: MenuCommand) => void): () => void
   on(channel: 'update-check-result', cb: (r: UpdateCheckResult) => void): () => void
   on(channel: 'update-download-progress', cb: (f: number) => void): () => void
@@ -158,4 +159,5 @@ export interface VelaApi {
     control(action: 'play' | 'pause' | 'toggle' | 'seek' | 'skip', value?: number): Promise<boolean>
   }
   showMainWindow(): void
+  pendingParty(): Promise<string | null>
 }

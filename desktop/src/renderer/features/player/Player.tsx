@@ -13,6 +13,8 @@ import { captionAt, parseVtt, type Cue } from '@/lib/vtt'
 import { cx, formatTime } from '@/lib/format'
 import { imageUrl } from '@/lib/tmdb'
 import { registerPlayer } from '@/lib/remote'
+import { leaveParty, party, partyActive, useParty } from '@/lib/party'
+import { PartyButton, PartyPanel } from '../party/PartyPanel'
 
 type Caption = { kind: 'off' } | { kind: 'external'; index: number } | { kind: 'hls'; index: number }
 
@@ -24,6 +26,9 @@ export function Player() {
   const muted = useSettings(s => s.muted)
   const setSettings = useSettings(s => s.set)
   const captionScale = useSettings(s => s.captionScale ?? 1)
+  const partyWaiting = useParty(s => s.waitingOn)
+  const partyStatus = useParty(s => (s.active ? s.status : 'closed'))
+  const partyLocked = useParty(s => s.active && !s.canControl)
 
   const root = useRef<HTMLDivElement>(null)
   const video = useRef<HTMLVideoElement>(null)
@@ -140,6 +145,17 @@ export function Player() {
 
   // ── Actions ─────────────────────────────────────────────────────────
   const skipAccum = useRef<{ dir: number; amount: number; t: number }>({ dir: 0, amount: 0, t: 0 })
+  // Every user seek goes through here: in a watch party it moves the room
+  // (if this viewer may) and is mirrored locally; otherwise it's local only.
+  const seekTo = useCallback((t: number) => {
+    const v = video.current
+    if (!v) return false
+    const clamped = Math.max(0, Math.min((v.duration || Infinity) - 0.5, t))
+    if (partyActive() && !party.seek(clamped)) return false
+    v.currentTime = clamped
+    return true
+  }, [])
+
   const skip = useCallback((dir: -1 | 1) => {
     const v = video.current
     if (!v) return
@@ -147,19 +163,29 @@ export function Player() {
     const acc = skipAccum.current
     acc.amount = acc.dir === dir && now - acc.t < 900 ? acc.amount + seekInterval : seekInterval
     acc.dir = dir; acc.t = now
-    v.currentTime = Math.max(0, Math.min((v.duration || Infinity) - 0.5, v.currentTime + dir * seekInterval))
+    if (!seekTo(v.currentTime + dir * seekInterval)) return
     setSkipFx({ dir, amount: acc.amount, key: now })
     setSpin(s => (dir < 0 ? { ...s, back: s.back + 1 } : { ...s, fwd: s.fwd + 1 }))
     poke()
-  }, [seekInterval, poke])
+  }, [seekInterval, poke, seekTo])
 
-  const toggle = useCallback(() => { const v = video.current; if (!v) return; v.paused ? v.play().catch(() => {}) : v.pause() }, [])
+  const setPlaying_ = useCallback((on: boolean) => {
+    const v = video.current
+    if (!v) return
+    if (partyActive() && !(on ? party.play() : party.pause())) return
+    if (on) v.play().catch(() => {}); else v.pause()
+  }, [])
+  const toggle = useCallback(() => { const v = video.current; if (v) setPlaying_(v.paused) }, [setPlaying_])
+  const waitingRef = useRef(false)
+  waitingRef.current = waiting
   const toggleFullscreen = useCallback(() => {
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {})
     else root.current?.requestFullscreen().catch(() => {})
   }, [])
   const close = useCallback(() => {
     save()
+    // Closing the player leaves the party (otherwise the room would reopen it).
+    if (partyActive()) leaveParty()
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {})
     usePlayer.getState().close()
   }, [save])
@@ -183,12 +209,19 @@ export function Player() {
       const v = video.current
       return v && v.readyState > 0 ? { position: v.currentTime, duration: Number.isFinite(v.duration) ? v.duration : 0, playing: !v.paused && !v.ended } : null
     },
-    play: () => { video.current?.play().catch(() => {}) },
-    pause: () => video.current?.pause(),
+    play: () => setPlaying_(true),
+    pause: () => setPlaying_(false),
     toggle,
-    seek: to => { const v = video.current; if (v) v.currentTime = Math.max(0, Math.min(to, (v.duration || to + 1) - 0.5)) },
-    skip: by => { const v = video.current; if (v) v.currentTime = Math.max(0, Math.min(v.currentTime + by, (v.duration || Infinity) - 0.5)) }
-  }), [toggle])
+    seek: to => { seekTo(to) },
+    skip: by => { const v = video.current; if (v) seekTo(v.currentTime + by) },
+    raw: {
+      play: () => { video.current?.play().catch(() => {}) },
+      pause: () => video.current?.pause(),
+      seek: to => { const v = video.current; if (v) v.currentTime = Math.max(0, Math.min(to, (v.duration || to + 1) - 0.5)) },
+      setRate: r => { const v = video.current; if (v && v.playbackRate !== r) v.playbackRate = r },
+      waiting: () => waitingRef.current
+    }
+  }), [toggle, setPlaying_, seekTo])
 
   useEffect(() => {
     const onFs = () => setFullscreen(!!document.fullscreenElement)
@@ -214,13 +247,13 @@ export function Player() {
           if (source?.subtitles.length) setCaption(c => (c.kind === 'off' ? { kind: 'external', index: 0 } : { kind: 'off' }))
           break
         case 'Escape': if (!document.fullscreenElement) close(); break
-        default: if (/^[0-9]$/.test(e.key) && v?.duration) v.currentTime = (Number(e.key) / 10) * v.duration
+        default: if (/^[0-9]$/.test(e.key) && v?.duration) seekTo((Number(e.key) / 10) * v.duration)
       }
       poke()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [native, toggle, skip, toggleFullscreen, close, poke, setSettings, volume, muted, source])
+  }, [native, toggle, skip, seekTo, toggleFullscreen, close, poke, setSettings, volume, muted, source])
 
   // ── Click / double-click / hold-for-2× on the video surface ─────────
   const holdTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
@@ -229,6 +262,8 @@ export function Player() {
   const onDown = (e: React.MouseEvent) => {
     if (e.button !== 0) return
     held.current = false
+    // Hold-for-2× would pull this viewer out of a watch party's timeline.
+    if (partyActive()) return
     holdTimer.current = setTimeout(() => {
       held.current = true
       const v = video.current
@@ -258,7 +293,7 @@ export function Player() {
   }
   const onBarMove = (e: React.PointerEvent) => { if (scrub !== null) setScrub(fraction(e.clientX)) }
   const onBarUp = () => {
-    if (scrub !== null && video.current) video.current.currentTime = scrub * duration
+    if (scrub !== null) seekTo(scrub * duration)
     setScrub(null)
   }
 
@@ -313,7 +348,12 @@ export function Player() {
             if (v.buffered.length) setBuffered(v.buffered.end(v.buffered.length - 1))
             if (Date.now() - lastSave.current > 5000) { lastSave.current = Date.now(); save() }
           }}
-          onEnded={() => { save(); if (usePlayer.getState().hasNext()) usePlayer.getState().next() }}
+          onEnded={() => {
+            save()
+            // In a party only the leader advances; everyone else follows the room.
+            if (partyActive()) party.ended()
+            else if (usePlayer.getState().hasNext()) usePlayer.getState().next()
+          }}
         />
       ) : p.embedUrl ? (
         <webview key={p.embedUrl} className="player-embed" src={p.embedUrl} partition="persist:embed" webpreferences="contextIsolation=yes,sandbox=yes" />
@@ -333,6 +373,9 @@ export function Player() {
           <div className="hero-actions"><button className="btn btn-primary" onClick={p.reload}>Try again</button></div>
         </div>
       )}
+      <PartyPanel />
+      {partyWaiting.length > 0 && <div className="party-banner glass-strong" role="status">Waiting for {partyWaiting.slice(0, 3).join(', ')}{partyWaiting.length > 3 ? ` +${partyWaiting.length - 3}` : ''}…</div>}
+      {partyStatus === 'reconnecting' && <div className="party-banner glass-strong" role="status">Reconnecting to the party…</div>}
       {fastBadge && <div className="fast-badge glass-strong">2× <Icon name="next" size={12} fill /></div>}
       {skipFx && <div key={skipFx.key} className={cx('skip-fx', skipFx.dir < 0 ? 'is-left' : 'is-right')}>{skipFx.dir < 0 ? '−' : '+'}{skipFx.amount}s</div>}
 
@@ -379,6 +422,7 @@ export function Player() {
               )}
             </MenuButton>
           )}
+          <PartyButton />
           {native && document.pictureInPictureEnabled && (
             <button className="round-btn" aria-label="Picture in picture" title="Picture in picture" onClick={() => {
               if (document.pictureInPictureElement) document.exitPictureInPicture().catch(() => {})
@@ -394,7 +438,7 @@ export function Player() {
       {native && (
         <>
           {/* Centre transport */}
-          <div className="player-transport">
+          <div className={cx('player-transport', partyLocked && 'is-locked')} title={partyLocked ? 'The host is controlling playback' : undefined}>
             <button className="round-btn big" aria-label={`Back ${seekInterval} seconds`} onClick={() => skip(-1)}>
               <SkipGlyph dir={-1} seconds={seekInterval} spin={spin.back} />
             </button>

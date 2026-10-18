@@ -16,6 +16,11 @@ import { normalize, tmdb, type RawTmdbItem } from './lib/tmdb'
 import { cx } from './lib/format'
 import { ConnectDialog, OfferDialog } from './features/devices/DeviceDialogs'
 import { startLinkClient } from './stores/link'
+import { create } from 'zustand'
+import { joinParty } from './lib/party'
+import { JoinPartyDialog } from './features/party/PartyPanel'
+
+const useJoinDialog = create<{ open: boolean }>(() => ({ open: false }))
 
 function runCommand(cmd: MenuCommand) {
   const nav = useNav.getState()
@@ -36,6 +41,7 @@ function runCommand(cmd: MenuCommand) {
     case 'check-updates': case 'about':
       window.vela.updater.check().then(r => toast(r.error ? r.error : r.updateAvailable ? `Vela ${r.latestVersion} is available — open Settings to update` : `Vela ${window.vela.version} is up to date`))
       break
+    case 'join-party': useJoinDialog.setState({ open: true }); break
     case 'play-pause': case 'fullscreen': break // handled by the player's own key handler
   }
 }
@@ -58,6 +64,7 @@ export function App() {
   const ultra = useSettings(s => s.ultraPerformanceMode)
   const animeEnabled = useSettings(s => s.animeEnabled)
   const playerOpen = usePlayer(s => s.open)
+  const joinOpen = useJoinDialog(s => s.open)
   useWindowFocusClass()
 
   useEffect(() => {
@@ -76,6 +83,8 @@ export function App() {
     const offs = [
       window.vela.on('menu', runCommand),
       window.vela.on('open-tmdb-id', openById),
+      window.vela.on('open-party', link => { joinParty(link) }),
+      (window.vela.pendingParty().then(l => { if (l) joinParty(l) }), () => {}),
       window.vela.on('update-check-result', r => { if (r.updateAvailable) toast(`Vela ${r.latestVersion} is available — open Settings to update`) })
     ]
     return () => offs.forEach(o => o())
@@ -86,7 +95,7 @@ export function App() {
     const onKey = (e: KeyboardEvent) => {
       const k = e.key.toLowerCase()
       if (e.ctrlKey && !e.shiftKey && !e.altKey) {
-        const map: Record<string, MenuCommand> = { '1': 'home', '2': 'anime', '3': 'favorites', f: 'search', k: 'search', '\\': 'toggle-sidebar', ',': 'settings', r: 'refresh', e: 'export', o: 'import' }
+        const map: Record<string, MenuCommand> = { j: 'join-party', '1': 'home', '2': 'anime', '3': 'favorites', f: 'search', k: 'search', '\\': 'toggle-sidebar', ',': 'settings', r: 'refresh', e: 'export', o: 'import' }
         if (map[k]) { e.preventDefault(); runCommand(map[k]) }
       } else if (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
         e.preventDefault(); runCommand(e.key === 'ArrowLeft' ? 'back' : 'forward')
@@ -114,6 +123,7 @@ export function App() {
       {playerOpen && <Player />}
       <ConnectDialog />
       <OfferDialog />
+      {joinOpen && <JoinPartyDialog onClose={() => useJoinDialog.setState({ open: false })} />}
       <ContextMenuHost />
       <Toast />
     </div>

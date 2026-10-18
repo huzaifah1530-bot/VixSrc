@@ -45,6 +45,19 @@ function emitLink(e: LinkEvent) {
   if (e.type === 'pair-request' && mainWindow) { if (mainWindow.isMinimized()) mainWindow.restore(); mainWindow.show(); mainWindow.focus() }
 }
 
+/** vela://party/<room>#<key> from a browser invite page. */
+function extractParty(argv: string[]) {
+  return argv.find(a => /^vela:\/\/party\/[A-Za-z0-9_-]{8,32}#[A-Za-z0-9_-]{43}$/i.test(a ?? '')) ?? null
+}
+let pendingParty: string | null = null
+function sendParty(link: string | null) {
+  if (!link) return
+  if (mainWindow && !mainWindow.webContents.isLoading()) mainWindow.webContents.send('open-party', link)
+  else pendingParty = link
+}
+// The renderer asks once its listeners are ready (avoids a startup race).
+ipcMain.handle('party:pending', () => { const l = pendingParty; pendingParty = null; return l })
+
 function extractId(argv: string[]) {
   for (const arg of argv) {
     const m = /^(?:vela|vixscr):\/\/(?:open\/)?(\d+)/i.exec(arg ?? '')
@@ -106,6 +119,7 @@ function createMainWindow() {
   mainWindow.on('closed', () => { mainWindow = null; settingsWindow?.close() })
   mainWindow.webContents.once('did-finish-load', () => {
     if (pendingId) { mainWindow?.webContents.send('open-tmdb-id', pendingId); pendingId = null }
+
   })
   loadRenderer(mainWindow)
 }
@@ -129,7 +143,7 @@ function buildMenu() {
   const item = (label: string, cmd: MenuCommand, accelerator?: string) => ({ label, accelerator, registerAccelerator: false, click: () => (cmd === 'settings' ? openSettings() : send(cmd)) })
   return Menu.buildFromTemplate([
     { label: 'Vela', submenu: [item('About Vela', 'about'), item('Check for Updates…', 'check-updates'), { type: 'separator' }, item('Settings…', 'settings', 'Ctrl+,'), { type: 'separator' }, { label: 'Quit Vela', accelerator: 'Ctrl+Q', click: () => app.quit() }] },
-    { label: 'File', submenu: [item('Export Backup…', 'export', 'Ctrl+E'), item('Import Backup…', 'import', 'Ctrl+O')] },
+    { label: 'File', submenu: [item('Join Watch Party…', 'join-party', 'Ctrl+J'), { type: 'separator' }, item('Export Backup…', 'export', 'Ctrl+E'), item('Import Backup…', 'import', 'Ctrl+O')] },
     { label: 'View', submenu: [item('Home', 'home', 'Ctrl+1'), item('Anime', 'anime', 'Ctrl+2'), item('Favourites', 'favorites', 'Ctrl+3'), { type: 'separator' }, item('Search', 'search', 'Ctrl+F'), item('Toggle Sidebar', 'toggle-sidebar', 'Ctrl+\\'), item('Refresh', 'refresh', 'Ctrl+R'), { type: 'separator' }, item('Back', 'back', 'Alt+Left'), item('Forward', 'forward', 'Alt+Right')] },
     { label: 'Playback', submenu: [item('Play / Pause', 'play-pause', 'Space'), item('Full Screen', 'fullscreen', 'F')] },
     { label: 'Help', submenu: [{ label: 'TMDB', click: () => shell.openExternal('https://www.themoviedb.org') }] }
@@ -225,6 +239,7 @@ if (!app.requestSingleInstanceLock()) {
     if (mainWindow.isMinimized()) mainWindow.restore()
     mainWindow.focus()
     if (id) mainWindow.webContents.send('open-tmdb-id', id)
+    sendParty(extractParty(launchArgs(argv)))
   })
 
   app.whenReady().then(async () => {
@@ -235,9 +250,19 @@ if (!app.requestSingleInstanceLock()) {
     for (const p of PROTOCOLS) if (!app.isDefaultProtocolClient(p)) app.setAsDefaultProtocolClient(p)
     registerIpc()
     pendingId = extractId(launchArgs(process.argv))
+    pendingParty = extractParty(launchArgs(process.argv))
     createMainWindow()
     link = new LinkServer(emitLink)
     link.start()
+    // Dev-only hook for scripts/party-e2e.ts: join a party and report the
+    // video element's state to a file twice a second.
+    if (!app.isPackaged && process.env.VELA_PARTY_JOIN && process.env.VELA_PARTY_PROBE) {
+      pendingParty = process.env.VELA_PARTY_JOIN
+      setInterval(async () => {
+        const s = await mainWindow?.webContents.executeJavaScript(`(() => { const v = document.querySelector('video'); return v ? { t: v.currentTime, paused: v.paused, rate: v.playbackRate, title: document.querySelector('.player-title')?.textContent } : null })()`).catch(() => null)
+        writeFileSync(process.env.VELA_PARTY_PROBE!, JSON.stringify({ at: Date.now(), s }))
+      }, 500)
+    }
     // Dev-only hook for scripts/phone-sim.ts: publish a pairing link to a file.
     if (!app.isPackaged && process.env.VELA_LINK_TEST) {
       setTimeout(() => link?.startPairing().then(s => s.pairing && writeFileSync(process.env.VELA_LINK_TEST!, s.pairing.link)), 3000)

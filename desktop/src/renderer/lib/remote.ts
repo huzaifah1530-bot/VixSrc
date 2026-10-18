@@ -19,9 +19,18 @@ export interface PlayerHandle {
   skip(by: number): void
   captions(): { list: string[]; index: number }
   setCaption(index: number): void
+  /** Raw player access for Watch Together's sync loop (bypasses the party). */
+  raw: {
+    play(): void
+    pause(): void
+    seek(to: number): void
+    setRate(r: number): void
+    waiting(): boolean
+  }
 }
 let handle: PlayerHandle | null = null
 export function registerPlayer(h: PlayerHandle) { handle = h; schedulePublish(); return () => { if (handle === h) handle = null } }
+export const playerHandle = () => handle
 
 let embedCache: { position: number; duration: number; playing: boolean } | null = null
 

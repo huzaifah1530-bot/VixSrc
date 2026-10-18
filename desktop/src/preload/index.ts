@@ -47,8 +47,9 @@ const api: VelaApi = {
     control: (a, v) => ipcRenderer.invoke('embed:control', a, v ?? 0)
   },
   showMainWindow: () => ipcRenderer.send('win:show-main'),
+  pendingParty: () => ipcRenderer.invoke('party:pending'),
   on: ((channel: string, cb: (v: unknown) => void) => {
-    const allowed = ['open-tmdb-id', 'menu', 'update-check-result', 'update-download-progress', 'embed-sniffed', 'maximized', 'link']
+    const allowed = ['open-party', 'open-tmdb-id', 'menu', 'update-check-result', 'update-download-progress', 'embed-sniffed', 'maximized', 'link']
     if (!allowed.includes(channel)) return () => {}
     const listener = (_e: unknown, v: unknown) => cb(v)
     ipcRenderer.on(channel, listener)

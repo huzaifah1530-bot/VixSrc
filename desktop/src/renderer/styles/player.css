@@ -70,3 +70,19 @@
 @keyframes skip-fx { 0% { opacity: 0; transform: translateY(-50%) scale(.7); } 20% { opacity: 1; transform: translateY(-50%) scale(1.1); } 100% { opacity: 0; transform: translateY(-50%) scale(1); } }
 
 video::cue { background: rgba(0,0,0,.72); font-family: var(--font); font-weight: 600; font-size: calc(clamp(16px, 2.1vw, 30px) * var(--caption-scale, 1)); }
+
+/* Watch Together */
+.party-panel { position: absolute; z-index: 20; top: 64px; right: 18px; width: 340px; max-height: calc(100% - 140px); overflow-y: auto; padding: 16px; border-radius: var(--r-lg); display: flex; flex-direction: column; gap: 14px; animation: preview-in .22s var(--spring); }
+.party-head { display: flex; justify-content: space-between; align-items: flex-start; }
+.party-title { font-size: var(--fs-title3); font-weight: 800; }
+.party-section { display: flex; flex-direction: column; gap: 8px; }
+.party-link { display: flex; gap: 6px; align-items: center; }
+.party-link .text-input { min-width: 0; }
+.party-people { display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow-y: auto; }
+.party-person { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: var(--r-sm); background: var(--fill); }
+.party-person .device-badge { margin-left: 6px; }
+.party-check { display: flex; gap: 8px; align-items: center; }
+.party-offset { min-width: 52px; text-align: center; font-weight: 700; font-variant-numeric: tabular-nums; }
+.grow { flex: 1; min-width: 0; }
+.party-banner { position: absolute; z-index: 6; top: 70px; left: 50%; transform: translateX(-50%); padding: 8px 16px; border-radius: 999px; font-weight: 700; }
+.player-transport.is-locked button { opacity: .45; }
