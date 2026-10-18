@@ -30,6 +30,9 @@ struct RemoteState: Codable, Equatable, Sendable {
     var sources: [Source]
     var sourceIndex: Int
     var hasNext: Bool
+    struct Party: Codable, Equatable, Sendable { var link: String; var count: Int }
+    /// Watch party the computer is in, if any.
+    var party: Party?
     /// Caption tracks on the computer's player (older desktops omit these).
     var captions: [String]?
     /// -1 = captions off.

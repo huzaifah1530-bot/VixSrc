@@ -67,6 +67,13 @@ struct HomeView: View {
         .onChange(of: store.credential) { _, _ in
             Task { await viewModel?.loadHome() }
         }
+        // Joined a watch party from a link: open what it's watching.
+        .onReceive(NotificationCenter.default.publisher(for: .velaPartyOpen)) { notification in
+            guard let media = notification.object as? PartyMedia, media.kind == "tmdb", let viewModel else { return }
+            router.selection = .home
+            PartySession.shared.attach(viewModel)
+            Task { await viewModel.loadPartyMedia(media) }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .velaOpenTMDBId)) { notification in
             guard let id = notification.object as? String else { return }
             router.selection = .home

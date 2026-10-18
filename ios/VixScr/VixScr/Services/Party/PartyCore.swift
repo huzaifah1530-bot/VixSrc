@@ -1,0 +1,383 @@
+import Foundation
+
+/// Watch Together sync core — a line-for-line Swift twin of the desktop's
+/// `desktop/src/shared/party.ts` (which has the scenario notes and the
+/// multi-viewer simulation tests). Keep the two in step.
+enum PartyRules {
+    static let version = 1
+    static let waitLimit: TimeInterval = 15
+    static let waitMaxPeers = 8
+    static let hardSync = 2.0
+    static let softSync = 0.25
+    static let peerTimeout: TimeInterval = 75
+    static let aliveEvery: TimeInterval = 30
+}
+
+struct PartyMedia: Codable, Equatable {
+    var kind: String          // "tmdb" | "anime"
+    var key: String
+    var item: [String: JSONValue]
+    var season: Int?
+    var episode: JSONValue?   // Int for tmdb, String for anime
+    var episodeTitle: String?
+    var slug: String?
+    var title: String?
+    var server: String
+
+    var tmdbEpisode: Int? { if case .number(let n)? = episode { return Int(n) } else { return nil } }
+    var animeEpisode: String? { if case .string(let s)? = episode { return s } else { return nil } }
+}
+
+struct PartyTimeline: Codable, Equatable {
+    var n: Int
+    var by: String
+    var media: PartyMedia?
+    var playing: Bool
+    var pos: Double
+    var at: Double
+    var hold: Bool
+}
+
+struct PartyConfig: Codable, Equatable {
+    var n: Int
+    var host: String
+    var mode: String          // "everyone" | "host" | "select"
+    var allowed: [String]
+    var waitForAll: Bool
+}
+
+struct PartyRoomState: Codable, Equatable {
+    var v: Int
+    var tl: PartyTimeline
+    var cfg: PartyConfig
+}
+
+struct PartyPeer: Identifiable, Equatable {
+    var id: String
+    var name: String
+    var platform: String
+    var joined: Double
+    var buffering = false
+    var bufSince = Date.distantPast
+    var error: String?
+    var lastSeen = Date()
+}
+
+struct PartyCorrection { var play: Bool; var rate: Float; var seek: Double?; var drift: Double }
+
+@MainActor
+protocol PartyTransport: AnyObject {
+    func send(_ object: [String: Any], keep: Bool, to: String?)
+    func now() -> Double
+    var isOpen: Bool { get }
+}
+
+@MainActor
+final class PartyCore {
+    let me: String
+    let name: String
+    let platform: String
+    weak var transport: PartyTransport?
+
+    private(set) var state: PartyRoomState?
+    private(set) var peers: [String: PartyPeer] = [:]
+    private(set) var connected = false
+    private(set) var joinedAt = Double.greatestFiniteMagnitude
+    private var excluded = Set<String>()
+    private var myBuffering = false
+    private var hardSyncs: [Date] = []
+    private var advancing = false
+    private var lastSentTimeline = Date.distantPast
+    private var lastAlive = Date.distantPast
+
+    var onMedia: ((PartyMedia?) -> Void)?
+    var onChange: (() -> Void)?
+    var onToast: ((String) -> Void)?
+    var onStruggling: (() -> Void)?
+    var nextMedia: ((PartyMedia) async -> PartyMedia?)?
+
+    init(me: String, name: String, platform: String) {
+        self.me = me; self.name = name; self.platform = platform
+    }
+
+    // MARK: Roles
+
+    private func present(_ id: String) -> Bool {
+        id == me || peers[id].map { Date().timeIntervalSince($0.lastSeen) < PartyRules.peerTimeout } == true
+    }
+
+    var leader: String {
+        if let host = state?.cfg.host, present(host) { return host }
+        let all = peers.values.filter { present($0.id) }.map { ($0.id, $0.joined) } + [(me, joinedAt)]
+        return all.sorted { $0.1 != $1.1 ? $0.1 < $1.1 : $0.0 < $1.0 }.first!.0
+    }
+    var isLeader: Bool { leader == me }
+    var isHost: Bool { state?.cfg.host == me }
+
+    func canControl(_ id: String? = nil) -> Bool {
+        let id = id ?? me
+        guard let cfg = state?.cfg else { return true }
+        return canControl(id, under: cfg)
+    }
+
+    private func canControl(_ id: String, under cfg: PartyConfig) -> Bool {
+        if id == leader { return true }
+        return cfg.mode == "everyone" || (cfg.mode == "select" && cfg.allowed.contains(id))
+    }
+
+    func canConfigure(_ id: String? = nil) -> Bool { (id ?? me) == leader }
+
+    // MARK: Transport events
+
+    func create(media: PartyMedia?, pos: Double, playing: Bool) {
+        let now = transport?.now() ?? 0
+        state = PartyRoomState(
+            v: PartyRules.version,
+            tl: PartyTimeline(n: 1, by: me, media: media, playing: playing, pos: pos, at: now, hold: false),
+            cfg: PartyConfig(n: 1, host: me, mode: "everyone", allowed: [], waitForAll: true)
+        )
+        publish()
+    }
+
+    func welcome(peers list: [(String, Double)], keep: Any?, myJoined: Double) {
+        connected = true
+        joinedAt = myJoined
+        peers = Dictionary(uniqueKeysWithValues: list.map { ($0.0, PartyPeer(id: $0.0, name: "…", platform: "", joined: $0.1)) })
+        transport?.send(["k": "hello", "name": name, "platform": platform, "buffering": myBuffering], keep: false, to: nil)
+        if let incoming = parse(keep) { adopt(incoming, force: true) }
+        else if state != nil && isLeader { publish() }
+        onChange?()
+    }
+
+    func disconnected() { connected = false; onChange?() }
+
+    func join(_ peer: String, joined: Double) {
+        peers[peer] = PartyPeer(id: peer, name: "…", platform: "", joined: joined)
+        transport?.send(["k": "hello", "name": name, "platform": platform, "buffering": myBuffering], keep: false, to: peer)
+        onChange?()
+    }
+
+    func leave(_ peer: String) {
+        let was = peers.removeValue(forKey: peer)
+        excluded.remove(peer)
+        if let was {
+            if state?.cfg.host == peer {
+                let who = isLeader ? "you are" : "\(peers[leader]?.name ?? "someone") is"
+                onToast?("\(was.name) (host) left — \(who) in charge until they're back")
+            } else {
+                onToast?("\(was.name) left")
+            }
+        }
+        onChange?()
+    }
+
+    func receive(from: String, _ m: [String: Any]) {
+        guard let k = m["k"] as? String else { return }
+        peers[from]?.lastSeen = Date()
+        switch k {
+        case "alive": return
+        case "hello":
+            guard peers[from] != nil else { return }
+            peers[from]!.name = (m["name"] as? String).map { String($0.prefix(60)) } ?? "Guest"
+            peers[from]!.platform = (m["platform"] as? String).map { String($0.prefix(20)) } ?? ""
+            peers[from]!.buffering = m["buffering"] as? Bool == true
+            peers[from]!.bufSince = peers[from]!.buffering ? Date() : .distantPast
+            onChange?()
+        case "state":
+            guard var s = parse(m["s"]) else { return }
+            let tlOk = s.tl.by == from && canControl(from, under: state?.cfg ?? s.cfg)
+            let cfgOk = state == nil || s.cfg == state!.cfg || canConfigure(from)
+            if !cfgOk { s.cfg = state!.cfg }
+            if !tlOk, let current = state { s.tl = current.tl }
+            adopt(s, force: false)
+        case "buf":
+            guard peers[from] != nil else { return }
+            let on = m["on"] as? Bool == true
+            if on != peers[from]!.buffering {
+                peers[from]!.buffering = on
+                peers[from]!.bufSince = on ? Date() : .distantPast
+                if !on { excluded.remove(from) }
+            }
+            peers[from]!.error = (m["error"] as? String).map { String($0.prefix(200)) }
+            onChange?()
+        case "req-sync":
+            if let state, isLeader, let obj = Self.object(state) { transport?.send(["k": "state", "s": obj], keep: false, to: from) }
+        default: break
+        }
+    }
+
+    private func parse(_ raw: Any?) -> PartyRoomState? {
+        guard let raw, JSONSerialization.isValidJSONObject(raw),
+              let data = try? JSONSerialization.data(withJSONObject: raw),
+              let s = try? JSONDecoder().decode(PartyRoomState.self, from: data),
+              s.v == PartyRules.version, s.tl.pos.isFinite, s.tl.pos >= 0, s.tl.pos < 1e6,
+              ["everyone", "host", "select"].contains(s.cfg.mode), s.cfg.allowed.count <= 500 else { return nil }
+        return s
+    }
+
+    static func object<T: Encodable>(_ value: T) -> Any? {
+        guard let data = try? JSONEncoder().encode(value) else { return nil }
+        return try? JSONSerialization.jsonObject(with: data)
+    }
+
+    private static func newer(_ a: PartyTimeline, _ b: PartyTimeline) -> Bool {
+        a.n != b.n ? a.n > b.n : a.by > b.by
+    }
+
+    private func adopt(_ s: PartyRoomState, force: Bool) {
+        let prev = state
+        var tl = prev?.tl ?? s.tl, cfg = prev?.cfg ?? s.cfg
+        if prev == nil || force || Self.newer(s.tl, prev!.tl) { tl = s.tl }
+        if prev == nil || force || s.cfg.n > prev!.cfg.n { cfg = s.cfg }
+        let mediaChanged = prev?.tl.media?.key != tl.media?.key
+        state = PartyRoomState(v: PartyRules.version, tl: tl, cfg: cfg)
+        if mediaChanged || force { onMedia?(tl.media) }
+        onChange?()
+    }
+
+    private func publish() {
+        guard let state, let obj = Self.object(state) else { return }
+        lastSentTimeline = Date()
+        transport?.send(["k": "state", "s": obj], keep: true, to: nil)
+        onChange?()
+    }
+
+    // MARK: User actions
+
+    private func bump(_ change: (inout PartyTimeline) -> Void) -> Bool {
+        guard var current = state, connected, transport?.isOpen == true else { onToast?("Reconnecting to the party…"); return false }
+        guard canControl() else { onToast?("The host is controlling playback"); return false }
+        let now = transport?.now() ?? 0
+        var tl = current.tl
+        tl.pos = Self.position(tl, now: now)
+        tl.at = now
+        tl.hold = false
+        change(&tl)
+        tl.n = current.tl.n + 1
+        tl.by = me
+        current.tl = tl
+        state = current
+        publish()
+        return true
+    }
+
+    @discardableResult func play() -> Bool { bump { $0.playing = true } }
+    @discardableResult func pause() -> Bool { bump { $0.playing = false } }
+    @discardableResult func seek(_ pos: Double) -> Bool { bump { $0.pos = max(0, pos) } }
+    @discardableResult func skip(_ by: Double) -> Bool { seek(target().pos + by) }
+
+    @discardableResult func setMedia(_ media: PartyMedia?) -> Bool {
+        let ok = bump { $0.media = media; $0.pos = 0; $0.playing = true }
+        if ok { onMedia?(media) }
+        return ok
+    }
+
+    @discardableResult func configure(_ change: (inout PartyConfig) -> Void) -> Bool {
+        guard var current = state, canConfigure() else { return false }
+        var cfg = current.cfg
+        change(&cfg)
+        cfg.n = current.cfg.n + 1
+        cfg.host = current.cfg.host
+        current.cfg = cfg
+        state = current
+        publish()
+        return true
+    }
+
+    // MARK: Player
+
+    static func position(_ tl: PartyTimeline, now: Double) -> Double {
+        tl.playing ? tl.pos + max(0, now - tl.at) / 1000 : tl.pos
+    }
+
+    func target() -> (media: PartyMedia?, playing: Bool, pos: Double) {
+        guard let tl = state?.tl else { return (nil, false, 0) }
+        return (tl.media, tl.playing, Self.position(tl, now: transport?.now() ?? 0))
+    }
+
+    static func correction(localPos: Double, localPlaying: Bool, target: (playing: Bool, pos: Double)) -> PartyCorrection {
+        let drift = localPos - target.pos
+        if !target.playing {
+            return PartyCorrection(play: false, rate: 1, seek: abs(drift) > 0.5 ? target.pos : nil, drift: drift)
+        }
+        if abs(drift) > PartyRules.hardSync { return PartyCorrection(play: true, rate: 1, seek: target.pos + 0.25, drift: drift) }
+        let a = abs(drift)
+        let rate: Float = a < PartyRules.softSync ? 1 : drift > 0 ? (a > 1 ? 0.9 : 0.95) : (a > 1 ? 1.1 : 1.05)
+        return PartyCorrection(play: true, rate: rate, seek: nil, drift: drift)
+    }
+
+    func sync(localPos: Double, localPlaying: Bool) -> PartyCorrection {
+        let t = target()
+        let c = Self.correction(localPos: localPos, localPlaying: localPlaying, target: (t.playing, t.pos))
+        if c.seek != nil && t.playing {
+            let now = Date()
+            hardSyncs = hardSyncs.filter { now.timeIntervalSince($0) < 30 } + [now]
+            if hardSyncs.count >= 3 { hardSyncs = []; onStruggling?() }
+        }
+        return c
+    }
+
+    func setBuffering(_ on: Bool, error: String? = nil) {
+        if on == myBuffering && error == nil { return }
+        myBuffering = on
+        if connected {
+            var msg: [String: Any] = ["k": "buf", "on": on]
+            if let error { msg["error"] = error }
+            transport?.send(msg, keep: false, to: nil)
+        }
+    }
+
+    func ended() {
+        guard let media = state?.tl.media, isLeader, !advancing else { return }
+        advancing = true
+        Task { @MainActor in
+            defer { advancing = false }
+            let next = await nextMedia?(media)
+            guard state?.tl.media?.key == media.key else { return }
+            if let next { setMedia(next) } else { pause() }
+        }
+    }
+
+    // MARK: Leader duties (call ~1/s)
+
+    func tick() {
+        if connected && Date().timeIntervalSince(lastAlive) > PartyRules.aliveEvery {
+            lastAlive = Date()
+            transport?.send(["k": "alive"], keep: false, to: nil)
+        }
+        guard var current = state, connected, isLeader else { return }
+        let now = Date()
+        let stalled = peers.values.filter { $0.buffering && !excluded.contains($0.id) && present($0.id) }.sorted { $0.bufSince < $1.bufSince }
+        for p in stalled where now.timeIntervalSince(p.bufSince) > PartyRules.waitLimit {
+            excluded.insert(p.id)
+            onToast?("Carrying on without \(p.name) — they'll catch up")
+        }
+        let waitingOn = stalled.filter { !excluded.contains($0.id) }.prefix(PartyRules.waitMaxPeers)
+        let tl = current.tl
+        if current.cfg.waitForAll && tl.playing && (!waitingOn.isEmpty || myBuffering) && tl.media != nil {
+            bumpAsLeader(&current) { $0.playing = false; $0.hold = true }
+        } else if tl.hold && !tl.playing && waitingOn.isEmpty && !myBuffering {
+            bumpAsLeader(&current) { $0.playing = true; $0.hold = false }
+        } else if now.timeIntervalSince(lastSentTimeline) > 30 {
+            publish()
+        }
+    }
+
+    private func bumpAsLeader(_ current: inout PartyRoomState, _ change: (inout PartyTimeline) -> Void) {
+        let now = transport?.now() ?? 0
+        var tl = current.tl
+        tl.pos = Self.position(tl, now: now)
+        tl.at = now
+        change(&tl)
+        tl.n += 1
+        tl.by = me
+        current.tl = tl
+        state = current
+        publish()
+    }
+
+    func waitingOn() -> [PartyPeer] {
+        guard state?.tl.hold == true else { return [] }
+        return peers.values.filter { $0.buffering && !excluded.contains($0.id) }
+    }
+}

@@ -602,6 +602,7 @@ final class CatalogViewModel {
     func startPlaybackForCurrentSelection() {
         guard let item = selected else { return }
         rejectedNativeStreamURLs.removeAll()
+        PartySession.shared.localMediaChanged()
         if DeviceLink.shared.routesPlayback {
             if item.type == .tv && (selectedSeason == nil || selectedEpisode == nil) { return }
             streamResolutionTask?.cancel()
@@ -681,6 +682,7 @@ final class CatalogViewModel {
 
     func switchNativeSource(to index: Int) {
         guard nativeSources.indices.contains(index) else { return }
+        PartySession.shared.personalReload()
         selectedNativeSourceIndex = index
         loadNativeSource(at: index)
     }
@@ -773,6 +775,7 @@ final class CatalogViewModel {
 
     @MainActor
     func closePlayer() {
+        PartySession.shared.detach(self)
         playerManager.wantsFullscreen = false
         isPlayerPresented = false
         rejectedNativeStreamURLs.removeAll()

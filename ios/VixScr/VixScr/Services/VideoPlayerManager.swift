@@ -79,7 +79,10 @@ final class VideoPlayerManager {
     private func handleEnterBackground() {
         // Picture in Picture the user started keeps playing; anything else stops.
         if pipController?.isPictureInPictureActive == true { return }
-        pause()
+        // Pause only this device; in a watch party, leaving the app must not
+        // pause everyone (we re-sync on return).
+        rawPause()
+        saveProgress()
         if !RemoteNowPlaying.shared.isActive { MPNowPlayingInfoCenter.default().nowPlayingInfo = nil }
         removeRemoteCommands()
         // Remote playback may keep the session alive for lock screen controls.
@@ -246,7 +249,36 @@ final class VideoPlayerManager {
         }
     }
     
+    // MARK: - Watch Together hooks
+    //
+    // While in a party, the user's play / pause / seek go to the room first
+    // (it may refuse, e.g. host-only control); the sync loop then drives the
+    // player through the raw* methods below, which bypass the party.
+
+    /// Returns false to block a user action. Set by `PartySession`.
+    var partyGate: ((PartyAction) -> Bool)?
+    enum PartyAction { case play, pause, seek(Double) }
+    /// Called when the current item plays to the end.
+    var onEnded: (() -> Void)?
+
+    var isWaiting: Bool { player?.timeControlStatus == .waitingToPlayAtSpecifiedRate || isLoading }
+
+    func rawPlay() { player?.play(); isPlaying = true }
+    func rawPause() { player?.pause(); isPlaying = false }
+    func rawSeek(to seconds: Double) {
+        let clamped = max(0, duration > 0 ? min(seconds, duration - 0.5) : seconds)
+        player?.seek(to: CMTime(seconds: clamped, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+        currentTime = clamped
+        pendingResumePosition = 0
+        updateCaption(at: clamped)
+    }
+    func setRate(_ rate: Float) {
+        guard let player, player.timeControlStatus != .paused, !isSpeedBoosted, player.rate != rate else { return }
+        player.rate = rate
+    }
+
     func play() {
+        if let gate = partyGate, !gate(.play) { return }
         if let player {
             player.play()
         } else {
@@ -257,6 +289,7 @@ final class VideoPlayerManager {
     }
     
     func pause() {
+        if let gate = partyGate, !gate(.pause) { return }
         if let player {
             player.pause()
         } else {
@@ -277,7 +310,8 @@ final class VideoPlayerManager {
     private(set) var isSpeedBoosted = false
 
     func beginSpeedBoost() {
-        guard let player, !isSpeedBoosted else { return }
+        // 2× would pull this viewer off a watch party's timeline.
+        guard let player, !isSpeedBoosted, partyGate == nil else { return }
         isSpeedBoosted = true
         player.rate = 2
     }
@@ -298,6 +332,7 @@ final class VideoPlayerManager {
     
     func seek(to seconds: Double) {
         let clamped = max(0, duration > 0 ? min(seconds, duration) : seconds)
+        if let gate = partyGate, !gate(.seek(clamped)) { return }
         let time = CMTime(seconds: clamped, preferredTimescale: 600)
         if let player {
             player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
@@ -378,6 +413,7 @@ final class VideoPlayerManager {
     
     private func handlePlaybackEnd() {
         isPlaying = false
+        onEnded?()
         // Mark as completed
         if duration > 0 {
             onProgressUpdate?(duration, duration)

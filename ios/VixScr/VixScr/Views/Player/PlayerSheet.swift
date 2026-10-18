@@ -13,7 +13,10 @@ struct PlayerSheet: View {
             .toolbarBackground(.hidden, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    PlaybackTargetMenu { viewModel.startPlaybackForCurrentSelection() }
+                    HStack(spacing: 8) {
+                        PlaybackTargetMenu { viewModel.startPlaybackForCurrentSelection() }
+                        PartyButton(host: viewModel)
+                    }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
@@ -40,6 +43,8 @@ struct PlayerSheet: View {
         .animation(.easeOut(duration: 0.25), value: viewModel.toastMessage)
         // Link prompts must come from the front-most presentation.
         .deviceLinkPrompts()
+        .overlay(alignment: .top) { PartyBanner() }
+        .onAppear { if PartySession.shared.active { PartySession.shared.attach(viewModel) } }
         // Keep the episode list in step with what the computer is playing.
         .onChange(of: DeviceLink.shared.remote) { _, state in
             guard DeviceLink.shared.routesPlayback, DeviceLink.shared.shouldFollowRemote, let state else { return }

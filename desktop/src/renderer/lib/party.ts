@@ -12,7 +12,7 @@ import { toast } from '@/stores/ui'
 import { tmdb, type TvDetails } from '@/lib/tmdb'
 import { seasonsOf } from '@/features/details/actions'
 import { canonicalItem } from './sync'
-import { playerHandle } from './remote'
+import { partyHooks, playerHandle } from './remote'
 
 interface PartyView {
   active: boolean
@@ -276,6 +276,11 @@ export function leaveParty(silent = false) {
 }
 
 export const partyActive = () => !!core
+
+partyHooks.start = () => startParty()
+partyHooks.join = link => joinParty(link)
+partyHooks.leave = () => leaveParty()
+partyHooks.info = () => (core && conn ? { link: inviteLink(conn.invite), count: core.peers.size + 1 } : null)
 
 // User actions from this PC's player (or the phone remote). Each returns
 // true when handled by the party (the caller then mirrors it locally).

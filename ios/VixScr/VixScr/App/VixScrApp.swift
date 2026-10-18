@@ -79,6 +79,11 @@ struct VelaApp: App {
                 isLaunching = false
             }
             .onOpenURL { url in
+                // vela://party/<room>#<key> from a watch party invite.
+                if url.host?.lowercased() == "party" {
+                    PartySession.shared.join(url.absoluteString)
+                    return
+                }
                 handleDeepLink(url)
             }
         }
@@ -176,11 +181,17 @@ struct RootView: View {
             .onChange(of: glassFidelity, initial: true) { _, fidelity in
                 applyBarAppearance(fidelity: fidelity)
             }
+            .onAppear {
+                PartySession.shared.animeFallback = animeViewModel
+                PartySession.shared.router = router
+            }
             // iOS suspends background apps, so the computer link closes when
             // we leave and reconnects when we come back.
             .onChange(of: scenePhase, initial: true) { _, phase in
                 switch phase {
-                case .active: DeviceLink.shared.appBecameActive()
+                case .active:
+                    DeviceLink.shared.appBecameActive()
+                    PartySession.shared.appBecameActive()
                 case .background: DeviceLink.shared.appEnteredBackground()
                 default: break
                 }

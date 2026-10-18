@@ -54,6 +54,8 @@ export interface RemoteState {
   sources: { name: string; audio: string | null; quality: string | null }[]
   sourceIndex: number
   hasNext: boolean
+  /** Watch party this PC is in. */
+  party: { link: string; count: number } | null
   /** Caption tracks on the PC's player; captionIndex -1 = off. */
   captions: string[]
   captionIndex: number

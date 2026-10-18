@@ -243,6 +243,7 @@ final class AnimeViewModel {
     func selectEpisode(_ episode: AnimeKaiClient.EpisodeInfo) {
         guard let item = selected, let server = currentServer else { return }
         selectedEpisode = episode
+        PartySession.shared.localMediaChanged()
         store.addRecent(item, season: 1, episode: episode.intNumber, episodeTitle: episode.title == "Episode \(episode.number)" ? nil : episode.title)
         playerManager.setNowPlayingMetadata(title: item.title, subtitle: nowPlayingSubtitle, artworkURL: item.posterURL)
         resetPlayback()
@@ -319,6 +320,8 @@ final class AnimeViewModel {
 
     func switchSource(to index: Int) {
         guard nativeSources.indices.contains(index) else { return }
+        // Sub ↔ Dub / quality is personal: reload without holding the party.
+        PartySession.shared.personalReload()
         selectedNativeSourceIndex = index
         if let audio = nativeSources[index].audio { preferredAudio = audio }
         if let quality = nativeSources[index].quality { preferredQuality = quality }
@@ -396,6 +399,7 @@ final class AnimeViewModel {
     }
 
     func closePlayer() {
+        PartySession.shared.detach(self)
         playerManager.wantsFullscreen = false
         isPlayerPresented = false
         detailsTask?.cancel()

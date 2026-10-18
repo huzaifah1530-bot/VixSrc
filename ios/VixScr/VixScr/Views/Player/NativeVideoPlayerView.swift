@@ -29,7 +29,8 @@ struct NativeVideoPlayerView: View {
             if playerManager.player != nil && !playerManager.isPlaying { playerManager.play() }
         }
         .onDisappear {
-            if !isFullscreen { playerManager.pause() }
+            // Local only: a view going away must not pause a watch party.
+            if !isFullscreen { playerManager.rawPause() }
         }
         .onChange(of: playerManager.error) { _, error in
             if error != nil { onPlaybackFailure?() }

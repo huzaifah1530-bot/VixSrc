@@ -37,6 +37,13 @@ struct AnimeView: View {
         .onChange(of: store.animeServers.first?.base) { _, _ in
             Task { await viewModel.loadHome() }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .velaPartyOpen)) { notification in
+            guard let media = notification.object as? PartyMedia, media.kind == "anime" else { return }
+            guard store.animeEnabled else { PartySession.shared.show("Turn on Anime in Settings to join this party"); return }
+            router.selection = .anime
+            PartySession.shared.attach(viewModel)
+            Task { await viewModel.loadPartyMedia(media) }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .velaClearAnimeSearch)) { _ in
             withAnimation(.easeInOut(duration: 0.22)) {
                 searchText = ""

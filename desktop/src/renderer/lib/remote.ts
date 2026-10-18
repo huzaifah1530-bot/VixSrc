@@ -32,6 +32,14 @@ let handle: PlayerHandle | null = null
 export function registerPlayer(h: PlayerHandle) { handle = h; schedulePublish(); return () => { if (handle === h) handle = null } }
 export const playerHandle = () => handle
 
+/** Set by lib/party.ts (avoids an import cycle). */
+export const partyHooks: {
+  start?: () => void
+  join?: (link: string) => boolean
+  leave?: () => void
+  info?: () => { link: string; count: number } | null
+} = {}
+
 let embedCache: { position: number; duration: number; playing: boolean } | null = null
 
 // ── State publishing ─────────────────────────────────────────────────
@@ -68,6 +76,7 @@ export function buildState(): RemoteState {
     sources: p.sources.map(x => ({ name: x.name, audio: x.audio ?? null, quality: x.quality ?? null })),
     sourceIndex: p.sourceIndex,
     hasNext: p.open && p.hasNext(),
+    party: partyHooks.info?.() ?? null,
     captions: native && handle ? handle.captions().list : [],
     captionIndex: native && handle ? handle.captions().index : -1,
     status: p.status,
@@ -194,6 +203,16 @@ export async function runCommand(cmd: Record<string, unknown>): Promise<string |
     }
     case 'stop':
       if (p.open) usePlayer.getState().close()
+      return null
+    // Phone is a remote for this PC: the PC is the one in the watch party.
+    case 'party-start':
+      if (!p.open) return 'Start something playing on the PC first'
+      partyHooks.start?.()
+      return null
+    case 'party-join':
+      return typeof cmd.link === 'string' && partyHooks.join?.(cmd.link) ? null : 'That isn’t a Vela watch party link'
+    case 'party-leave':
+      partyHooks.leave?.()
       return null
   }
 
