@@ -9,7 +9,7 @@ import CryptoKit
 final class PartyConnection: NSObject, PartyTransport {
     enum Status: String { case connecting, connected, reconnecting, closed }
 
-    static let relay = "https://vela-party.huzaifah1530.workers.dev"
+    nonisolated static let relay = "https://vela-party.huzaifah1530.workers.dev"
 
     struct Invite: Equatable {
         var room: String
@@ -29,11 +29,11 @@ final class PartyConnection: NSObject, PartyTransport {
         init(room: String, key: String) { self.room = room; self.key = key }
     }
 
-    static func rand(_ n: Int) -> Data { Data((0..<n).map { _ in UInt8.random(in: 0...255) }) }
-    static func b64u(_ d: Data) -> String {
+    nonisolated static func rand(_ n: Int) -> Data { Data((0..<n).map { _ in UInt8.random(in: 0...255) }) }
+    nonisolated static func b64u(_ d: Data) -> String {
         d.base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
     }
-    static func unb64u(_ s: String) -> Data? {
+    nonisolated static func unb64u(_ s: String) -> Data? {
         var t = s.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
         while t.count % 4 != 0 { t += "=" }
         return Data(base64Encoded: t)

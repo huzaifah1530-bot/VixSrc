@@ -251,7 +251,7 @@ final class SyncEngine {
     /// Fires when a local edit changed the document (push it to the desktop).
     var onLocalChange: (() -> Void)?
 
-    private static let isoFormatter: ISO8601DateFormatter = {
+    nonisolated(unsafe) private static let isoFormatter: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime]
         return f
@@ -294,7 +294,7 @@ final class SyncEngine {
 
     // MARK: - State → doc
 
-    static func item(_ i: MediaItem) -> SyncDoc.Item {
+    nonisolated static func item(_ i: MediaItem) -> SyncDoc.Item {
         SyncDoc.Item(
             tmdbId: i.tmdbId, type: i.type.rawValue, title: i.title, description: i.description,
             posterPath: i.posterPath, backdropPath: i.backdropPath, rating: i.rating, year: i.year,
@@ -303,7 +303,7 @@ final class SyncEngine {
         )
     }
 
-    static func mediaItem(_ i: SyncDoc.Item) -> MediaItem? {
+    nonisolated static func mediaItem(_ i: SyncDoc.Item) -> MediaItem? {
         guard let type = MediaItem.MediaType(rawValue: i.type) else { return nil }
         return MediaItem(
             tmdbId: i.tmdbId, type: type, title: i.title, description: i.description,
