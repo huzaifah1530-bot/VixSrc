@@ -19,10 +19,14 @@ struct PosterCard: View {
     var body: some View {
         Button(action: onTap) {
             ZStack(alignment: .bottom) {
+                // Pin the image to the card; scaledToFill otherwise widens
+                // the ZStack and pushes text and badges off-card.
                 posterImage
+                    .frame(width: width, height: width * 1.5)
+                    .clipped()
 
-                LinearGradient(colors: [.black.opacity(0.85), .clear], startPoint: .bottom, endPoint: .center)
-                    .frame(height: 90)
+                LinearGradient(colors: [.black.opacity(0.9), .black.opacity(0.4), .clear], startPoint: .bottom, endPoint: .top)
+                    .frame(height: 110)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(item.title)
@@ -43,7 +47,7 @@ struct PosterCard: View {
                             .foregroundStyle(.white.opacity(0.92))
                     }
                 }
-                .padding(10)
+                .padding(12)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
                 VStack(alignment: .leading, spacing: 6) {

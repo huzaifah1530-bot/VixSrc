@@ -58,13 +58,17 @@ private struct SearchPosterCard: View {
         GeometryReader { geo in
             Button(action: onTap) {
                 ZStack(alignment: .bottom) {
+                    // Pin the image to the card; scaledToFill otherwise
+                    // widens the ZStack and pushes text and badges off-card.
                     posterImage(width: geo.size.width)
+                        .frame(width: geo.size.width, height: geo.size.width * 1.5)
+                        .clipped()
 
                     LinearGradient(
-                        colors: [.black.opacity(0.85), .clear],
-                        startPoint: .bottom, endPoint: .center
+                        colors: [.black.opacity(0.9), .black.opacity(0.4), .clear],
+                        startPoint: .bottom, endPoint: .top
                     )
-                    .frame(height: 90)
+                    .frame(height: 120)
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text(item.title)
@@ -75,7 +79,7 @@ private struct SearchPosterCard: View {
                             .font(.caption2.weight(.medium))
                             .foregroundStyle(.white.opacity(0.56))
                     }
-                    .padding(10)
+                    .padding(12)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                     VStack {

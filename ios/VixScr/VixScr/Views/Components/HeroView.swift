@@ -13,6 +13,80 @@ struct HeroView: View {
     @Environment(\.glassFidelity) private var glassFidelity
 
     var body: some View {
+        // Anime catalogue titles only have portrait posters, which crop
+        // badly into a 16:9 banner. Show them poster-left instead.
+        if let item, item.isAnimeCatalog {
+            posterLayout(item)
+        } else {
+            bannerLayout
+        }
+    }
+
+    private func posterLayout(_ item: MediaItem) -> some View {
+        HStack(alignment: .top, spacing: 16) {
+            AsyncImage(url: item.posterURL, transaction: Transaction(animation: .easeInOut(duration: 0.35))) { phase in
+                if let image = phase.image {
+                    image.resizable().scaledToFill().transition(.opacity)
+                } else {
+                    Color(white: 0.04)
+                }
+            }
+            .frame(width: 120, height: 180)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(Color.white.opacity(0.15), lineWidth: 1)
+            )
+            .id(item.posterURL)
+            .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text(tagText.uppercased())
+                    .font(.caption2.weight(.bold))
+                    .tracking(0.5)
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .vixGlass(.regular, cornerRadius: 999)
+
+                Text(item.title)
+                    .font(.title3.weight(.bold))
+                    .foregroundStyle(.white)
+                    .lineLimit(3)
+                    .minimumScaleFactor(0.8)
+
+                Text(item.year)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.white.opacity(0.6))
+                    .lineLimit(1)
+
+                Spacer(minLength: 0)
+
+                HStack(spacing: 10) {
+                    Button(action: onPlay) {
+                        Label("Play", systemImage: "play.fill")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.black)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 44)
+                            .background(.white, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    FavoriteButton(isFavorite: isFavorite, action: onToggleFavorite)
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 180, maxHeight: 180, alignment: .topLeading)
+        }
+        .padding(16)
+        .frame(maxWidth: 720)
+        .background(Color(white: 0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .id(item.id)
+        .transition(.opacity)
+        .animation(.easeInOut(duration: 0.8), value: item.id)
+    }
+
+    private var bannerLayout: some View {
         VStack(alignment: .leading, spacing: 0) {
             backdrop
                 // Keep the media area proportional while capping it on iPad.
