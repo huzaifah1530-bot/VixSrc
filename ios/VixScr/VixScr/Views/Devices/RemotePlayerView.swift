@@ -106,7 +106,7 @@ struct RemotePlayerView: View {
         let seconds = Double(store.seekInterval)
         return HStack(spacing: 34) {
             Button {
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.55)) { spinBack -= 360 }
+                withAnimation(.spring(response: 0.7, dampingFraction: 0.55)) { spinBack -= 360 }
                 link.command("skip", ["by": -seconds])
             } label: {
                 Image(systemName: "gobackward.\(store.seekInterval)")
@@ -127,7 +127,7 @@ struct RemotePlayerView: View {
             .accessibilityLabel(state.playing ? "Pause" : "Play")
 
             Button {
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.55)) { spinForward += 360 }
+                withAnimation(.spring(response: 0.7, dampingFraction: 0.55)) { spinForward += 360 }
                 link.command("skip", ["by": seconds])
             } label: {
                 Image(systemName: "goforward.\(store.seekInterval)")

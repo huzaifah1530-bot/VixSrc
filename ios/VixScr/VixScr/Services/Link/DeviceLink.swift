@@ -147,6 +147,7 @@ final class DeviceLink {
     func setPlaybackTarget(_ deskId: String?) {
         playbackTargetId = deskId
         UserDefaults.standard.set(deskId, forKey: Self.targetKey)
+        updateLockScreen()
         if let deskId, !isConnected(to: deskId) { connect(deskId, auto: false) }
     }
 
@@ -423,6 +424,7 @@ final class DeviceLink {
                let state = try? JSONDecoder().decode(RemoteState.self, from: data) {
                 // TCP keeps order, so the newest frame is the current state.
                 remote = state
+                updateLockScreen()
             }
         case "ack":
             if msg["ok"] as? Bool == false, let error = msg["error"] as? String, error != "duplicate" {
@@ -686,8 +688,16 @@ final class DeviceLink {
         connect(id, auto: true)
     }
 
+    /// Keeps the lock screen player in step with the computer.
+    private func updateLockScreen() {
+        RemoteNowPlaying.shared.update(remote, connected: isConnected, enabled: routesPlayback)
+    }
+
     func appEnteredBackground() {
-        // iOS suspends us shortly; close cleanly and reconnect on return.
+        // While mirroring the computer on the lock screen, the silent audio
+        // keeps us running, so the connection stays up and in sync.
+        if RemoteNowPlaying.shared.isActive && isConnected { stopBrowsing(); return }
+        // Otherwise iOS suspends us shortly; close cleanly and reconnect on return.
         suppressReconnect = true
         teardown()
         phase = .idle
@@ -710,6 +720,7 @@ final class DeviceLink {
     }
 
     private func teardown() {
+        RemoteNowPlaying.shared.stop()
         generation += 1
         keepAliveTask?.cancel()
         connection?.cancel()

@@ -74,17 +74,43 @@ final class VideoPlayerManager {
     }
 
     private func handleEnterBackground() {
+        // Picture in Picture the user started keeps playing; anything else stops.
+        if pipController?.isPictureInPictureActive == true { return }
         pause()
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        if !RemoteNowPlaying.shared.isActive { MPNowPlayingInfoCenter.default().nowPlayingInfo = nil }
         removeRemoteCommands()
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        // Remote playback may keep the session alive for lock screen controls.
+        if !RemoteNowPlaying.shared.isActive {
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
     }
 
     private func handleEnterForeground() {
         try? AVAudioSession.sharedInstance().setActive(true)
-        guard player != nil else { return }
-        installRemoteCommands()
-        publishNowPlayingInfo()
+    }
+
+    // MARK: - Picture in Picture
+
+    private weak var pipController: AVPictureInPictureController?
+
+    func attach(pictureInPicture controller: AVPictureInPictureController) {
+        pipController = controller
+    }
+
+    func startPictureInPicture() {
+        guard let pipController else { return }
+        setupAudioSession()
+        if pipController.isPictureInPictureActive {
+            pipController.stopPictureInPicture()
+        } else if pipController.isPictureInPicturePossible {
+            pipController.startPictureInPicture()
+        } else {
+            // Not ready yet (layer still attaching); try once more shortly.
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 400_000_000)
+                self?.pipController?.startPictureInPicture()
+            }
+        }
     }
 
     // MARK: - External subtitles
@@ -463,7 +489,12 @@ final class VideoPlayerManager {
         publishNowPlayingInfo()
     }
 
+    /// Local playback never publishes Now Playing info or lock screen
+    /// controls, so iOS has nothing to show in the Dynamic Island.
+    private static let localNowPlayingEnabled = false
+
     private func publishNowPlayingInfo() {
+        guard Self.localNowPlayingEnabled else { return }
         var info: [String: Any] = [
             MPMediaItemPropertyTitle: nowPlayingTitle,
             MPMediaItemPropertyArtist: "Vela",
@@ -493,6 +524,7 @@ final class VideoPlayerManager {
     }
 
     private func installRemoteCommands() {
+        guard Self.localNowPlayingEnabled else { return }
         removeRemoteCommands()
         let center = MPRemoteCommandCenter.shared()
         center.playCommand.isEnabled = true
@@ -541,6 +573,8 @@ final class VideoPlayerManager {
             command.removeTarget(target)
         }
         remoteCommandTargets.removeAll()
+        // The remote (computer) controls own the command center while active.
+        guard Self.localNowPlayingEnabled, !RemoteNowPlaying.shared.isActive else { return }
         let center = MPRemoteCommandCenter.shared()
         center.playCommand.isEnabled = false
         center.pauseCommand.isEnabled = false
@@ -558,7 +592,7 @@ final class VideoPlayerManager {
         rateObservation?.invalidate()
         rateObservation = nil
         removeRemoteCommands()
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        if !RemoteNowPlaying.shared.isActive { MPNowPlayingInfoCenter.default().nowPlayingInfo = nil }
 
         if let timeObserver {
             player?.removeTimeObserver(timeObserver)

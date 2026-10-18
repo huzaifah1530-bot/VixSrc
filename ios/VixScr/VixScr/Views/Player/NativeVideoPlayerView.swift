@@ -89,7 +89,7 @@ private struct PlayerSurface: View {
     var body: some View {
         GeometryReader { geo in
             ZStack {
-                VideoPlayerLayer(player: playerManager.player, isFullscreen: isFullscreen)
+                VideoPlayerLayer(player: playerManager.player, isFullscreen: isFullscreen, manager: playerManager)
                     .background(Color.black)
                     .allowsHitTesting(false)
 
@@ -219,7 +219,7 @@ private struct PlayerSurface: View {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
 
         // Consecutive double-taps on the same side add up, YouTube-style.
-        withAnimation(.spring(response: 0.18, dampingFraction: 0.75)) {
+        withAnimation(.spring(response: 0.36, dampingFraction: 0.75)) {
             if var current = seekFeedback, current.side == side {
                 current.seconds += step
                 current.pulse += 1
@@ -230,9 +230,9 @@ private struct PlayerSurface: View {
         }
         feedbackTask?.cancel()
         feedbackTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 650_000_000)
+            try? await Task.sleep(nanoseconds: 1_300_000_000)
             guard !Task.isCancelled else { return }
-            withAnimation(.easeOut(duration: 0.15)) { seekFeedback = nil }
+            withAnimation(.easeOut(duration: 0.3)) { seekFeedback = nil }
         }
     }
 
@@ -457,6 +457,12 @@ private struct PlayerSurface: View {
             optionMenus
             captionsMenu
 
+            if AVPictureInPictureController.isPictureInPictureSupported() {
+                GlassIconButton(systemImage: "pip.enter", size: isFullscreen ? 44 : 36, label: "Picture in Picture") {
+                    playerManager.startPictureInPicture()
+                }
+            }
+
             GlassIconButton(systemImage: isFullscreen ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
                             size: isFullscreen ? 44 : 36,
                             label: isFullscreen ? "Exit full screen" : "Full screen") {
@@ -543,13 +549,13 @@ private struct SkipButton: View {
     var body: some View {
         Button {
             // A full turn in the skip direction with a quick pop.
-            withAnimation(.spring(response: 0.42, dampingFraction: 0.72)) {
+            withAnimation(.spring(response: 0.84, dampingFraction: 0.72)) {
                 angle += forward ? 360 : -360
             }
-            withAnimation(.spring(response: 0.16, dampingFraction: 0.5)) { pop = true }
+            withAnimation(.spring(response: 0.32, dampingFraction: 0.5)) { pop = true }
             Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 140_000_000)
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.55)) { pop = false }
+                try? await Task.sleep(nanoseconds: 280_000_000)
+                withAnimation(.spring(response: 0.6, dampingFraction: 0.55)) { pop = false }
             }
             action()
         } label: {
@@ -715,12 +721,17 @@ private struct PlayerScrubber: View {
 struct VideoPlayerLayer: UIViewRepresentable {
     let player: AVPlayer?
     let isFullscreen: Bool
+    var manager: VideoPlayerManager? = nil
     
     func makeUIView(context: Context) -> PlayerUIView {
-        PlayerUIView(player: player, isFullscreen: isFullscreen)
+        let view = PlayerUIView(player: player, isFullscreen: isFullscreen)
+        view.manager = manager
+        view.attachPictureInPicture()
+        return view
     }
     
     func updateUIView(_ uiView: PlayerUIView, context: Context) {
+        uiView.manager = manager
         uiView.isFullscreen = isFullscreen
         uiView.player = player
     }
@@ -770,9 +781,21 @@ struct VideoPlayerLayer: UIViewRepresentable {
             layer.frame = bounds
             self.layer.addSublayer(layer)
             self.playerLayer = layer
-            // No automatic Picture in Picture: leaving the app should close
-            // playback, not shrink it into the Dynamic Island. PiP is still
-            // available manually from the fullscreen player's controls.
+            attachPictureInPicture()
+        }
+
+        weak var manager: VideoPlayerManager?
+
+        /// Manual Picture in Picture only (the PiP button). It never starts
+        /// by itself when leaving the app.
+        func attachPictureInPicture() {
+            guard let playerLayer, AVPictureInPictureController.isPictureInPictureSupported() else { return }
+            if pictureInPictureController?.playerLayer !== playerLayer {
+                let controller = AVPictureInPictureController(playerLayer: playerLayer)
+                controller?.canStartPictureInPictureAutomaticallyFromInline = false
+                pictureInPictureController = controller
+            }
+            if let controller = pictureInPictureController { manager?.attach(pictureInPicture: controller) }
         }
 
         func removeBackgroundObserver() {

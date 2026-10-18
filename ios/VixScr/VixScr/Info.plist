@@ -52,6 +52,10 @@
 	</array>
 	<key>NSCameraUsageDescription</key>
 	<string>Vela uses the camera to scan the pairing code shown on your computer.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+	</array>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
