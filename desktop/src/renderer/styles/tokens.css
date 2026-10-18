@@ -1,0 +1,61 @@
+/* Vela design tokens. Monochrome, white glass on black — same values as the
+   v1 `.glass` / `.glass-strong` classes and the iOS VixTheme. Sizes follow the
+   macOS type scale (13px body). */
+:root {
+  --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', 'Inter', 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
+
+  --bg: #000;
+  --text: #fff;
+  --text-2: rgba(255, 255, 255, .62);
+  --text-3: rgba(255, 255, 255, .45);
+  --hairline: rgba(255, 255, 255, .14);
+  --hairline-strong: rgba(255, 255, 255, .22);
+  --fill: rgba(255, 255, 255, .08);
+  --fill-hover: rgba(255, 255, 255, .13);
+  --fill-active: rgba(255, 255, 255, .2);
+  --danger: #ff453a;
+
+  --glass-bg: linear-gradient(135deg, rgba(255,255,255,.16), rgba(255,255,255,.04)), rgba(10,10,10,.58);
+  --glass-border: rgba(255, 255, 255, .18);
+  --glass-shadow: 0 8px 32px rgba(0,0,0,.37), inset 0 1px 0 rgba(255,255,255,.14);
+  --glass-blur: blur(32px) saturate(180%);
+  --glass-strong-bg: linear-gradient(145deg, rgba(255,255,255,.22), rgba(255,255,255,.05) 46%, rgba(255,255,255,.12)), rgba(8,8,8,.8);
+  --glass-strong-blur: blur(42px) saturate(190%);
+
+  --r-xs: 6px;
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-xl: 24px;
+
+  --fs-caption: 11px;
+  --fs-body: 13px;
+  --fs-callout: 14px;
+  --fs-title3: 17px;
+  --fs-title2: 22px;
+  --fs-title1: 28px;
+  --fs-large: 40px;
+
+  --titlebar-h: 52px;
+  --sidebar-w: 220px;
+  --ease: cubic-bezier(.2, .8, .2, 1);
+  --spring: cubic-bezier(.34, 1.56, .64, 1);
+}
+
+/* Performance modes, same semantics as v1 body.perf-mode / ultra-perf-mode */
+body.perf {
+  --glass-bg: rgba(255, 255, 255, .10);
+  --glass-strong-bg: rgba(255, 255, 255, .14);
+  --glass-blur: none;
+  --glass-strong-blur: none;
+}
+body.ultra {
+  --glass-bg: #121212;
+  --glass-strong-bg: #1a1a1a;
+  --glass-blur: none;
+  --glass-strong-blur: none;
+  --glass-shadow: none;
+}
+@media (prefers-reduced-transparency: reduce) {
+  :root { --glass-blur: none; --glass-strong-blur: none; --glass-bg: #141414; --glass-strong-bg: #1c1c1c; }
+}
