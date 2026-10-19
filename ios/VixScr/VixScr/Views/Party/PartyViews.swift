@@ -7,6 +7,8 @@ struct PartyButton<Host: PartyPlayerHost>: View {
     let host: Host
     @State private var party = PartySession.shared
     @State private var link = DeviceLink.shared
+    @State private var confirming = false
+    @State private var proceed = false
     @Environment(\.glassFidelity) private var fidelity
 
     var body: some View {
@@ -16,7 +18,7 @@ struct PartyButton<Host: PartyPlayerHost>: View {
             } else if party.active {
                 party.sheetOpen = true
             } else {
-                party.start(from: host)
+                confirming = true
             }
         } label: {
             Image(systemName: party.active || link.remote?.party != nil ? "person.2.fill" : "person.2")
@@ -27,6 +29,49 @@ struct PartyButton<Host: PartyPlayerHost>: View {
         .buttonStyle(CircleGlassButtonStyle(fidelity: fidelity))
         .accessibilityLabel(party.active ? "Watch party, \(party.peers.count + 1) watching" : "Watch Together")
         .sheet(isPresented: $party.sheetOpen) { PartySheet() }
+        .sheet(isPresented: $confirming, onDismiss: {
+            // Start once the confirmation has fully gone, so the invite sheet can appear.
+            if proceed { proceed = false; party.start(from: host) }
+        }) {
+            StartPartySheet { proceed = true }
+        }
+    }
+}
+
+/// Explains Watch Together before anything is created.
+struct StartPartySheet: View {
+    let onContinue: () -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 20) {
+                Image(systemName: "person.2.fill")
+                    .font(.system(size: 44))
+                    .foregroundStyle(.blue)
+                    .accessibilityHidden(true)
+                Text("Watch Together")
+                    .font(.title2.bold())
+                Text("Watch this with friends in sync. Playback, pausing and seeking stay in step for everyone, and the room waits if someone is buffering.\n\nContinuing creates a room and gives you an invite link. Anyone with the link can join, and everything in the room is end-to-end encrypted.")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                Spacer(minLength: 0)
+                Button {
+                    onContinue()
+                    dismiss()
+                } label: {
+                    Text("Continue").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+            }
+            .padding(24)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        .presentationDetents([.medium])
+        .preferredColorScheme(.dark)
     }
 }
 
@@ -87,11 +132,17 @@ struct PartySheet: View {
     private var peopleSection: some View {
         Section("People") {
             personRow(id: party.me, name: "You", buffering: false, error: nil)
-            ForEach(party.peers) { p in personRow(id: p.id, name: p.name, buffering: p.buffering, error: p.error) }
+            ForEach(party.peers) { p in personRow(id: p.id, name: p.name, buffering: p.buffering, error: p.error, gap: p.gap) }
         }
     }
 
-    private func personRow(id: String, name: String, buffering: Bool, error: String?) -> some View {
+    // From the host's 30-second check: only worth mentioning when noticeable.
+    private func gapText(_ gap: Double?) -> String {
+        guard let gap, abs(gap) >= 0.5 else { return "" }
+        return String(format: " · %.1fs %@", abs(gap), gap > 0 ? "ahead" : "behind")
+    }
+
+    private func personRow(id: String, name: String, buffering: Bool, error: String?, gap: Double? = nil) -> some View {
         HStack {
             Circle().fill(error != nil ? .red : buffering ? .yellow : .green).frame(width: 8, height: 8)
             VStack(alignment: .leading, spacing: 2) {
@@ -99,7 +150,7 @@ struct PartySheet: View {
                     Text(name)
                     if id == party.hostId { badge("HOST") } else if id == party.leader { badge("ACTING HOST") }
                 }
-                Text(error ?? (buffering ? "Buffering…" : party.peerCanControl(id) ? "Can control" : "Watching"))
+                Text(error ?? (buffering ? "Buffering…" : (party.peerCanControl(id) ? "Can control" : "Watching") + gapText(gap)))
                     .font(.caption).foregroundStyle(.secondary)
             }
             Spacer()

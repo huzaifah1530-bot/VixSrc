@@ -1,15 +1,19 @@
 import { useState } from 'react'
+import { create } from 'zustand'
 import { Icon } from '@/components/Icon'
 import { answerFollow, party, startParty, leaveParty, joinParty, useParty } from '@/lib/party'
 import { toast } from '@/stores/ui'
 import { cx } from '@/lib/format'
+
+/** Starting a party asks first (what it does, who can join), then creates the room. */
+export const useStartPartyDialog = create<{ open: boolean }>(() => ({ open: false }))
 
 export function PartyButton() {
   const active = useParty(s => s.active)
   const count = useParty(s => s.peers.length + 1)
   return (
     <button className={cx('pill-btn', active && 'is-open')} aria-label="Watch together" title="Watch together"
-      onClick={() => (active ? useParty.setState(s => ({ panelOpen: !s.panelOpen })) : startParty())}>
+      onClick={() => (active ? useParty.setState(s => ({ panelOpen: !s.panelOpen })) : useStartPartyDialog.setState({ open: true }))}>
       <Icon name="people" size={14} /><span>{active ? `${count} watching` : 'Watch Together'}</span>
     </button>
   )
@@ -21,7 +25,9 @@ export function PartyPanel() {
   if (!s.active || !s.panelOpen) return null
   const roleOf = (id: string) => (id === s.hostId ? 'Host' : id === s.leader ? 'Acting host' : null)
   const canControlPeer = (id: string) => id === s.leader || s.mode === 'everyone' || (s.mode === 'select' && s.allowed.includes(id))
-  const people = [{ id: s.me, name: 'You', platform: 'pc', buffering: false, error: null as string | null }, ...s.peers]
+  const people = [{ id: s.me, name: 'You', platform: 'pc', buffering: false, error: null as string | null, gap: null as number | null }, ...s.peers]
+  // From the leader's 30-second check: only worth mentioning when noticeable.
+  const gapText = (g: number | null) => (g !== null && Math.abs(g) >= 0.5 ? ` · ${Math.abs(g).toFixed(1)}s ${g > 0 ? 'ahead' : 'behind'}` : '')
 
   return (
     <aside className="party-panel glass-strong" aria-label="Watch party">
@@ -49,7 +55,7 @@ export function PartyPanel() {
               <span className={cx('server-dot', !p.buffering && 'ok', p.buffering && 'testing', p.error && 'bad')} aria-hidden="true" />
               <div className="grow">
                 <div>{p.name}{roleOf(p.id) && <span className="device-badge">{roleOf(p.id)}</span>}</div>
-                <div className="form-hint">{p.error ?? (p.buffering ? 'Buffering…' : canControlPeer(p.id) ? 'Can control' : 'Watching')}</div>
+                <div className="form-hint">{p.error ?? (p.buffering ? 'Buffering…' : (canControlPeer(p.id) ? 'Can control' : 'Watching') + gapText(p.gap))}</div>
               </div>
               {s.canConfigure && s.mode === 'select' && p.id !== s.me && (
                 <button className={cx('btn small', s.allowed.includes(p.id) && 'btn-primary')} onClick={() => party.toggleAllowed(p.id)}>
@@ -89,6 +95,28 @@ export function PartyPanel() {
 
       <button className="btn small danger" onClick={() => leaveParty()}>Leave party</button>
     </aside>
+  )
+}
+
+/** Explains Watch Together; the room is only created on Continue. */
+export function StartPartyDialog() {
+  const open = useStartPartyDialog(s => s.open)
+  if (!open) return null
+  const close = () => useStartPartyDialog.setState({ open: false })
+  return (
+    <div className="sheet-backdrop" onMouseDown={close} onKeyDown={e => { if (e.key === 'Escape') close() }}>
+      <div className="sheet glass-strong" role="dialog" aria-modal="true" aria-labelledby="start-party-title" aria-describedby="start-party-desc" onMouseDown={e => e.stopPropagation()}>
+        <h2 id="start-party-title" className="sheet-title">Watch Together</h2>
+        <p id="start-party-desc" className="muted sheet-sub">
+          Watch this with friends in sync. Playback, pausing and seeking stay in step for everyone, and the room waits if someone is buffering.
+          Continuing creates a room and gives you an invite link. Anyone with the link can join, and everything in the room is end-to-end encrypted.
+        </p>
+        <div className="sheet-actions">
+          <button className="btn" onClick={close}>Cancel</button>
+          <button className="btn btn-primary" autoFocus onClick={() => { close(); startParty() }}>Continue</button>
+        </div>
+      </div>
+    </div>
   )
 }
 

@@ -141,6 +141,21 @@ async function main() {
   await until(() => Math.abs(b.pos - host.pos) < 1, 3000, 'hard resync')
   ok('a viewer 30s behind is jumped back into sync')
 
+  // ── A small gap (under 5s) eases out with speed, without a jump ────
+  const jumps = b.seeks
+  b.pos -= 2.5
+  await until(() => Math.abs(b.pos - host.pos) < 1, 25000, 'smooth catch-up')
+  assert.equal(b.seeks, jumps, 'a 2.5s gap must not cause a jump')
+  ok(`a viewer 2.5s behind catches up smoothly, no jump (now ${(b.pos - host.pos).toFixed(2)}s off)`)
+
+  // ── The 30-second check: the host asks, everyone reports the same moment ──
+  host.core.peers.get(a.id.peer)!.gap = null
+  a.core.myGap = null
+  await until(() => host.core.peers.get(a.id.peer)?.gap != null && a.core.myGap != null, 50000, 'sync check result')
+  const amyGap = host.core.peers.get(a.id.peer)!.gap!
+  assert.ok(Math.abs(amyGap) < 1.5, 'Amy is in step, gap ' + amyGap)
+  ok(`the periodic check reports each viewer's gap to the host's player (Amy ${amyGap.toFixed(2)}s)`)
+
   // ── Stall: wait for everyone, then give up after the limit ────────
   b.stalled = true
   await until(() => !host.playing && host.core.state!.tl.hold, 7000, 'room holds for stalled viewer')

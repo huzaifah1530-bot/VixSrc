@@ -201,7 +201,7 @@ async function syncOnce() {
     const st = await window.vela.embed.state().catch(() => null)
     core.setLoading(!st && !quiet)
     if (st) {
-      const c = core.sync({ pos: st.position - offset, playing: st.playing }, quiet)
+      const c = core.sync({ pos: st.position - offset, playing: st.playing }, quiet, false)
       if (c.seek !== null) window.vela.embed.control('seek', c.seek + offset)
       if (c.play !== st.playing) window.vela.embed.control(c.play ? 'play' : 'pause')
     }

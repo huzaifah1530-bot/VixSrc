@@ -7,7 +7,16 @@ enum PartyRules {
     static let version = 1
     static let waitLimit: TimeInterval = 15
     static let waitMaxPeers = 8
-    static let hardSync = 2.0
+    /// Off by more than this and a player jumps; under it, speed eases the gap out.
+    static let hardSync = 5.0
+    /// Players that can't change speed (web players) only have jumps, so they use less.
+    static let hardSyncCoarse = 2.0
+    /// Every `probeEvery` the leader asks everyone where they are at one agreed moment.
+    static let probeEvery: TimeInterval = 30
+    static let probeLead: TimeInterval = 10
+    static let probeCollect: TimeInterval = 4
+    /// The leader's own player differing from the timeline by more than this moves the timeline to it.
+    static let reanchor = 0.3
     static let softSync = 0.25
     static let peerTimeout: TimeInterval = 75
     static let aliveEvery: TimeInterval = 30
@@ -65,6 +74,8 @@ struct PartyPeer: Identifiable, Equatable {
     var bufSince = Date.distantPast
     var error: String?
     var lastSeen = Date()
+    /// Seconds ahead (+) or behind (-) the leader at the last check.
+    var gap: Double?
 }
 
 struct PartyCorrection { var play: Bool; var rate: Float; var seek: Double?; var drift: Double }
@@ -206,6 +217,23 @@ final class PartyCore {
             }
             peers[from]!.error = (m["error"] as? String).map { String($0.prefix(200)) }
             onChange?()
+        case "probe":
+            guard from == leader, from != me, let id = m["id"] as? Int, let at = m["at"] as? Double else { return }
+            let tn = transport?.now() ?? 0
+            guard at >= tn - 1000, at <= tn + 30_000 else { return }
+            probe = Probe(id: id, at: at, from: from, n: -1)
+        case "probe-reply":
+            guard let p = probe, p.from == me, m["id"] as? Int == p.id, let pos = m["pos"] as? Double,
+                  pos.isFinite, pos >= 0, pos < 1e6, peers[from] != nil else { return }
+            probe?.replies[from] = pos
+        case "probe-result":
+            guard from == leader, let gaps = m["gaps"] as? [String: Any] else { return }
+            for (id, raw) in gaps.prefix(200) {
+                guard let g = raw as? Double, g.isFinite else { continue }
+                if id == me { myGap = g } else { peers[id]?.gap = g }
+            }
+            peers[from]?.gap = 0
+            onChange?()
         case "req-sync":
             if let state, isLeader, let obj = Self.object(state) { transport?.send(["k": "state", "s": obj], keep: false, to: from) }
         default: break
@@ -306,14 +334,17 @@ final class PartyCore {
         return (tl.media, tl.playing, Self.position(tl, now: transport?.now() ?? 0))
     }
 
-    static func correction(localPos: Double, localPlaying: Bool, target: (playing: Bool, pos: Double)) -> PartyCorrection {
+    static func correction(localPos: Double, localPlaying: Bool, target: (playing: Bool, pos: Double), canNudge: Bool = true) -> PartyCorrection {
         let drift = localPos - target.pos
         if !target.playing {
             return PartyCorrection(play: false, rate: 1, seek: abs(drift) > 0.5 ? target.pos : nil, drift: drift)
         }
-        if abs(drift) > PartyRules.hardSync { return PartyCorrection(play: true, rate: 1, seek: target.pos + 0.25, drift: drift) }
+        if abs(drift) > (canNudge ? PartyRules.hardSync : PartyRules.hardSyncCoarse) { return PartyCorrection(play: true, rate: 1, seek: target.pos + 0.25, drift: drift) }
+        if !canNudge { return PartyCorrection(play: true, rate: 1, seek: nil, drift: drift) }
+        // Smooth catch-up: the bigger the gap, the stronger the nudge (5 / 10 / 15 %).
         let a = abs(drift)
-        let rate: Float = a < PartyRules.softSync ? 1 : drift > 0 ? (a > 1 ? 0.9 : 0.95) : (a > 1 ? 1.1 : 1.05)
+        let step: Float = a < PartyRules.softSync ? 0 : a < 1 ? 0.05 : a < 2.5 ? 0.1 : 0.15
+        let rate: Float = drift > 0 ? 1 - step : 1 + step
         return PartyCorrection(play: true, rate: rate, seek: nil, drift: drift)
     }
 
@@ -330,9 +361,10 @@ final class PartyCore {
     private var lastResume = Date.distantPast
     var buffering: Bool { myBuffering }
 
-    func sync(localPos: Double, localPlaying: Bool, ended: Bool = false, quiet: Bool = false) -> PartyCorrection {
+    func sync(localPos: Double, localPlaying: Bool, ended: Bool = false, quiet: Bool = false, canNudge: Bool = true) -> PartyCorrection {
         let now = Date()
         let t = target()
+        answerProbe(localPos, localPlaying)
         let holdingForMe = state?.tl.hold == true && stalled
         let want = (t.playing || holdingForMe) && !ended
         // At the end while the room still plays: the host moves it on
@@ -378,7 +410,7 @@ final class PartyCore {
             return PartyCorrection(play: true, rate: 1, seek: nil, drift: 0)
         }
 
-        var c = Self.correction(localPos: localPos, localPlaying: localPlaying, target: (t.playing, t.pos))
+        var c = Self.correction(localPos: localPos, localPlaying: localPlaying, target: (t.playing, t.pos), canNudge: canNudge)
         if c.seek != nil && t.playing {
             if c.drift < 0 && (notMoving || stalled) {
                 // Behind because we're stuck: jumping ahead lands on more unbuffered video.
@@ -454,6 +486,79 @@ final class PartyCore {
         } else if now.timeIntervalSince(lastSentTimeline) > 30 {
             publish()
         }
+        leaderProbe()
+    }
+
+    // MARK: Periodic "where is everyone?" check
+    // Every `probeEvery` the leader names a moment about `probeLead` ahead on
+    // the shared clock. Everyone reports its position *at that moment*, so
+    // slower replies don't skew the comparison. The leader is the reference:
+    // it tells the room each gap, and if its own player has drifted from the
+    // timeline, the timeline moves to the leader. Everyone then closes any gap
+    // themselves: smoothly under `hardSync`, with a jump above it.
+
+    private struct Probe {
+        var id: Int
+        var at: Double
+        var from: String
+        var answered = false
+        var own: Double?
+        var replies: [String: Double] = [:]
+        var n: Int
+    }
+    private var probe: Probe?
+    private var probeSeq = 0
+    private var lastProbe = Date.distantPast
+    /// Our gap to the leader at the last check (seconds, + = ahead).
+    private(set) var myGap: Double?
+
+    private func leaderProbe() {
+        guard let st = state else { return }
+        let tn = transport?.now() ?? 0
+        if let p = probe, p.from == me {
+            // Someone changed playback during the check: the answers are stale.
+            if st.tl.n != p.n || !st.tl.playing || st.tl.hold { probe = nil; return }
+            if tn >= p.at + PartyRules.probeCollect * 1000 { finishProbe(p) }
+            return
+        }
+        guard Date().timeIntervalSince(lastProbe) >= PartyRules.probeEvery, st.tl.playing, !st.tl.hold,
+              st.tl.media != nil, !peers.isEmpty else { return }
+        lastProbe = Date()
+        probeSeq += 1
+        let p = Probe(id: probeSeq, at: tn + PartyRules.probeLead * 1000, from: me, n: st.tl.n)
+        probe = p
+        transport?.send(["k": "probe", "id": p.id, "at": p.at], keep: false, to: nil)
+    }
+
+    /// Called from sync(): once the agreed moment has passed, report where we were at it.
+    private func answerProbe(_ localPos: Double, _ playing: Bool) {
+        guard var p = probe, !p.answered else { return }
+        let tn = transport?.now() ?? 0
+        if tn < p.at { return }
+        if tn > p.at + 8000 { if p.from != me { probe = nil }; return }
+        p.answered = true
+        let pos = playing ? localPos - (tn - p.at) / 1000 : localPos
+        if p.from == me { p.own = pos } else { transport?.send(["k": "probe-reply", "id": p.id, "pos": pos], keep: false, to: p.from) }
+        probe = p
+    }
+
+    private func finishProbe(_ p: Probe) {
+        probe = nil
+        guard let own = p.own, var current = state else { return }
+        var gaps: [String: Double] = [:]
+        for (id, pos) in p.replies where peers[id] != nil {
+            let g = ((pos - own) * 100).rounded() / 100
+            gaps[id] = g
+            peers[id]?.gap = g
+        }
+        myGap = 0
+        transport?.send(["k": "probe-result", "id": p.id, "gaps": gaps], keep: false, to: nil)
+        let tn = transport?.now() ?? 0
+        let expected = Self.position(current.tl, now: p.at)
+        if abs(own - expected) > PartyRules.reanchor && !myBuffering && !loading {
+            bumpAsLeader(&current) { $0.pos = own + max(0, tn - p.at) / 1000 }
+        }
+        onChange?()
     }
 
     private func bumpAsLeader(_ current: inout PartyRoomState, _ change: (inout PartyTimeline) -> Void) {

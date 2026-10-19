@@ -36,7 +36,19 @@
 export const PARTY_VERSION = 1
 export const WAIT_LIMIT_MS = 15_000
 export const WAIT_MAX_PEERS = 8
-export const HARD_SYNC_S = 2
+/**
+ * Off by more than this and a player jumps. Under it, playback speed eases
+ * the gap out smoothly. Players that can't change speed (web players) use the
+ * smaller coarse limit instead, since a jump is their only tool.
+ */
+export const HARD_SYNC_S = 5
+export const HARD_SYNC_COARSE_S = 2
+/** Every PROBE_EVERY_MS the leader asks everyone where they are at one agreed moment. */
+export const PROBE_EVERY_MS = 30_000
+export const PROBE_LEAD_MS = 10_000
+export const PROBE_COLLECT_MS = 4_000
+/** The leader's own player differing from the timeline by more than this moves the timeline to it. */
+export const REANCHOR_S = 0.3
 export const SOFT_SYNC_S = 0.25
 export const HOST_CHECK_MS = 1000
 export const STALL_WINDOW_MS = 1500
@@ -74,7 +86,7 @@ export interface PartyConfig {
 
 export interface RoomState { v: number; tl: Timeline; cfg: PartyConfig }
 
-export interface Peer { id: string; name: string; platform: string; joined: number; buffering: boolean; bufSince: number; error: string | null; lastSeen: number }
+export interface Peer { id: string; name: string; platform: string; joined: number; buffering: boolean; bufSince: number; error: string | null; lastSeen: number; /** seconds ahead (+) or behind (-) the leader at the last check */ gap: number | null }
 
 /** A peer silent this long is treated as gone even if its socket lingers. */
 export const PEER_TIMEOUT_MS = 75_000
@@ -111,14 +123,17 @@ export function positionAt(tl: Timeline, now: number) {
 }
 
 /** What a local player should do to stay on the timeline. */
-export function correction(local: { pos: number; playing: boolean }, target: { pos: number; playing: boolean }) {
+export function correction(local: { pos: number; playing: boolean }, target: { pos: number; playing: boolean }, canNudge = true) {
   const drift = local.pos - target.pos
   if (!target.playing) {
     return { play: false, rate: 1, seek: Math.abs(drift) > 0.5 ? target.pos : null, drift }
   }
-  if (Math.abs(drift) > HARD_SYNC_S) return { play: true, rate: 1, seek: target.pos + 0.25, drift }
+  if (Math.abs(drift) > (canNudge ? HARD_SYNC_S : HARD_SYNC_COARSE_S)) return { play: true, rate: 1, seek: target.pos + 0.25, drift }
+  if (!canNudge) return { play: true, rate: 1, seek: null, drift }
+  // Smooth catch-up: the bigger the gap, the stronger the nudge (5 / 10 / 15 %).
   const a = Math.abs(drift)
-  const rate = a < SOFT_SYNC_S ? 1 : drift > 0 ? (a > 1 ? 0.9 : 0.95) : (a > 1 ? 1.1 : 1.05)
+  const step = a < SOFT_SYNC_S ? 0 : a < 1 ? 0.05 : a < 2.5 ? 0.1 : 0.15
+  const rate = 1 + (drift > 0 ? -step : step)
   return { play: true, rate, seek: null, drift }
 }
 
@@ -206,7 +221,7 @@ export class PartyCore {
     this.connected = true
     this.joinedAt = myJoined
     this.peers.clear()
-    for (const p of peers) this.peers.set(p.peer, { id: p.peer, name: '…', platform: '', joined: p.joined, buffering: false, bufSince: 0, error: null, lastSeen: Date.now() })
+    for (const p of peers) this.peers.set(p.peer, { id: p.peer, name: '…', platform: '', joined: p.joined, buffering: false, bufSince: 0, error: null, lastSeen: Date.now(), gap: null })
     this.transport.send({ k: 'hello', name: this.name, platform: this.platform, buffering: this.myBuffering })
     const incoming = this.parseState(keep)
     // Reconnect: the room's current state wins over whatever we had.
@@ -221,7 +236,7 @@ export class PartyCore {
   }
 
   join(peer: string, joined: number) {
-    this.peers.set(peer, { id: peer, name: '…', platform: '', joined, buffering: false, bufSince: 0, error: null, lastSeen: Date.now() })
+    this.peers.set(peer, { id: peer, name: '…', platform: '', joined, buffering: false, bufSince: 0, error: null, lastSeen: Date.now(), gap: null })
     this.transport.send({ k: 'hello', name: this.name, platform: this.platform, buffering: this.myBuffering }, { to: peer })
     this.events.onChange?.()
   }
@@ -272,6 +287,31 @@ export class PartyCore {
           this.events.onChange?.()
         }
         return
+      case 'probe': {
+        if (from !== this.leader || from === this.me || !Number.isInteger(m.id) || !num(m.at)) return
+        const tn = this.transport.now()
+        if ((m.at as number) < tn - 1000 || (m.at as number) > tn + 30_000) return
+        this.probe = { id: m.id as number, at: m.at as number, from, answered: false, replies: new Map(), n: -1 }
+        return
+      }
+      case 'probe-reply': {
+        const p = this.probe
+        if (!p || p.from !== this.me || m.id !== p.id || !num(m.pos) || (m.pos as number) < 0 || (m.pos as number) >= 1e6) return
+        if (peer) p.replies.set(from, m.pos as number)
+        return
+      }
+      case 'probe-result': {
+        if (from !== this.leader || !m.gaps || typeof m.gaps !== 'object') return
+        for (const [id, g] of Object.entries(m.gaps as Record<string, unknown>).slice(0, 200)) {
+          if (!num(g)) continue
+          if (id === this.me) this.myGap = g as number
+          else { const q = this.peers.get(id); if (q) q.gap = g as number }
+        }
+        const lead = this.peers.get(from)
+        if (lead) lead.gap = 0
+        this.events.onChange?.()
+        return
+      }
       case 'req-sync':
         // Someone asks for the latest state directly (e.g. after a gap).
         if (this.state && this.isLeader) this.transport.send({ k: 'state', s: this.state }, { to: from })
@@ -371,9 +411,10 @@ export class PartyCore {
    * personal offset). `quiet` = a personal reload (Sub/Dub, quality) is in
    * progress: never hold the room for it.
    */
-  sync(local: { pos: number; playing: boolean; ended?: boolean }, quiet = false) {
+  sync(local: { pos: number; playing: boolean; ended?: boolean }, quiet = false, canNudge = true) {
     const now = Date.now()
     const t = this.target()
+    this.answerProbe(local)
     const holdingForMe = !!this.state?.tl.hold && this.stalled
     // At the end of the video "not moving" is expected, not a stall.
     const want = (t.playing || holdingForMe) && !local.ended
@@ -422,7 +463,7 @@ export class PartyCore {
       return { play: true, rate: 1, seek: null, drift: 0 }
     }
 
-    let c = correction(local, t)
+    let c = correction(local, t, canNudge)
     if (c.seek !== null && t.playing) {
       if (c.drift < 0 && (notMoving || this.stalled)) {
         // Behind because we're stuck, not slow: jumping ahead would only
@@ -512,7 +553,73 @@ export class PartyCore {
       // Refresh the relay's copy now and then (cheap, one message).
       this.publishState()
     }
+    this.leaderProbe()
   }
+
+  // ── Periodic "where is everyone?" check ─────────────────────────────
+  // Every PROBE_EVERY_MS the leader names a moment about PROBE_LEAD_MS ahead
+  // on the shared clock ("at 08:00:20, tell me where you are"). Everyone
+  // reports its position *at that moment*, so slower replies don't skew the
+  // comparison. The leader is the reference: it tells the room each person's
+  // gap, and if its own player has drifted from the timeline, the timeline
+  // moves to the leader. Everyone then closes any gap on their own, smoothly
+  // under HARD_SYNC_S and with a jump above it.
+  private probe: { id: number; at: number; from: string; answered: boolean; own?: number; replies: Map<string, number>; n: number } | null = null
+  private probeSeq = 0
+  private lastProbe = 0
+  /** Our gap to the leader at the last check (seconds, + = ahead). */
+  myGap: number | null = null
+
+  private leaderProbe() {
+    const st = this.state!
+    const tn = this.transport.now()
+    const p = this.probe
+    if (p && p.from === this.me) {
+      // Someone changed playback during the check: the answers are stale.
+      if (st.tl.n !== p.n || !st.tl.playing || st.tl.hold) { this.probe = null; return }
+      if (tn >= p.at + PROBE_COLLECT_MS) this.finishProbe(p)
+      return
+    }
+    if (Date.now() - this.lastProbe < PROBE_EVERY_MS || !st.tl.playing || st.tl.hold || !st.tl.media || this.peers.size === 0) return
+    this.lastProbe = Date.now()
+    const probe = { id: ++this.probeSeq, at: tn + PROBE_LEAD_MS, from: this.me, answered: false, replies: new Map<string, number>(), n: st.tl.n }
+    this.probe = probe
+    this.transport.send({ k: 'probe', id: probe.id, at: probe.at })
+  }
+
+  /** Called from sync(): once the agreed moment has passed, report where we were at it. */
+  private answerProbe(local: { pos: number; playing: boolean }) {
+    const p = this.probe
+    if (!p || p.answered) return
+    const tn = this.transport.now()
+    if (tn < p.at) return
+    if (tn > p.at + 8000) { if (p.from !== this.me) this.probe = null; return }
+    p.answered = true
+    const pos = local.playing ? local.pos - (tn - p.at) / 1000 : local.pos
+    if (p.from === this.me) p.own = pos
+    else this.transport.send({ k: 'probe-reply', id: p.id, pos }, { to: p.from })
+  }
+
+  private finishProbe(p: NonNullable<PartyCore['probe']>) {
+    this.probe = null
+    if (p.own === undefined || !this.state) return
+    const gaps: Record<string, number> = {}
+    for (const [id, pos] of p.replies) {
+      const peer = this.peers.get(id)
+      if (!peer) continue
+      gaps[id] = Math.round((pos - p.own) * 100) / 100
+      peer.gap = gaps[id]
+    }
+    this.myGap = 0
+    this.transport.send({ k: 'probe-result', id: p.id, gaps })
+    const tn = this.transport.now()
+    const expected = positionAt(this.state.tl, p.at)
+    if (Math.abs(p.own - expected) > REANCHOR_S && !this.myBuffering && !this.loading) {
+      this.bumpAsLeader({ pos: p.own + Math.max(0, tn - p.at) / 1000 })
+    }
+    this.events.onChange?.()
+  }
+
 
   private bumpAsLeader(change: Partial<Timeline>) {
     const now = this.transport.now()

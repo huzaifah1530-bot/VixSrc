@@ -1,6 +1,6 @@
 // Merge-rule checks for shared/sync.ts. Run: npm run test:sync
 import assert from 'node:assert/strict'
-import { emptyDoc, mergeDocs as merge, replaceWith, validateDoc, type ProgressRec, type SyncDoc } from '../src/shared/sync'
+import { compactIfHuge, emptyDoc, mergeDocs as merge, replaceWith, shiftDoc, validateDoc, type ProgressRec, type SyncDoc } from '../src/shared/sync'
 
 // Test timestamps are tiny, so pin "now" close to them (tombstones expire after 90 days).
 const mergeDocs = (a: SyncDoc, b: SyncDoc, now = 100) => merge(a, b, now)
@@ -11,39 +11,62 @@ const get = (d: SyncDoc, id = 'movie:1') => d.progress.find(p => p.id === id)!
 let n = 0
 const test = (name: string, fn: () => void) => { fn(); n++; console.log('ok', name) }
 
-test('further progress wins within an epoch, either direction', () => {
+test('newest progress wins, even if it is earlier in the video', () => {
   const a = doc({ progress: [prog({ position: 1200, at: 10, watchedAt: 10 })] })
   const b = doc({ progress: [prog({ position: 300, at: 20, watchedAt: 20 })] })
-  assert.equal(get(mergeDocs(a, b)).position, 1200)
-  assert.equal(get(mergeDocs(b, a)).position, 1200)
+  assert.equal(get(mergeDocs(a, b)).position, 300)
+  assert.equal(get(mergeDocs(b, a)).position, 300)
 })
 
-test('explicit restart (new epoch) beats stale further progress', () => {
-  const stale = doc({ progress: [prog({ position: 5000, at: 50, epoch: 0 })] })
-  const restarted = doc({ progress: [prog({ position: 40, at: 30, epoch: 30 })] })
-  assert.equal(get(mergeDocs(stale, restarted)).position, 40)
-  assert.equal(get(mergeDocs(restarted, stale)).position, 40)
+test('the offline log example reduces to the last action per title', () => {
+  const pcStranger = prog({ id: 'tv:1:1:1', position: 764, at: 44 })
+  const pcAvengers = prog({ id: 'movie:2', position: 0, at: 45 })
+  const phoneStrangerGone = prog({ id: 'tv:1:1:1', position: 764, del: true, at: 50 })
+  const phoneAvengers = prog({ id: 'movie:2', position: 720, at: 49 })
+  const m = mergeDocs(doc({ progress: [pcStranger, pcAvengers] }), doc({ progress: [phoneStrangerGone, phoneAvengers] }))
+  assert.equal(get(m, 'movie:2').position, 720)
+  assert.equal(get(m, 'tv:1:1:1').del, true)
 })
 
-test('mark unwatched (tombstone, new epoch) is not revived by stale progress', () => {
-  const stale = doc({ progress: [prog({ position: 5000, completed: true, at: 50 })] })
-  const unwatched = doc({ progress: [prog({ position: 5000, del: true, at: 40, epoch: 40 })] })
-  assert.equal(get(mergeDocs(stale, unwatched)).del, true)
-})
-
-test('rewatch after unwatch survives the old tombstone', () => {
-  const tomb = doc({ progress: [prog({ del: true, at: 40, epoch: 40 })] })
-  const rewatch = doc({ progress: [prog({ position: 100, at: 60, epoch: 40 })] })
-  const m = get(mergeDocs(tomb, rewatch))
+test('a delete on one device loses to later watching on the other', () => {
+  const deletedAt1 = doc({ progress: [prog({ del: true, at: 40 })] })
+  const watchedAt2 = doc({ progress: [prog({ position: 100, at: 60 })] })
+  const m = get(mergeDocs(deletedAt1, watchedAt2))
   assert.equal(m.del, undefined); assert.equal(m.position, 100)
+  assert.equal(get(mergeDocs(watchedAt2, deletedAt1)).position, 100)
 })
 
-test('completed is sticky within an epoch', () => {
-  const a = doc({ progress: [prog({ position: 5900, completed: true, at: 10 })] })
-  const b = doc({ progress: [prog({ position: 5800, at: 20 })] })
-  assert.equal(get(mergeDocs(b, a)).completed, true)
+test('a delete newer than the watching wins', () => {
+  const watched = doc({ progress: [prog({ position: 5000, at: 50 })] })
+  const deleted = doc({ progress: [prog({ del: true, at: 60 })] })
+  assert.equal(get(mergeDocs(watched, deleted)).del, true)
+  assert.equal(get(mergeDocs(deleted, watched)).del, true)
 })
 
+test('timestamps from a device with a fast clock are shifted before merging', () => {
+  // The phone's clock runs 5 minutes ahead: its 10:00 edit is really 9:55,
+  // so the PC's 9:58 edit is newer and must win.
+  const MIN = 60_000, base = 1_800_000_000_000
+  const pc = doc({ progress: [prog({ position: 100, at: base + 58 * MIN, watchedAt: base + 58 * MIN })] })
+  const phone = doc({ progress: [prog({ position: 999, at: base + 60 * MIN, watchedAt: base + 60 * MIN })] })
+  const now = base + 120 * MIN
+  assert.equal(get(merge(pc, phone, now)).position, 999) // unshifted: wrong winner
+  assert.equal(get(merge(pc, shiftDoc(phone, -5 * MIN), now)).position, 100)
+  assert.equal(shiftDoc(doc({ settings: { seekInterval: { v: 5, at: 1 } } }), 7).settings.seekInterval!.at, 1) // placeholders stay put
+})
+
+test('docs over 50 MB drop tombstones when that is enough, otherwise stay as they are', () => {
+  const big = 'x'.repeat(2000)
+  const fav = (i: number, del?: boolean) => ({ key: `movie:${i}`, item: { type: 'movie', tmdbId: String(i), title: big }, at: 5, ...(del ? { del } : {}) })
+  const tombs = Array.from({ length: 30_000 }, (_, i) => fav(i, true))
+  const d = doc({ favorites: [fav(-1), ...tombs] })
+  const slim = compactIfHuge(d)
+  assert.deepEqual(slim.favorites.map(f => f.key), ['movie:-1'])
+  const small = doc({ favorites: [fav(1)] })
+  assert.equal(compactIfHuge(small), small)
+  const hugeLive = doc({ favorites: Array.from({ length: 30_000 }, (_, i) => fav(i)) })
+  assert.equal(compactIfHuge(hugeLive), hugeLive)
+})
 test('merge is idempotent and commutative', () => {
   const a = doc({ favorites: [{ key: 'movie:1', item: { type: 'movie', tmdbId: '1', title: 'A' }, at: 5 }], searches: [{ key: 'x', q: 'x', at: 1 }] })
   const b = doc({ favorites: [{ key: 'movie:2', item: { type: 'movie', tmdbId: '2', title: 'B' }, at: 6 }, { key: 'movie:1', item: { type: 'movie', tmdbId: '1', title: 'A' }, at: 9, del: true }] })

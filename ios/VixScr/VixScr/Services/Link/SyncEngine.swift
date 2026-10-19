@@ -6,9 +6,10 @@ import Foundation
 /// The document is also this device's change log: each record carries the
 /// time it last changed (`at`, ms since 1970) and deletions stay behind as
 /// tombstones, so a merge is commutative, idempotent and safe to repeat after
-/// an interrupted transfer. Watch progress uses an `epoch`: an explicit
-/// restart, backward seek or mark-unwatched starts a new epoch, which always
-/// beats older progress; within an epoch the furthest position wins.
+/// an interrupted transfer. Every record, watch progress included, is
+/// "newest change wins"; the other device's timestamps are first shifted by
+/// the measured clock difference (`SyncDoc.shifted`). `epoch` is still carried
+/// for older builds but no longer decides merges.
 enum JSONValue: Codable, Equatable, Sendable {
     case string(String), number(Double), bool(Bool), null
 
@@ -103,6 +104,8 @@ struct SyncDoc: Codable, Equatable, Sendable {
             case ("credential", .string(let s)): return s.count <= 400
             case ("animeEnabled", .bool): return true
             case ("seekInterval", .number(let n)): return AppStore.seekIntervalOptions.contains(Int(n))
+            case ("cardSize", .string(let s)): return s == "compact" || s == "large"
+            case ("contentFilter", .string(let s)): return s == "all" || s == "movie" || s == "tv"
             default: return false
             }
         }
@@ -113,12 +116,44 @@ struct SyncDoc: Codable, Equatable, Sendable {
         guard let data = try? JSONEncoder().encode(self) else { return nil }
         return try? JSONSerialization.jsonObject(with: data)
     }
+
+    /// Converts another device's timestamps to this device's clock (`d` = ms to add).
+    /// Values below 1e11 are placeholders ("older than anything"), not times.
+    func shifted(by d: Double) -> SyncDoc {
+        guard d != 0, d.isFinite else { return self }
+        func t(_ x: Double) -> Double { x > 1e11 ? x + d : x }
+        var o = self
+        o.settings = settings.mapValues { var s = $0; s.at = t(s.at); return s }
+        o.servers = servers.map { var r = $0; r.at = t(r.at); return r }
+        o.animeServers = animeServers.map { var r = $0; r.at = t(r.at); return r }
+        o.favorites = favorites.map { var r = $0; r.at = t(r.at); return r }
+        o.recents = recents.map { var r = $0; r.at = t(r.at); return r }
+        o.progress = progress.map { var r = $0; r.at = t(r.at); r.watchedAt = t(r.watchedAt); r.epoch = t(r.epoch); return r }
+        o.searches = searches.map { var r = $0; r.at = t(r.at); return r }
+        o.animeSearches = animeSearches.map { var r = $0; r.at = t(r.at); return r }
+        return o
+    }
+
+    /// Over 50 MB: try dropping tombstones; if that isn't enough, leave it alone.
+    func compactedIfHuge() -> SyncDoc {
+        guard let size = try? JSONEncoder().encode(self).count, size > SyncMerge.maxDocBytes else { return self }
+        var s = self
+        s.servers = servers.filter { $0.del != true }
+        s.animeServers = animeServers.filter { $0.del != true }
+        s.favorites = favorites.filter { $0.del != true }
+        s.recents = recents.filter { $0.del != true }
+        s.progress = progress.filter { $0.del != true }
+        s.searches = searches.filter { $0.del != true }
+        s.animeSearches = animeSearches.filter { $0.del != true }
+        guard let slim = try? JSONEncoder().encode(s).count, slim <= SyncMerge.maxDocBytes else { return self }
+        return s
+    }
 }
 
 enum SyncMerge {
     static let tombstoneTTL: Double = 90 * 24 * 3600_000
     static let caps = (favorites: 100, recents: 24, progress: 100, searches: 12)
-    static let settingKeys = ["credential", "animeEnabled", "seekInterval"]
+    static let settingKeys = ["credential", "animeEnabled", "seekInterval", "cardSize", "contentFilter"]
 
     private static func lww<T>(_ a: T, _ b: T, at: (T) -> Double, del: (T) -> Bool, tie: (T) -> String) -> T {
         if at(a) != at(b) { return at(a) > at(b) ? a : b }
@@ -126,18 +161,12 @@ enum SyncMerge {
         return tie(a) >= tie(b) ? a : b
     }
 
+    /// Newest change wins (same as every other record).
     static func mergeProgress(_ a: SyncDoc.Progress, _ b: SyncDoc.Progress) -> SyncDoc.Progress {
-        if a.epoch != b.epoch { return a.epoch > b.epoch ? a : b }
-        let ad = a.del == true, bd = b.del == true
-        if ad != bd { return ad ? b : a }
-        if ad { return a.at >= b.at ? a : b }
-        var lead = a.position == b.position ? (a.at >= b.at ? a : b) : (a.position > b.position ? a : b)
-        lead.completed = a.completed || b.completed
-        lead.duration = max(a.duration, b.duration)
-        lead.watchedAt = max(a.watchedAt, b.watchedAt)
-        lead.at = max(a.at, b.at)
-        return lead
+        lww(a, b, at: \.at, del: { $0.del == true }, tie: { String(format: "%012d", Int(min(max($0.position, 0), 1e11).rounded())) })
     }
+
+    static let maxDocBytes = 50 * 1024 * 1024
 
     private static func mergeList<T>(_ a: [T], _ b: [T], key: (T) -> String, pick: (T, T) -> T) -> [T] {
         var order: [String] = []
@@ -320,11 +349,14 @@ final class SyncEngine {
         let now = Self.nowMs
         var doc = SyncDoc()
 
-        let values: [String: JSONValue] = [
+        var values: [String: JSONValue] = [
             "credential": .string(store.credential),
             "animeEnabled": .bool(store.animeEnabled),
-            "seekInterval": .number(Double(store.seekInterval))
+            "seekInterval": .number(Double(store.seekInterval)),
+            "cardSize": .string(store.cardSize.rawValue)
         ]
+        // The desktop has no "favorites" filter, so that choice stays on this iPhone.
+        if store.contentFilter != .favorites { values["contentFilter"] = .string(store.contentFilter.rawValue) }
         for (k, v) in values {
             if let old = p.settings[k], old.v == v { doc.settings[k] = old } else { doc.settings[k] = .init(v: v, at: first ? 1 : now) }
         }
@@ -419,6 +451,8 @@ final class SyncEngine {
         if case .string(let s)? = doc.settings["credential"]?.v { store.credential = s }
         if case .bool(let b)? = doc.settings["animeEnabled"]?.v { store.animeEnabled = b }
         if case .number(let n)? = doc.settings["seekInterval"]?.v, AppStore.seekIntervalOptions.contains(Int(n)) { store.seekInterval = Int(n) }
+        if case .string(let s)? = doc.settings["cardSize"]?.v, let size = AppStore.CardSize(rawValue: s), size != store.cardSize { store.cardSize = size }
+        if case .string(let s)? = doc.settings["contentFilter"]?.v, let f = AppStore.ContentFilter(rawValue: s), f != .favorites, f != store.contentFilter { store.contentFilter = f }
 
         func live(_ l: [SyncDoc.Server]) -> [SyncDoc.Server] {
             l.filter { $0.del != true }.sorted { $0.pos != $1.pos ? $0.pos < $1.pos : $0.id < $1.id }

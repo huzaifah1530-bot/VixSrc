@@ -46,6 +46,9 @@ final class DeviceLink {
     private(set) var browseError: String?
     private(set) var phase: Phase = .idle
     private(set) var connectedDeskId: String?
+    /// The computer's clock minus this iPhone's, in ms (measured by the computer on connect).
+    /// The computer's timestamps are shifted by this before merging.
+    private var clockDelta: Double = 0
     private(set) var remote: RemoteState?
     /// Set when the desktop says it's showing a QR code for us.
     private(set) var qrShownBy: String?
@@ -435,6 +438,12 @@ final class DeviceLink {
                 showToast(error == "stale" ? "That was for something that's no longer playing" : error)
             }
         case "pong": break
+        case "clock":
+            // The computer is measuring the difference between our clocks.
+            if let c = msg["c"] as? Double { send(["t": "clock-reply", "c": c, "s": Date().timeIntervalSince1970 * 1000]) }
+        case "clock-offset":
+            // The computer's clock minus ours, in ms.
+            if let d = msg["d"] as? Double, d.isFinite { clockDelta = d }
         case "sync-config":
             if let enabled = msg["enabled"] as? Bool, let id = connectedDeskId {
                 updatePair(id) { $0.syncEnabled = enabled }
@@ -444,7 +453,7 @@ final class DeviceLink {
             if msg["mode"] as? String == "replace" { sendDoc(mode: "replace", reply: false) }
         case "fresh-copy-offer":
             if let id = connectedDeskId {
-                offer = Offer(deskId: id, name: connectedDesktop?.name ?? "Computer", doc: SyncDoc.validated(msg["doc"]))
+                offer = Offer(deskId: id, name: connectedDesktop?.name ?? "Computer", doc: SyncDoc.validated(msg["doc"])?.shifted(by: -clockDelta))
             }
         case "fresh-copy-result":
             if msg["ok"] as? Bool == true, let id = connectedDeskId {
@@ -506,10 +515,12 @@ final class DeviceLink {
 
     private func receivedDoc(_ msg: [String: Any]) {
         guard let id = connectedDeskId, let sync else { return }
-        guard let doc = SyncDoc.validated(msg["doc"]) else {
+        guard let valid = SyncDoc.validated(msg["doc"]) else {
             showToast("Ignored invalid data from \(connectedDesktop?.name ?? "the computer")")
             return
         }
+        // Convert the computer's timestamps to this iPhone's clock.
+        let doc = valid.shifted(by: -clockDelta)
         if msg["mode"] as? String == "replace" {
             guard let until = pendingReplaceUntil, until > Date() else { return } // we never asked
             pendingReplaceUntil = nil
@@ -527,7 +538,7 @@ final class DeviceLink {
     }
 
     private func sendDoc(mode: String, reply: Bool) {
-        guard let doc = sync?.current.jsonObject else { return }
+        guard let doc = sync?.current.compactedIfHuge().jsonObject else { return }
         send(["t": "sync-doc", "mode": mode, "reply": reply, "doc": doc])
     }
 
@@ -719,7 +730,7 @@ final class DeviceLink {
 
     /// This iPhone → computer. The computer asks its user to confirm.
     func copyToDesktop(_ deskId: String) {
-        guard isConnected(to: deskId), let doc = sync?.current.jsonObject else { return }
+        guard isConnected(to: deskId), let doc = sync?.current.compactedIfHuge().jsonObject else { return }
         send(["t": "fresh-copy-offer", "doc": doc])
         showToast("Confirm on \(connectedDesktop?.name ?? "your computer")")
     }

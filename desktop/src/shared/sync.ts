@@ -4,15 +4,18 @@
 // deletions are kept as tombstones, so merging is commutative, idempotent and
 // safe to repeat after an interrupted transfer.
 //
-// Watch progress uses an `epoch` instead of plain last-writer-wins: an
-// explicit restart, backward seek or mark-unwatched starts a new epoch, and a
-// newer epoch always beats older progress. Within one epoch the furthest
-// position wins, so ordinary viewing on either device is never undone.
+// Every record, watch progress included, is simply "newest change wins": if
+// you delete a show on the PC at 1 pm and keep watching it on the phone at
+// 2 pm, the show stays. Timestamps from the other device are first shifted by
+// the measured clock difference between the two (see shiftDoc), so a device
+// whose clock is off can't win or lose merges unfairly. (`epoch` is still
+// carried in progress records for older builds but no longer decides merges.)
 
 export const SYNC_VERSION = 1
 export const TOMBSTONE_TTL_MS = 90 * 24 * 3600_000
 export const CAPS = { favorites: 100, recents: 24, progress: 100, searches: 12 } as const
-export const SYNCED_SETTINGS = ['credential', 'animeEnabled', 'seekInterval'] as const
+export const SYNCED_SETTINGS = ['credential', 'animeEnabled', 'seekInterval', 'cardSize', 'contentFilter'] as const
+export const MAX_DOC_BYTES = 50 * 1024 * 1024
 export type SyncedSetting = typeof SYNCED_SETTINGS[number]
 
 interface Rec { at: number; del?: boolean }
@@ -44,17 +47,7 @@ function lww<T extends Rec>(a: T, b: T, tie: (r: T) => string): T {
 }
 
 export function mergeProgress(a: ProgressRec, b: ProgressRec): ProgressRec {
-  if (a.epoch !== b.epoch) return a.epoch > b.epoch ? a : b
-  if (!!a.del !== !!b.del) return a.del ? b : a
-  if (a.del) return a.at >= b.at ? a : b
-  const lead = a.position === b.position ? (a.at >= b.at ? a : b) : a.position > b.position ? a : b
-  return {
-    ...lead,
-    completed: a.completed || b.completed,
-    duration: Math.max(a.duration, b.duration),
-    watchedAt: Math.max(a.watchedAt, b.watchedAt),
-    at: Math.max(a.at, b.at)
-  }
+  return lww(a, b, r => String(Math.round(r.position)).padStart(12, '0'))
 }
 
 function mergeList<T extends Rec>(a: T[], b: T[], key: (r: T) => string, pick: (x: T, y: T) => T): T[] {
@@ -168,10 +161,47 @@ export function validateDoc(raw: unknown): SyncDoc | null {
   sv('credential', v => s(v, 400))
   sv('animeEnabled', v => typeof v === 'boolean')
   sv('seekInterval', v => [5, 10, 15, 30].includes(v as number))
+  sv('cardSize', v => v === 'compact' || v === 'large')
+  sv('contentFilter', v => v === 'all' || v === 'movie' || v === 'tv')
   return out
 }
 
 /** Progress lists after merge are capped by most recent watch. */
 export function topProgress(list: ProgressRec[]) {
   return list.filter(p => !p.del).sort((a, b) => b.watchedAt - a.watchedAt).slice(0, CAPS.progress)
+}
+
+// ── Clock differences between devices ────────────────────────────────
+// Timestamps below this are placeholders ("older than anything"), not times.
+const shiftT = (t: number, d: number) => (t > 1e11 ? t + d : t)
+
+/** Converts another device's timestamps to this device's clock (`d` = ms to add). */
+export function shiftDoc(doc: SyncDoc, d: number): SyncDoc {
+  if (!d || !Number.isFinite(d)) return doc
+  const recs = <T extends Rec>(l: T[]): T[] => l.map(r => ({ ...r, at: shiftT(r.at, d) }))
+  const settings: SyncDoc['settings'] = {}
+  for (const k of SYNCED_SETTINGS) { const e = doc.settings[k]; if (e) settings[k] = { v: e.v, at: shiftT(e.at, d) } }
+  return {
+    ...doc,
+    settings,
+    servers: recs(doc.servers),
+    animeServers: recs(doc.animeServers),
+    favorites: recs(doc.favorites),
+    recents: recs(doc.recents),
+    progress: recs(doc.progress).map(p => ({ ...p, watchedAt: shiftT(p.watchedAt, d), epoch: shiftT(p.epoch, d) })),
+    searches: recs(doc.searches),
+    animeSearches: recs(doc.animeSearches)
+  }
+}
+
+/** Over 50 MB: try dropping tombstones; if that isn't enough, leave it alone. */
+export function compactIfHuge(doc: SyncDoc): SyncDoc {
+  if (JSON.stringify(doc).length <= MAX_DOC_BYTES) return doc
+  const live = <T extends Rec>(l: T[]) => l.filter(r => !r.del)
+  const slim: SyncDoc = {
+    ...doc,
+    servers: live(doc.servers), animeServers: live(doc.animeServers), favorites: live(doc.favorites), recents: live(doc.recents),
+    progress: live(doc.progress), searches: live(doc.searches), animeSearches: live(doc.animeSearches)
+  }
+  return JSON.stringify(slim).length <= MAX_DOC_BYTES ? slim : doc
 }

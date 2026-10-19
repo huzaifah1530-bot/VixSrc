@@ -18,7 +18,7 @@ import { ConnectDialog, OfferDialog } from './features/devices/DeviceDialogs'
 import { startLinkClient } from './stores/link'
 import { create } from 'zustand'
 import { joinParty } from './lib/party'
-import { FollowPrompt, JoinPartyDialog, PartyDock } from './features/party/PartyPanel'
+import { FollowPrompt, JoinPartyDialog, PartyDock, StartPartyDialog } from './features/party/PartyPanel'
 
 const useJoinDialog = create<{ open: boolean }>(() => ({ open: false }))
 
@@ -122,6 +122,7 @@ export function App() {
       </div>
       {playerOpen ? <Player /> : <PartyDock />}
       <FollowPrompt />
+      <StartPartyDialog />
       <ConnectDialog />
       <OfferDialog />
       {joinOpen && <JoinPartyDialog onClose={() => useJoinDialog.setState({ open: false })} />}

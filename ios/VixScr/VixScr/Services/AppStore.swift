@@ -109,6 +109,7 @@ final class AppStore {
             withMutation(keyPath: \.contentFilter) {
                 storedContentFilter = newValue
                 defaults.set(newValue.rawValue, forKey: Keys.contentFilter)
+                onSyncableChange?()
             }
         }
     }
@@ -186,6 +187,7 @@ final class AppStore {
             withMutation(keyPath: \.cardSize) {
                 storedCardSize = newValue
                 defaults.set(newValue.rawValue, forKey: Keys.cardSize)
+                onSyncableChange?()
             }
         }
     }
