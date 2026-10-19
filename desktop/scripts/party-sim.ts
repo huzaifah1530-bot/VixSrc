@@ -103,7 +103,38 @@ async function soloHost() {
   solo.stop()
 }
 
+/**
+ * States as the iPhone app wrote them: Swift leaves nil fields out instead of
+ * sending null, so a movie has no season / episode and "browsing" has no
+ * media at all. The desktop used to reject all of those, so a viewer never saw
+ * the first title and missed every "the host moved on" question.
+ */
+function iosShapedStates() {
+  const stub = { send() {}, isOpen: () => true, now: () => Date.now() }
+  const events: { key: string | null; initial: boolean }[] = []
+  const core = new PartyCore('viewer', 'Viewer', 'sim', stub, { onMedia: (m, _t, i) => events.push({ key: m?.key ?? null, initial: i.initial }) })
+  const cfg = { n: 1, host: 'host', mode: 'everyone', allowed: [], waitForAll: true }
+  const state = (n: number, media?: unknown) => ({ v: 1, cfg, tl: { n, by: 'host', ...(media === undefined ? {} : { media }), playing: true, pos: 5, at: Date.now(), hold: false } })
+  const movieNoSeason = { kind: 'tmdb', key: 'movie:557', item: { type: 'movie', tmdbId: '557', title: 'Spider-Man' }, server: 'VixSrc' }
+
+  // Joining: the room already has a movie whose season / episode are missing.
+  core.welcome([{ peer: 'host', joined: 1 }], state(1, movieNoSeason), 2)
+  assert.equal(core.state?.tl.media?.key, 'movie:557', 'first movie is adopted')
+  assert.deepEqual(events.at(-1), { key: 'movie:557', initial: true })
+
+  // The host moves to an episode, then back to browsing (media left out).
+  const ep1 = { kind: 'tmdb', key: 'tv:1:1:1', item: { type: 'tv', tmdbId: '1', title: 'Show' }, season: 1, episode: 1, server: 'VixSrc' }
+  core.receive('host', { k: 'state', s: state(2, ep1) })
+  assert.deepEqual(events.at(-1), { key: 'tv:1:1:1', initial: false }, 'the question is raised for an episode')
+  core.receive('host', { k: 'state', s: state(3) })
+  assert.deepEqual(events.at(-1), { key: null, initial: false }, 'browsing (no media field) is understood')
+  core.receive('host', { k: 'state', s: state(4, movieNoSeason) })
+  assert.deepEqual(events.at(-1), { key: 'movie:557', initial: false }, 'a movie from the iPhone is understood')
+  ok('states written by the iPhone app (missing season / episode / media) are accepted')
+}
+
 async function main() {
+  iosShapedStates()
   await soloHost()
   const invite = newInvite()
   const host = new Viewer('Host', invite)

@@ -257,10 +257,13 @@ struct PartyDock: View {
                 }
                 .foregroundStyle(.white)
                 .padding(.horizontal, 16).padding(.vertical, 10)
-                .vixGlass(.strong, cornerRadius: 22)
+                // Non-interactive glass: the interactive (.strong) kind swallowed
+                // the taps, so the dock could not be opened.
+                .vixGlass(.regular, cornerRadius: 22)
+                .contentShape(RoundedRectangle(cornerRadius: 22))
             }
             .buttonStyle(.plain)
-            .padding(.bottom, 64)
+            .padding(.bottom, 84)
             .transition(.move(edge: .bottom).combined(with: .opacity))
             .sheet(isPresented: $party.sheetOpen) { PartySheet() }
             .accessibilityLabel("Watch party, \(party.peers.count + 1) people")
@@ -364,10 +367,15 @@ struct PartyPasteBanner: View {
 /// "The host moved on — follow?" Shown to viewers once; following sticks.
 struct PartyPrompts: ViewModifier {
     @State private var party = PartySession.shared
+    /// The app-wide instance steps aside while a player screen is up: that
+    /// screen has its own, and an alert can only appear from the front-most
+    /// presentation (two at once made it fail to show).
+    var root = false
     func body(content: Content) -> some View {
         content.alert(
             party.prompt?.title != nil ? "The host started something new" : "The host went back to browsing",
-            isPresented: Binding(get: { party.prompt != nil }, set: { if !$0 && party.prompt != nil { party.answerFollow(false) } }),
+            // Both buttons answer; dismissing must never count as "leave".
+            isPresented: Binding(get: { party.prompt != nil && !(root && party.playerAttached) }, set: { _ in }),
             presenting: party.prompt
         ) { _ in
             Button("Follow Host") { party.answerFollow(true) }
@@ -379,7 +387,7 @@ struct PartyPrompts: ViewModifier {
 }
 
 extension View {
-    func partyPrompts() -> some View { modifier(PartyPrompts()) }
+    func partyPrompts(root: Bool = false) -> some View { modifier(PartyPrompts(root: root)) }
 }
 
 /// "Waiting for …" / reconnecting banner shown over the player.

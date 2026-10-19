@@ -50,6 +50,8 @@ final class PartySession {
     @ObservationIgnored private var core: PartyCore?
     @ObservationIgnored private var conn: PartyConnection?
     @ObservationIgnored private weak var host: PartyPlayerHost?
+    /// A player screen is up (it shows the follow question itself, being front-most).
+    var playerAttached: Bool { host != nil }
     /// App-wide pieces used when joining from a link with no player open.
     @ObservationIgnored weak var animeFallback: AnimeViewModel?
     @ObservationIgnored weak var router: TabRouter?
@@ -172,6 +174,7 @@ final class PartySession {
             if let s = media.season, let e = media.tmdbEpisode { title = (title ?? "") + " · S\(s)E\(e)" }
             if let e = media.animeEpisode { title = (title ?? "") + " · E\(e)" }
         }
+        sheetOpen = false   // the question is shown by an alert, which can't appear over the party sheet
         prompt = FollowPrompt(media: media, title: title ?? (media == nil ? nil : "something new"))
     }
 

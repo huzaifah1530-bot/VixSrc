@@ -1,9 +1,26 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { create } from 'zustand'
 import { Icon } from '@/components/Icon'
 import { answerFollow, party, startParty, leaveParty, joinParty, useParty } from '@/lib/party'
 import { toast } from '@/stores/ui'
 import { cx } from '@/lib/format'
+
+/**
+ * Where modal dialogs go. While the player is full screen only that element
+ * is drawn, so a dialog placed anywhere else (like "the host moved on —
+ * follow?") would be invisible and the viewer would just sit there.
+ */
+function useModalHost(): Element {
+  const [host, setHost] = useState<Element>(() => document.fullscreenElement ?? document.body)
+  useEffect(() => {
+    const update = () => setHost(document.fullscreenElement ?? document.body)
+    document.addEventListener('fullscreenchange', update)
+    update()
+    return () => document.removeEventListener('fullscreenchange', update)
+  }, [])
+  return host
+}
 
 /** Starting a party asks first (what it does, who can join), then creates the room. */
 export const useStartPartyDialog = create<{ open: boolean }>(() => ({ open: false }))
@@ -101,9 +118,10 @@ export function PartyPanel() {
 /** Explains Watch Together; the room is only created on Continue. */
 export function StartPartyDialog() {
   const open = useStartPartyDialog(s => s.open)
+  const host = useModalHost()
   if (!open) return null
   const close = () => useStartPartyDialog.setState({ open: false })
-  return (
+  return createPortal(
     <div className="sheet-backdrop" onMouseDown={close} onKeyDown={e => { if (e.key === 'Escape') close() }}>
       <div className="sheet glass-strong" role="dialog" aria-modal="true" aria-labelledby="start-party-title" aria-describedby="start-party-desc" onMouseDown={e => e.stopPropagation()}>
         <h2 id="start-party-title" className="sheet-title">Watch Together</h2>
@@ -116,7 +134,8 @@ export function StartPartyDialog() {
           <button className="btn btn-primary" autoFocus onClick={() => { close(); startParty() }}>Continue</button>
         </div>
       </div>
-    </div>
+    </div>,
+    host
   )
 }
 
@@ -159,8 +178,9 @@ export function PartyDock() {
 /** "The host moved on — follow?" Shown to viewers once; "follow" sticks. */
 export function FollowPrompt() {
   const prompt = useParty(s => s.prompt)
+  const host = useModalHost()
   if (!prompt) return null
-  return (
+  return createPortal(
     <div className="sheet-backdrop">
       <div className="sheet glass-strong" role="alertdialog" aria-modal="true" aria-labelledby="follow-title">
         <h2 id="follow-title" className="sheet-title">{prompt.title ? 'The host started something new' : 'The host went back to browsing'}</h2>
@@ -173,6 +193,7 @@ export function FollowPrompt() {
           <button className="btn btn-primary" onClick={() => answerFollow(true)}>Follow host</button>
         </div>
       </div>
-    </div>
+    </div>,
+    host
   )
 }

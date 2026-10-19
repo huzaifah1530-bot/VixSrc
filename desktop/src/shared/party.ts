@@ -141,9 +141,11 @@ const str = (v: unknown, max = 500) => typeof v === 'string' && v.length <= max
 const num = (v: unknown) => typeof v === 'number' && Number.isFinite(v)
 
 function validMedia(m: any): m is PartyMedia {
-  if (m === null) return true
+  // The iPhone app leaves empty fields out instead of sending null, so a
+  // missing media / season / episode must count as "none".
+  if (m == null) return true
   if (!m || typeof m !== 'object' || !str(m.key, 300) || !m.item || typeof m.item !== 'object' || !str(m.server, 120)) return false
-  if (m.kind === 'tmdb') return (m.season === null || Number.isInteger(m.season)) && (m.episode === null || Number.isInteger(m.episode))
+  if (m.kind === 'tmdb') return (m.season == null || Number.isInteger(m.season)) && (m.episode == null || Number.isInteger(m.episode))
   if (m.kind === 'anime') return str(m.slug, 200) && str(m.episode, 12) && str(m.title, 500)
   return false
 }
@@ -327,7 +329,10 @@ export class PartyCore {
   private parseState(raw: unknown): RoomState | null {
     const s = raw as RoomState | null
     if (!s || s.v !== PARTY_VERSION || !validTimeline(s.tl) || !validConfig(s.cfg)) return null
-    return { v: s.v, tl: { ...s.tl }, cfg: { ...s.cfg, allowed: [...s.cfg.allowed] } }
+    const tl = { ...s.tl }
+    if (tl.media == null) tl.media = null
+    else if (tl.media.kind === 'tmdb') tl.media = { ...tl.media, season: tl.media.season ?? null, episode: tl.media.episode ?? null }
+    return { v: s.v, tl, cfg: { ...s.cfg, allowed: [...s.cfg.allowed] } }
   }
 
   private adopt(s: RoomState, force: boolean) {

@@ -37,6 +37,23 @@ struct PartyMedia: Codable, Equatable {
     var title: String?
     var server: String
 
+    enum CodingKeys: String, CodingKey { case kind, key, item, season, episode, episodeTitle, slug, title, server }
+
+    // Swift would leave nil fields out; the desktop expects an explicit null
+    // for season / episode, so write them that way.
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(kind, forKey: .kind)
+        try c.encode(key, forKey: .key)
+        try c.encode(item, forKey: .item)
+        try c.encode(season, forKey: .season)
+        try c.encode(episode, forKey: .episode)
+        try c.encodeIfPresent(episodeTitle, forKey: .episodeTitle)
+        try c.encodeIfPresent(slug, forKey: .slug)
+        try c.encodeIfPresent(title, forKey: .title)
+        try c.encode(server, forKey: .server)
+    }
+
     var tmdbEpisode: Int? { if case .number(let n)? = episode { return Int(n) } else { return nil } }
     var animeEpisode: String? { if case .string(let s)? = episode { return s } else { return nil } }
 }
@@ -49,6 +66,20 @@ struct PartyTimeline: Codable, Equatable {
     var pos: Double
     var at: Double
     var hold: Bool
+
+    enum CodingKeys: String, CodingKey { case n, by, media, playing, pos, at, hold }
+
+    // "No media" must be sent as null, not left out (the desktop rejects a missing field).
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(n, forKey: .n)
+        try c.encode(by, forKey: .by)
+        try c.encode(media, forKey: .media)
+        try c.encode(playing, forKey: .playing)
+        try c.encode(pos, forKey: .pos)
+        try c.encode(at, forKey: .at)
+        try c.encode(hold, forKey: .hold)
+    }
 }
 
 struct PartyConfig: Codable, Equatable {
