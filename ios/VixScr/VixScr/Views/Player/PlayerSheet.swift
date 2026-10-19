@@ -27,7 +27,7 @@ struct PlayerSheet: View {
                             .foregroundStyle(.white)
                             .frame(width: 34, height: 34)
                     }
-                    .buttonStyle(CircleGlassButtonStyle(fidelity: fidelity))
+                    .buttonStyle(.plain)
                     .accessibilityLabel("Close")
                 }
             }

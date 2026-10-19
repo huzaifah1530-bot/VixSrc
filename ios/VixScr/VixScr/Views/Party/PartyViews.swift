@@ -26,7 +26,7 @@ struct PartyButton<Host: PartyPlayerHost>: View {
                 .foregroundStyle(party.active ? Color.blue : .white)
                 .frame(width: 34, height: 34)
         }
-        .buttonStyle(CircleGlassButtonStyle(fidelity: fidelity))
+        .buttonStyle(.plain)
         .accessibilityLabel(party.active ? "Watch party, \(party.peers.count + 1) watching" : "Watch Together")
         .sheet(isPresented: $party.sheetOpen) { PartySheet() }
         .sheet(isPresented: $confirming, onDismiss: {
@@ -282,11 +282,13 @@ struct PartyPasteBanner: View {
     @State private var party = PartySession.shared
     @State private var show = false
     @State private var lastChange = UserDefaults.standard.integer(forKey: "vela_party_paste_seen")
+    /// Settings › Watch Together can switch the banner off.
+    @AppStorage("vela_party_paste_banner") private var bannerEnabled = true
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         Group {
-            if show && !party.active {
+            if show && bannerEnabled && !party.active {
                 HStack(spacing: 10) {
                     Image(systemName: "person.2.fill")
                     Text("Got a watch party link?").font(.subheadline.weight(.semibold))
@@ -338,7 +340,7 @@ struct PartyPasteBanner: View {
 
     private func check() {
         let pb = UIPasteboard.general
-        guard pb.changeCount != lastChange, !party.active else { return }
+        guard bannerEnabled, pb.changeCount != lastChange, !party.active else { return }
         // Pattern detection doesn't read the clipboard, so no paste prompt.
         // The completion runs on a background queue. It must not be
         // main-actor isolated (that crashed the app at launch with a link

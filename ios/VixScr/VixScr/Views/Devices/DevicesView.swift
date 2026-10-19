@@ -387,7 +387,6 @@ struct PlaybackTargetMenu: View {
                 .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(link.routesPlayback ? Color.blue : .white)
                 .frame(width: 34, height: 34)
-                .vixGlass(.regular, cornerRadius: 17)
         }
         .accessibilityLabel(link.routesPlayback ? "Playing on \(link.playbackTarget?.name ?? "computer")" : "Playing on this iPhone")
         .sheet(isPresented: $showConnect) { ConnectFlowView() }

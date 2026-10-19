@@ -104,6 +104,8 @@ struct SettingsView: View {
         }
     }
 
+    @AppStorage("vela_party_paste_banner") private var pasteBannerEnabled = true
+
     private var partySection: some View {
         Section {
             if PartySession.shared.active {
@@ -114,10 +116,11 @@ struct SettingsView: View {
                 }
                 .labelStyle(.titleAndIcon)
             }
+            Toggle("Suggest Pasted Party Links", isOn: $pasteBannerEnabled)
         } header: {
             Text("Watch Together")
         } footer: {
-            Text("Copy a watch party invite link, then paste it here to join. Useful when tapping the link doesn't open Vela (for example inside LiveContainer).")
+            Text("Copy a watch party invite link, then paste it here to join. Useful when tapping the link doesn't open Vela (for example inside LiveContainer). The toggle controls the "Got a watch party link?" banner that appears when a link is on your clipboard.")
         }
     }
 

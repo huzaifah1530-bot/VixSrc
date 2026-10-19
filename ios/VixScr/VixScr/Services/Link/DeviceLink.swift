@@ -149,6 +149,12 @@ final class DeviceLink {
     }
 
     func setPlaybackTarget(_ deskId: String?) {
+        // Switching away from a computer that is playing: stop it there, so
+        // it does not keep playing while this iPhone takes over.
+        if let old = playbackTarget, old.deskId != deskId, isConnected(to: old.deskId),
+           remote?.open == true, remote?.playing == true {
+            command("pause")
+        }
         playbackTargetId = deskId
         UserDefaults.standard.set(deskId, forKey: Self.targetKey)
         updateLockScreen()
