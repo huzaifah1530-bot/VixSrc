@@ -345,6 +345,20 @@ struct DeviceLinkPrompts: ViewModifier {
                      ? "The data from \(offer.name) was invalid, so nothing can be copied."
                      : "\(offer.name) wants to copy its favourites, history, watch positions, servers and TMDB key to this iPhone.")
             }
+            .alert(
+                "Different Versions",
+                // Waits for the sync / replace prompts so two never stack.
+                isPresented: Binding(
+                    get: { link.versionMismatch != nil && link.syncPrompt == nil && link.offer == nil && confirmFromDesktop == nil },
+                    set: { if !$0 { link.versionMismatch = nil } }
+                ),
+                presenting: link.versionMismatch
+            ) { _ in
+                Button("OK", role: .cancel) { link.versionMismatch = nil }
+            } message: { mismatch in
+                let desk = mismatch.desktopVersion.isEmpty ? "an older version of Vela" : "Vela \(mismatch.desktopVersion)"
+                Text("\(mismatch.deskName) is running \(desk) and this iPhone is on Vela \(UpdateChecker.currentVersion). Some features may not work properly until both are on the same version.")
+            }
             .overlay(alignment: .top) {
                 if let toast = link.toastMessage {
                     ToastView(message: toast)

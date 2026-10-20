@@ -282,9 +282,10 @@ export class LinkServer {
     conn.deviceId = deviceId
     conn.name = name
     conn.cipher = new SessionCipher(d2p, p2d)
-    this.sendTo(conn, { t: 'welcome', firstPairing, syncEnabled: pair.syncEnabled, deskName: this.deskName })
+    this.sendTo(conn, { t: 'welcome', firstPairing, syncEnabled: pair.syncEnabled, deskName: this.deskName, appVersion: app.getVersion() })
     if (firstPairing) this.emit({ type: 'paired', deviceId, name })
-    this.emit({ type: 'connected', deviceId })
+    // Older phones don't send their app version; treat that as unknown.
+    this.emit({ type: 'connected', deviceId, name, appVersion: str(m.appVersion, 32) })
     this.pushStatus()
   }
 

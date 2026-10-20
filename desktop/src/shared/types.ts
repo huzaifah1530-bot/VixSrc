@@ -89,7 +89,10 @@ export interface UpdateCheckResult {
   updateAvailable?: boolean
   currentVersion?: string
   latestVersion?: string
-  exeName?: string
+  /** Setup .exe asset of the latest GitHub release. */
+  downloadUrl?: string
+  /** Release page, opened when the installer can't be run. */
+  releaseUrl?: string
   notes?: string
   error?: string
 }
@@ -131,7 +134,7 @@ export interface VelaApi {
   }
   updater: {
     check(): Promise<UpdateCheckResult>
-    apply(exeName: string): Promise<{ ok: boolean; error?: string }>
+    apply(downloadUrl: string | undefined, releaseUrl: string | undefined): Promise<{ ok: boolean; error?: string }>
   }
   saveFile(name: string, contents: string): Promise<boolean>
   openFile(): Promise<string | null>

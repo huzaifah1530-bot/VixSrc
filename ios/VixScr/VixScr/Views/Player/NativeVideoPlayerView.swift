@@ -75,7 +75,10 @@ private struct PlayerSurface: View {
     @State private var showControls = true
     @State private var hideTask: Task<Void, Never>?
     @State private var showCaptions = false
+    /// Content of the seek ripple. Kept after it hides so it can fade out
+    /// with its text intact instead of vanishing.
     @State private var seekFeedback: SeekFeedback?
+    @State private var seekVisible = false
     @State private var feedbackTask: Task<Void, Never>?
     @GestureState private var holdingSide: Side?
     @State private var boostSide: Side?
@@ -102,8 +105,6 @@ private struct PlayerSurface: View {
 
                 CaptionOverlay(playerManager: playerManager, bottomInset: showControls ? (isFullscreen ? 110 : 76) : 16)
                     .animation(spring, value: showControls)
-
-                gestureZones(width: geo.size.width)
 
                 seekFeedbackView(size: geo.size)
 
@@ -140,6 +141,15 @@ private struct PlayerSurface: View {
             }
             .frame(width: geo.size.width, height: geo.size.height)
             .clipped()
+        }
+        // Tap / double-tap / hold zones sit behind everything and extend
+        // into the safe areas, so the letterbox bars beside the notch or
+        // Dynamic Island respond exactly like the picture does.
+        .background {
+            GeometryReader { full in
+                gestureZones(width: full.size.width)
+            }
+            .ignoresSafeArea()
         }
         .animation(spring, value: showControls)
         .animation(spring, value: playerManager.isLoading)
@@ -204,7 +214,7 @@ private struct PlayerSurface: View {
         guard Date().timeIntervalSince(lastHoldEnded) > 0.3 else { return }
         let now = Date()
         // While a seek ripple is showing, every tap on that side keeps seeking.
-        if let feedback = seekFeedback, feedback.side == side {
+        if seekVisible, let feedback = seekFeedback, feedback.side == side {
             doubleTap(side)
             lastTap = nil
             return
@@ -226,20 +236,22 @@ private struct PlayerSurface: View {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
 
         // Consecutive double-taps on the same side add up, YouTube-style.
-        withAnimation(.spring(response: 0.36, dampingFraction: 0.75)) {
-            if var current = seekFeedback, current.side == side {
+        if seekVisible, var current = seekFeedback, current.side == side {
+            withAnimation(.spring(response: 0.36, dampingFraction: 0.75)) {
                 current.seconds += step
                 current.pulse += 1
                 seekFeedback = current
-            } else {
-                seekFeedback = SeekFeedback(side: side, seconds: step, pulse: 0)
             }
+        } else {
+            // Swap content without animation, then fade/scale it in.
+            seekFeedback = SeekFeedback(side: side, seconds: step, pulse: 0)
+            withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) { seekVisible = true }
         }
         feedbackTask?.cancel()
         feedbackTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 1_300_000_000)
+            try? await Task.sleep(nanoseconds: 1_100_000_000)
             guard !Task.isCancelled else { return }
-            withAnimation(.easeOut(duration: 0.3)) { seekFeedback = nil }
+            withAnimation(.easeOut(duration: 0.45)) { seekVisible = false }
         }
     }
 
@@ -266,12 +278,16 @@ private struct PlayerSurface: View {
                 }
                 .foregroundStyle(.white)
                 .shadow(color: .black.opacity(0.4), radius: 6)
+                .scaleEffect(seekVisible ? 1 : 0.85)
                 .offset(x: isLeft ? -size.width * 0.32 : size.width * 0.32)
             }
             .frame(width: size.width, height: size.height)
             .clipped()
+            // Always in the tree; opacity drives in and out so the fade-out
+            // can't be skipped by a view removal.
+            .opacity(seekVisible ? 1 : 0)
             .allowsHitTesting(false)
-            .transition(.opacity.combined(with: .scale(scale: 0.92)))
+            .accessibilityHidden(!seekVisible)
         }
     }
 

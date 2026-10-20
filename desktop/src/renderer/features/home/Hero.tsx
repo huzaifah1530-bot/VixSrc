@@ -37,7 +37,7 @@ export function Hero({ items }: { items: MediaItem[] }) {
         <img key={it.type + it.tmdbId} className={cx('hero-bg', i === index % items.length && 'is-active')} src={Math.abs(i - index) <= 1 ? imageUrl(it.backdropPath, 'w1280') : undefined} alt="" />
       ))}
       <div className="hero-scrim" />
-      <div className="hero-content">
+      <div className="hero-content" key={item.type + item.tmdbId}>
         <span className="eyebrow">{item.type === 'movie' ? 'Movie' : 'Series'}{item.year ? ` · ${item.year}` : ''}{item.rating ? ` · ★ ${item.rating.toFixed(1)}` : ''}</span>
         <h2 className="hero-title">{item.title}</h2>
         <p className="hero-desc clamp-3">{item.description}</p>

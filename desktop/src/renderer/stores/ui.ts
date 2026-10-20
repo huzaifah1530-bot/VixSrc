@@ -41,17 +41,17 @@ export const useSearch = create<SearchState>(set => ({
   focus: () => set(s => ({ focusToken: s.focusToken + 1 }))
 }))
 
-interface ToastState { message: string | null; show: (m: string) => void }
+interface ToastState { message: string | null; show: (m: string, ms?: number) => void }
 let toastTimer: ReturnType<typeof setTimeout> | undefined
 export const useToast = create<ToastState>(set => ({
   message: null,
-  show: message => {
+  show: (message, ms = 2200) => {
     clearTimeout(toastTimer)
     set({ message })
-    toastTimer = setTimeout(() => set({ message: null }), 2200)
+    toastTimer = setTimeout(() => set({ message: null }), ms)
   }
 }))
-export const toast = (m: string) => useToast.getState().show(m)
+export const toast = (m: string, ms?: number) => useToast.getState().show(m, ms)
 
 /** Bumped by Ctrl+R / the refresh button. */
 export const useRefresh = create<{ token: number; bump: () => void }>(set => ({ token: 0, bump: () => set(s => ({ token: s.token + 1 })) }))

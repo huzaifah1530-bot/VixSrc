@@ -27,7 +27,7 @@ const api: VelaApi = {
   },
   updater: {
     check: () => ipcRenderer.invoke('update:check'),
-    apply: exe => ipcRenderer.invoke('update:apply', exe)
+    apply: (url, page) => ipcRenderer.invoke('update:apply', url, page)
   },
   saveFile: (name, contents) => ipcRenderer.invoke('save-file', name, contents),
   openFile: () => ipcRenderer.invoke('open-file'),

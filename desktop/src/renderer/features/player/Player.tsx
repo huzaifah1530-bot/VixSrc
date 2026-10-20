@@ -45,7 +45,17 @@ export function Player() {
   const [fullscreen, setFullscreen] = useState(false)
   const [fast, setFast] = useState(false)
   const [fastBadge, setFastBadge] = useState(false)
-  const [skipFx, setSkipFx] = useState<{ dir: -1 | 1; amount: number; key: number } | null>(null)
+  const [skipFx, setSkipFx] = useState<{ dir: -1 | 1; amount: number; key: number; leaving?: boolean } | null>(null)
+  // Hold the skip indicator briefly after the last press, then fade it out.
+  useEffect(() => {
+    if (!skipFx) return
+    const key = skipFx.key
+    // Leaving: transitionend removes it; this is the fallback if it never fires.
+    const t = skipFx.leaving
+      ? setTimeout(() => setSkipFx(f => (f && f.key === key ? null : f)), 600)
+      : setTimeout(() => setSkipFx(f => (f && f.key === key ? { ...f, leaving: true } : f)), 750)
+    return () => clearTimeout(t)
+  }, [skipFx])
   const [spin, setSpin] = useState<{ back: number; fwd: number }>({ back: 0, fwd: 0 })
   const [caption, setCaption] = useState<Caption>({ kind: 'off' })
   const [cues, setCues] = useState<Cue[]>([])
@@ -276,8 +286,19 @@ export function Player() {
   }
   const onClick = (e: React.MouseEvent) => {
     if (held.current) return
-    if (e.detail === 2) { clearTimeout(clickTimer.current); toggleFullscreen(); return }
-    clickTimer.current = setTimeout(toggle, 200)
+    // The surface covers the letterbox bars too, so edges work anywhere.
+    const r = e.currentTarget.getBoundingClientRect()
+    const x = (e.clientX - r.left) / r.width
+    const edge: -1 | 0 | 1 = x < 0.3 ? -1 : x > 0.7 ? 1 : 0
+    if (e.detail >= 2) {
+      clearTimeout(clickTimer.current)
+      // Double-click the left/right edge to skip (keep clicking to add more),
+      // the middle to toggle fullscreen.
+      if (edge) skip(edge)
+      else if (e.detail === 2) toggleFullscreen()
+      return
+    }
+    clickTimer.current = setTimeout(toggle, 220)
   }
 
   // ── Timeline ────────────────────────────────────────────────────────
@@ -377,7 +398,17 @@ export function Player() {
       {partyWaiting.length > 0 && <div className="party-banner glass-strong" role="status">Waiting for {partyWaiting.slice(0, 3).join(', ')}{partyWaiting.length > 3 ? ` +${partyWaiting.length - 3}` : ''}…</div>}
       {partyStatus === 'reconnecting' && <div className="party-banner glass-strong" role="status">Reconnecting to the party…</div>}
       {fastBadge && <div className="fast-badge glass-strong">2× <Icon name="next" size={12} fill /></div>}
-      {skipFx && <div key={skipFx.key} className={cx('skip-fx', skipFx.dir < 0 ? 'is-left' : 'is-right')}>{skipFx.dir < 0 ? '−' : '+'}{skipFx.amount}s</div>}
+      {skipFx && (
+        <div key={skipFx.dir} className={cx('skip-fx', skipFx.dir < 0 ? 'is-left' : 'is-right', skipFx.leaving && 'is-leaving')} aria-hidden="true"
+          onTransitionEnd={e => { if (e.target === e.currentTarget && skipFx.leaving) setSkipFx(null) }}>
+          {/* Re-keyed per press so the ripple and icon pulse restart; the container only fades once. */}
+          <div key={skipFx.key} className="skip-fx-ripple" />
+          <div key={'l' + skipFx.key} className="skip-fx-label">
+            <Icon name={skipFx.dir < 0 ? 'chevronLeft' : 'chevronRight'} size={22} stroke={2.6} />
+            {skipFx.amount} seconds
+          </div>
+        </div>
+      )}
 
       {/* Top bar */}
       <div className="player-top">

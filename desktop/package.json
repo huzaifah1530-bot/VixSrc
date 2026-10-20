@@ -1,7 +1,7 @@
 {
   "name": "vela",
   "productName": "Vela",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "description": "Vela desktop",
   "main": "out/main/index.js",
   "private": true,

@@ -57,6 +57,18 @@ final class DeviceLink {
     var syncPrompt: PairedDesktop?
     /// The desktop wants to replace this iPhone's data.
     var offer: Offer?
+    /// Set when the connected computer runs a different Vela version.
+    var versionMismatch: VersionMismatch?
+    /// Desktops already warned about this launch, keyed by deskId + version.
+    @ObservationIgnored private var warnedVersions = Set<String>()
+
+    struct VersionMismatch: Identifiable {
+        var id: String { deskId + desktopVersion }
+        let deskId: String
+        let deskName: String
+        /// Empty when the computer is too old to report its version.
+        let desktopVersion: String
+    }
     private(set) var playbackTargetId: String?
 
     // MARK: Internals
@@ -227,6 +239,18 @@ final class DeviceLink {
             return Discovered(deskId: deskId, name: display, endpoint: result.endpoint)
         }
         .sorted { $0.name < $1.name }
+        reconnectIfTargetAppeared()
+    }
+
+    /// The computer was opened after this iPhone: its Bonjour advert shows up
+    /// here, so connect straight away instead of waiting for the retry timer.
+    private func reconnectIfTargetAppeared() {
+        guard UIApplication.shared.applicationState == .active, !isConnected else { return }
+        if case .connecting = phase { return }
+        let id = playbackTargetId ?? UserDefaults.standard.string(forKey: Self.lastDeskKey)
+        guard let id, discovered.contains(where: { $0.deskId == id }),
+              paired.contains(where: { $0.deskId == id && $0.autoReconnect }) else { return }
+        connect(id, auto: true)
     }
 
     // MARK: - Connecting
@@ -347,7 +371,8 @@ final class DeviceLink {
             var hello: [String: Any] = [
                 "t": "hello", "v": 1, "deviceId": identity.deviceId, "name": UIDevice.current.name,
                 "pub": pub.base64EncodedString(), "eph": eph.publicKey.rawRepresentation.base64EncodedString(),
-                "nonce": helloNonce.base64EncodedString(), "auto": auto, "deskId": desk.deskId
+                "nonce": helloNonce.base64EncodedString(), "auto": auto, "deskId": desk.deskId,
+                "appVersion": UpdateChecker.currentVersion
             ]
             if let code {
                 hello["proof"] = LinkCrypto.pairingProof(code: code, phonePub: pub, phoneEph: eph.publicKey.rawRepresentation, phoneNonce: helloNonce).base64EncodedString()
@@ -505,6 +530,18 @@ final class DeviceLink {
         remote = nil
         startKeepAlive()
         send(["t": "state-request"])
+        let deskVersion = (msg["appVersion"] as? String) ?? ""
+        if UpdateChecker.compare(deskVersion, UpdateChecker.currentVersion) != 0 || deskVersion.isEmpty {
+            // Reconnects happen often; warn once per computer and version per launch.
+            if warnedVersions.insert(desk.deskId + deskVersion).inserted {
+                let mismatch = VersionMismatch(deskId: desk.deskId, deskName: desk.name, desktopVersion: deskVersion)
+                Task { @MainActor [weak self] in
+                    // After the sync prompt / connect sheet has had a chance to settle.
+                    try? await Task.sleep(nanoseconds: first ? 1_600_000_000 : 300_000_000)
+                    self?.versionMismatch = mismatch
+                }
+            }
+        }
         if first {
             showToast("Paired with \(desk.name)")
             // Let the connect sheet finish dismissing before asking.
@@ -671,7 +708,9 @@ final class DeviceLink {
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
                 guard let self else { return }
                 let playing = self.remote?.open == true && self.remote?.playing == true
-                guard Date().timeIntervalSince(last) >= (playing ? 10 : 60) else { continue }
+                // Disconnected: retry often, in case Bonjour misses the computer coming up.
+                let interval: TimeInterval = !self.isConnected ? 8 : (playing ? 10 : 60)
+                guard Date().timeIntervalSince(last) >= interval else { continue }
                 last = Date()
                 self.periodicRefresh()
             }

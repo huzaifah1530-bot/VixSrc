@@ -7,6 +7,13 @@ import { localDoc, mergeRemote, onLocalChange, replaceFromRemote } from '@/lib/s
 import { publish, runCommandOnce, setConnectedCount } from '@/lib/remote'
 import { toast } from './ui'
 
+/** "v1.8.0" and "1.8" both become "1.8.0" so cosmetic differences don't warn. */
+const normVersion = (v: string) => {
+  const p = v.trim().replace(/^v/i, '').split(/[-+]/)[0].split('.').map(n => parseInt(n, 10) || 0)
+  while (p.length < 3) p.push(0)
+  return p.join('.')
+}
+
 interface Offer { deviceId: string; name: string; doc: ReturnType<typeof validateDoc> }
 
 interface LinkState {
@@ -16,6 +23,9 @@ interface LinkState {
   offer: Offer | null
   refresh: () => Promise<void>
   openConnect: (from?: string | null) => Promise<void>
+  /** True while the dialog shows the pairing QR rather than the paired list. */
+  showQr: boolean
+  pairAnother: () => Promise<void>
   closeConnect: () => void
   resolveOffer: (accept: boolean) => void
 }
@@ -26,11 +36,20 @@ export const useLink = create<LinkState>((set, get) => ({
   pairRequestFrom: null,
   offer: null,
   refresh: async () => set({ status: await window.vela.link.status() }),
+  showQr: false,
   openConnect: async from => {
-    set({ dialogOpen: true, pairRequestFrom: from ?? null })
+    // Already paired: show those devices first; a code is one click away.
+    // A phone asking to pair (from) or no pairs yet goes straight to the QR.
+    const status = await window.vela.link.status()
+    const wantQr = !!from || !status?.devices.length
+    set({ dialogOpen: true, pairRequestFrom: from ?? null, status, showQr: wantQr })
+    if (wantQr) set({ status: await window.vela.link.startPairing() })
+  },
+  pairAnother: async () => {
+    set({ showQr: true })
     set({ status: await window.vela.link.startPairing() })
   },
-  closeConnect: () => { window.vela.link.cancelPairing(); set({ dialogOpen: false, pairRequestFrom: null }) },
+  closeConnect: () => { window.vela.link.cancelPairing(); set({ dialogOpen: false, pairRequestFrom: null, showQr: false }) },
   resolveOffer: accept => {
     const offer = get().offer
     set({ offer: null })
@@ -164,12 +183,15 @@ export function startLinkClient() {
         const live = e.status.devices.filter(d => d.connected).length
         if (live !== lastLive) { lastLive = live; setConnectedCount(live) }
         // Pairing started from the Settings window shows the code here.
-        if (e.status.pairing && !useLink.getState().dialogOpen) useLink.setState({ dialogOpen: true })
+        if (e.status.pairing && (!useLink.getState().dialogOpen || !useLink.getState().showQr)) useLink.setState({ dialogOpen: true, showQr: true })
         break
       }
       case 'pair-request': useLink.getState().openConnect(e.name); break
       case 'paired': useLink.setState({ dialogOpen: false, pairRequestFrom: null }); toast(`Paired with ${e.name}`); break
       case 'connected':
+        if (e.appVersion !== undefined && normVersion(e.appVersion ?? '') !== normVersion(window.vela.version)) {
+          toast(`${e.name ?? 'Your iPhone'} is on ${e.appVersion ? 'Vela ' + e.appVersion : 'an older version of Vela'} and this PC is on ${window.vela.version}. Some features may not work properly.`, 6000)
+        }
         publish(e.deviceId)
         {
           const id = e.deviceId

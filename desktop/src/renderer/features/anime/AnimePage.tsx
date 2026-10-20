@@ -135,7 +135,7 @@ function AnimeHero({ items }: { items: MediaItem[] }) {
       <div className="hero-scrim" />
       <div className="anime-hero-body">
         <img key={hero.tmdbId + 'p'} className="anime-hero-poster" src={hero.posterPath ?? ''} alt="" />
-        <div className="hero-content">
+        <div className="hero-content" key={hero.tmdbId}>
           <span className="eyebrow">{hero.year}</span>
           <h2 className="hero-title">{hero.title}</h2>
           <p className="hero-desc clamp-3">{hero.description}</p>

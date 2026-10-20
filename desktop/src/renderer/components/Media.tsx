@@ -82,13 +82,16 @@ export function PosterCard({ item, onOpen, onPlay, showProgress }: { item: Media
   const progress = useLibrary(s => (showProgress ? progressFraction(progressFor(s.watchProgress, item)) : 0))
   const toggleFavorite = useLibrary(s => s.toggleFavorite)
   const removeFromHistory = useLibrary(s => s.removeFromHistory)
-  const inHistory = useLibrary(s => s.recents.some(r => r.tmdbId === item.tmdbId && r.type === item.type))
   const compact = useSettings(s => s.cardSize === 'compact')
   const [loaded, setLoaded] = useState(false)
   const [preview, setPreview] = useState<DOMRect | null>(null)
   const hoverTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
   useEffect(() => () => clearTimeout(hoverTimer.current), [])
-  const src = imageUrl(item.posterPath, 'w500')
+  // Posters render at 128-168px; w342 covers that at 2x, w500 only for hi-DPI large cards.
+  const src = imageUrl(item.posterPath, 'w342')
+  const srcSet = item.posterPath && !item.posterPath.startsWith('http')
+    ? `${imageUrl(item.posterPath, 'w185')} 185w, ${imageUrl(item.posterPath, 'w342')} 342w, ${imageUrl(item.posterPath, 'w500')} 500w`
+    : undefined
   const meta = isAnimeCatalog(item) ? item.year : [item.type === 'movie' ? 'Movie' : 'TV', item.year].filter(Boolean).join(' · ')
   const resume = showProgress && item.resumeEpisode != null && item.type === 'tv' ? (isAnimeCatalog(item) ? `Episode ${item.resumeEpisode}` : `S${item.resumeSeason} · E${item.resumeEpisode}`) : null
 
@@ -104,17 +107,21 @@ export function PosterCard({ item, onOpen, onPlay, showProgress }: { item: Media
       onMouseLeave={() => clearTimeout(hoverTimer.current)}
       onMouseDown={() => clearTimeout(hoverTimer.current)}
       onClick={() => onOpen(item)}
-      onContextMenu={e => showContextMenu(e, [
+      onContextMenu={e => {
+        // Read on demand instead of subscribing every card to the history list.
+        const inHistory = useLibrary.getState().recents.some(r => r.tmdbId === item.tmdbId && r.type === item.type)
+        showContextMenu(e, [
         ...(onPlay ? [{ label: 'Play', onSelect: () => onPlay(item) }] : []),
         { label: 'Open', onSelect: () => onOpen(item) },
         { label: favorite ? 'Remove from Favourites' : 'Add to Favourites', separator: true, onSelect: () => toast(toggleFavorite(item) ? 'Added to favourites' : 'Removed from favourites') },
         ...(inHistory ? [{ label: 'Remove from Continue Watching', danger: true, onSelect: () => removeFromHistory(item) }] : []),
         ...(!isAnimeCatalog(item) ? [{ label: 'View on TMDB', separator: true, onSelect: () => window.vela.openExternal(`https://www.themoviedb.org/${item.type}/${item.tmdbId}`) }] : [])
-      ])}
+        ])
+      }}
       aria-label={`${item.title}${meta ? ', ' + meta : ''}`}
     >
       <div className="poster-art">
-        {src ? <img src={src} alt="" loading="lazy" decoding="async" className={cx(loaded && 'is-loaded')} onLoad={() => setLoaded(true)} /> : <div className="poster-fallback">{item.title}</div>}
+        {src ? <img src={src} srcSet={srcSet} sizes={compact ? '128px' : '168px'} alt="" loading="lazy" decoding="async" draggable={false} className={cx(loaded && 'is-loaded')} onLoad={() => setLoaded(true)} /> : <div className="poster-fallback">{item.title}</div>}
         {favorite && <span className="poster-badge" aria-label="Favourite"><Icon name="heart" size={12} fill /></span>}
         {item.rating ? <span className="poster-rating"><Icon name="star" size={10} fill />{item.rating.toFixed(1)}</span> : null}
         {progress > 0 && <div className="progress"><div style={{ width: `${progress * 100}%` }} /></div>}

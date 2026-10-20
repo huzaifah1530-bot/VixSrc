@@ -189,8 +189,9 @@ function registerIpc() {
   })
 
   ipcMain.handle('update:check', async () => { try { return await checkForUpdate() } catch (err) { return { error: (err as Error).message } } })
-  ipcMain.handle('update:apply', async (_e, exe: string) => {
-    try { await applyUpdate(exe, f => mainWindow?.webContents.send('update-download-progress', f)); return { ok: true } }
+  ipcMain.handle('update:apply', async (_e, url: unknown, page: unknown) => {
+    const s = (v: unknown) => (typeof v === 'string' && v.length < 500 ? v : undefined)
+    try { await applyUpdate(s(url), s(page), f => mainWindow?.webContents.send('update-download-progress', f)); return { ok: true } }
     catch (err) { return { ok: false, error: (err as Error).message } }
   })
 

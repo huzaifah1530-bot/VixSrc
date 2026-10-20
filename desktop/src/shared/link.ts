@@ -78,5 +78,5 @@ export type LinkEvent =
   | { type: 'message'; deviceId: string; msg: Record<string, unknown> }
   | { type: 'pair-request'; name: string }
   | { type: 'paired'; deviceId: string; name: string }
-  | { type: 'connected'; deviceId: string }
+  | { type: 'connected'; deviceId: string; name?: string; appVersion?: string | null }
   | { type: 'action'; action: 'sync-now' | 'fresh-copy-to' | 'fresh-copy-from'; deviceId: string }

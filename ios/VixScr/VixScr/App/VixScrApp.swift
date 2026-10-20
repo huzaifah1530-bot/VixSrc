@@ -197,6 +197,7 @@ struct RootView: View {
                 }
             }
             .deviceLinkPrompts()
+            .updatePrompt()
             .partyPrompts(root: true)
             .overlay(alignment: .bottom) { PartyDock() }
             .overlay(alignment: .top) { PartyPasteBanner() }

@@ -1,0 +1,101 @@
+/* Motion and rendering performance. Loaded last so it can refine the
+   component styles. Animations follow the iOS app: short springs for
+   presses, soft fade + rise for content arriving. Everything animates only
+   transform / opacity so it stays on the compositor on low-end GPUs. */
+
+/* ── Page transitions ───────────────────────────────────────────────
+   .content is re-keyed on every navigation, so this plays per page. */
+.content > * { animation: page-in .34s var(--ease) backwards; }
+@keyframes page-in { from { opacity: 0; transform: translateY(10px); } }
+
+/* Rows rise in one after another, like the iOS home feed. */
+.row { animation: row-in .5s var(--ease) backwards; }
+.row:nth-of-type(2) { animation-delay: .04s; }
+.row:nth-of-type(3) { animation-delay: .08s; }
+.row:nth-of-type(4) { animation-delay: .12s; }
+.row:nth-of-type(n+5) { animation-delay: .16s; }
+@keyframes row-in { from { opacity: 0; transform: translateY(14px); } }
+
+/* Hero text re-enters with each slide. */
+.hero-content { animation: hero-in .6s var(--ease) backwards; }
+@keyframes hero-in { from { opacity: 0; transform: translateY(12px); } }
+
+/* ── Poster cards ───────────────────────────────────────────────────
+   The hover shadow lives on a pseudo-element and only its opacity animates;
+   animating box-shadow repaints the card every frame. */
+.poster-art { transition: transform .32s var(--spring), border-color .25s; contain: layout paint; }
+.poster:hover .poster-art, .poster:focus-visible .poster-art { box-shadow: none; }
+.poster { position: relative; }
+.poster::before {
+  content: ''; position: absolute; left: 0; right: 0; top: 0; aspect-ratio: 2/3; border-radius: var(--r-md);
+  box-shadow: 0 14px 32px rgba(0,0,0,.55), 0 0 30px rgba(255,255,255,.08);
+  opacity: 0; transform: translateY(-3px) scale(1.02); transition: opacity .25s ease; pointer-events: none;
+}
+.poster:hover::before, .poster:focus-visible::before { opacity: 1; }
+.poster:active .poster-art { transform: scale(.97); transition-duration: .12s; }
+.poster-art img { transform: scale(1.04); transition: opacity .4s ease, transform .6s var(--ease); }
+.poster-art img.is-loaded { transform: none; }
+.poster-title, .poster-meta { transition: color .2s; }
+.poster:hover .poster-title { color: #fff; }
+
+/* Small badges sit on every card; a blur behind each is expensive while
+   scrolling, and at this size a solid tint looks the same. */
+.poster-badge, .poster-rating { backdrop-filter: none; background: rgba(0,0,0,.62); }
+
+/* ── Scrolling ───────────────────────────────────────────────────────
+   Off-screen rows and grid cards skip layout and paint entirely. */
+.row { content-visibility: auto; contain-intrinsic-size: auto 320px; }
+.grid > .poster { content-visibility: auto; contain-intrinsic-size: auto 280px; }
+.content, .row-scroller, .episode-list, .prefs-body { overscroll-behavior: contain; }
+.content { will-change: scroll-position; }
+.row-scroller { scroll-behavior: smooth; }
+
+/* While scrolling: no hover restyles, no preview pop-ups. */
+body.is-scrolling .poster, body.is-scrolling .cast, body.is-scrolling .episode { pointer-events: none; }
+
+/* ── Buttons and controls ───────────────────────────────────────────── */
+.sidebar-item, .menu-item, .tb-btn, .seg, .prefs-tab, .episode, .pill-btn { transition: background-color .15s, color .15s, transform .15s var(--spring); }
+.sidebar-item:active, .tb-btn:active:not(:disabled), .seg:active, .prefs-tab:active, .pill-btn:active { transform: scale(.96); }
+.sidebar-item svg { transition: transform .25s var(--spring); }
+.sidebar-item.is-active svg { transform: scale(1.08); }
+.episode:active { transform: scale(.99); }
+.cast-photo { transition: transform .25s var(--spring), border-color .2s; }
+.row-nav { transition: opacity .2s, transform .25s var(--ease); transform: translateX(6px); }
+.row:hover .row-nav { transform: none; }
+.dot { transition: width .35s var(--spring), background .3s; }
+.toast { transition: opacity .2s, transform .35s var(--spring); }
+.switch { transition: background .2s; }
+.switch:active span { width: 22px; }
+.switch.is-on:active span { transform: translateX(12px); }
+
+/* Sheets slide up slightly as well as scaling, like iOS alerts. */
+.sheet { animation: sheet-in .32s var(--spring); }
+@keyframes sheet-in { from { opacity: 0; transform: translateY(12px) scale(.94); } }
+.update-notes { max-height: 120px; overflow-y: auto; white-space: pre-wrap; margin: 0 0 4px; }
+
+/* Menus open from their anchor. */
+.popover { transform-origin: top right; }
+.popover.is-left { transform-origin: top left; }
+.menu { animation: menu-in .18s var(--spring); }
+@keyframes menu-in { from { opacity: 0; transform: scale(.94) translateY(-4px); } }
+
+/* Player controls: transport buttons pop on press. */
+.round-btn:active { transform: scale(.86); }
+.player-transport .round-btn { transition: transform .2s var(--spring), background .15s, opacity .2s; }
+
+/* ── Low-end modes ────────────────────────────────────────────────────
+   Performance keeps motion but drops the costly layers; Ultra also drops
+   decorative entrance animation and hover lift. */
+body.perf .poster::before, body.ultra .poster::before { display: none; }
+body.perf .btn, body.perf .pill-btn, body.perf .round-btn,
+body.ultra .btn, body.ultra .pill-btn, body.ultra .round-btn { backdrop-filter: none; }
+body.perf .hero-bg { transition: opacity .6s ease; transform: none; }
+body.ultra .content > *, body.ultra .row, body.ultra .hero-content { animation: none; }
+body.ultra .poster:hover .poster-art { transform: none; }
+body.ultra .poster-art img { transform: none; transition: opacity .2s; }
+body.ultra .hero-bg { transition: opacity .3s; transform: none; }
+body.ultra .anime-hero-blur, body.ultra .details-backdrop.blurred { filter: brightness(.45); }
+
+/* Connect dialog: paired iPhones list */
+.device-list { max-height: 260px; overflow-y: auto; margin-top: 4px; }
+.sheet-actions .grow { flex: 1; }

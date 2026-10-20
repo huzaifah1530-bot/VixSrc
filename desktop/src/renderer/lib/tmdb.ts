@@ -52,7 +52,7 @@ export function normalize(raw: RawTmdbItem, forced?: MediaType): MediaItem | nul
   }
 }
 
-export function imageUrl(path: string | null | undefined, size: 'w300' | 'w500' | 'w780' | 'w1280' | 'original' = 'w500') {
+export function imageUrl(path: string | null | undefined, size: 'w185' | 'w300' | 'w342' | 'w500' | 'w780' | 'w1280' | 'original' = 'w500') {
   if (!path) return ''
   if (path.startsWith('http')) return path
   return `https://image.tmdb.org/t/p/${size}${path}`

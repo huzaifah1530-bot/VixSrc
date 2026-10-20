@@ -112,8 +112,8 @@ function General() {
       <Group title="Updates">
         <Field label={`Vela ${window.vela.version}`} hint={update?.error ?? (update ? (update.updateAvailable ? `Version ${update.latestVersion} is available.${update.notes ? ' ' + update.notes : ''}` : 'You’re up to date.') : undefined)}>
           {update?.updateAvailable
-            ? <button className="btn btn-primary small" disabled={progress !== null} onClick={async () => { setProgress(0); const r = await window.vela.updater.apply(update.exeName!); if (!r.ok) { setProgress(null); toast(r.error ?? 'Update failed') } }}>
-                {progress !== null ? `Downloading ${Math.round(progress * 100)}%` : 'Update & Restart'}
+            ? <button className="btn btn-primary small" disabled={progress !== null} onClick={async () => { setProgress(0); const r = await window.vela.updater.apply(update.downloadUrl, update.releaseUrl); if (!r.ok) { setProgress(null); toast(r.error ?? 'Update failed') } }}>
+                {progress !== null ? `Downloading ${Math.round(progress * 100)}%` : 'Install Update'}
               </button>
             : <button className="btn small" disabled={checking} onClick={check}>{checking ? 'Checking…' : 'Check for Updates'}</button>}
         </Field>

@@ -19,6 +19,7 @@ import { startLinkClient } from './stores/link'
 import { create } from 'zustand'
 import { joinParty } from './lib/party'
 import { FollowPrompt, JoinPartyDialog, PartyDock, StartPartyDialog } from './features/party/PartyPanel'
+import { UpdateDialog, useUpdate } from './features/update/UpdateDialog'
 
 const useJoinDialog = create<{ open: boolean }>(() => ({ open: false }))
 
@@ -39,7 +40,7 @@ function runCommand(cmd: MenuCommand) {
     case 'export': exportBackup(); break
     case 'import': importBackup(); break
     case 'check-updates': case 'about':
-      window.vela.updater.check().then(r => toast(r.error ? r.error : r.updateAvailable ? `Vela ${r.latestVersion} is available — open Settings to update` : `Vela ${window.vela.version} is up to date`))
+      window.vela.updater.check().then(r => { if (r.updateAvailable) useUpdate.setState({ result: r }); else toast(r.error ? r.error : `Vela ${window.vela.version} is up to date`) })
       break
     case 'join-party': useJoinDialog.setState({ open: true }); break
     case 'play-pause': case 'fullscreen': break // handled by the player's own key handler
@@ -79,13 +80,26 @@ export function App() {
 
   useEffect(() => startLinkClient(), [])
 
+  // While anything scrolls, hover effects and preview timers are paused
+  // (body.is-scrolling) so the GPU only has to move pixels, not restyle cards.
+  useEffect(() => {
+    let t: ReturnType<typeof setTimeout> | undefined
+    const onScroll = () => {
+      if (!t) document.body.classList.add('is-scrolling')
+      clearTimeout(t)
+      t = setTimeout(() => { document.body.classList.remove('is-scrolling'); t = undefined }, 140)
+    }
+    window.addEventListener('scroll', onScroll, { capture: true, passive: true })
+    return () => { window.removeEventListener('scroll', onScroll, { capture: true }); clearTimeout(t) }
+  }, [])
+
   useEffect(() => {
     const offs = [
       window.vela.on('menu', runCommand),
       window.vela.on('open-tmdb-id', openById),
       window.vela.on('open-party', link => { joinParty(link) }),
       (window.vela.pendingParty().then(l => { if (l) joinParty(l) }), () => {}),
-      window.vela.on('update-check-result', r => { if (r.updateAvailable) toast(`Vela ${r.latestVersion} is available — open Settings to update`) })
+      window.vela.on('update-check-result', r => { if (r.updateAvailable) useUpdate.setState({ result: r }) })
     ]
     return () => offs.forEach(o => o())
   }, [])
@@ -125,6 +139,7 @@ export function App() {
       <StartPartyDialog />
       <ConnectDialog />
       <OfferDialog />
+      <UpdateDialog />
       {joinOpen && <JoinPartyDialog onClose={() => useJoinDialog.setState({ open: false })} />}
       <ContextMenuHost />
       <Toast />
