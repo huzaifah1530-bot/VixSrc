@@ -46,7 +46,10 @@
    Off-screen rows and grid cards skip layout and paint entirely. */
 .row { content-visibility: auto; contain-intrinsic-size: auto 320px; }
 .grid > .poster { content-visibility: auto; contain-intrinsic-size: auto 280px; }
-.content, .row-scroller, .episode-list, .prefs-body { overscroll-behavior: contain; }
+/* Only the horizontal axis on rows: containing Y as well swallowed the mouse
+   wheel over a row, so the page couldn't scroll vertically. */
+.row-scroller { overscroll-behavior-x: contain; overscroll-behavior-y: auto; }
+.episode-list, .prefs-body { overscroll-behavior: contain; }
 .content { will-change: scroll-position; }
 .row-scroller { scroll-behavior: smooth; }
 
