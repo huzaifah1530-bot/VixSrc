@@ -2,7 +2,7 @@
 // the video's duration is known (so the right release version is picked);
 // playback never waits for them, and any failure just means no button.
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { IntroOverride, SkipSegment } from '@shared/types'
+import type { SkipSegment } from '@shared/types'
 import { AutoSkipTracker, activeIntro, showKey, validSegments, withOverride } from '@shared/introSkip'
 import { usePlayer } from '@/stores/player'
 import { useSettings } from '@/stores/settings'
@@ -68,17 +68,8 @@ export function useIntroSkip(opts: { native: boolean; time: number; duration: nu
   // ── Per-show custom intro (overrides whatever was found) ─────────────
   const item = usePlayer(s => s.item)
   const key = item && (kind === 'anime' || item.type === 'tv') ? showKey(item) : null
+  // Set in the table on the show's page (components/IntroTimes.tsx).
   const override = useSettings(s => (key ? s.introOverrides?.[key] ?? null : null))
-  const setOverride = (patch: Partial<IntroOverride> | null) => {
-    if (!key || !item) return
-    const all = { ...(useSettings.getState().introOverrides ?? {}) }
-    if (patch === null) delete all[key]
-    else {
-      const prev: IntroOverride = all[key] ?? { title: item.title, start: null, end: null }
-      all[key] = { ...prev, ...patch, title: item.title }
-    }
-    useSettings.getState().set({ introOverrides: all })
-  }
 
   const segments = useMemo(
     () => validSegments(withOverride(ownIntro ? source!.segments! : remote, override), known ? duration : 0),
@@ -103,14 +94,6 @@ export function useIntroSkip(opts: { native: boolean; time: number; duration: nu
   return {
     intro,
     skip: () => { if (intro) seekTo(intro.end) },
-    segments,
-    /** null for movies: custom times are per show. */
-    custom: key ? {
-      override,
-      found: validSegments(ownIntro ? source!.segments! : remote, known ? duration : 0).find(s => s.kind === 'intro') ?? null,
-      setStart: (t: number) => setOverride({ start: Math.max(0, Math.round(t)) }),
-      setEnd: (t: number) => setOverride({ end: Math.max(0, Math.round(t)) }),
-      clear: () => setOverride(null)
-    } : null
+    segments
   }
 }

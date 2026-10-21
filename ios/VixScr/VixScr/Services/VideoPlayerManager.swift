@@ -289,7 +289,6 @@ final class VideoPlayerManager {
     // Custom per-show intro times (override found ones). Storage is the
     // app store's, reached through these hooks set by the view models.
     @ObservationIgnored var loadIntroOverride: (String) -> IntroOverride? = { _ in nil }
-    @ObservationIgnored var saveIntroOverride: (String, IntroOverride?) -> Void = { _, _ in }
     /// `tv:<tmdbId>` / `tv:kai:<slug>`; nil for movies (no custom times).
     private(set) var introShowKey: String?
     @ObservationIgnored private var introShowTitle = ""
@@ -329,23 +328,12 @@ final class VideoPlayerManager {
         }
     }
 
-    func setIntroStart(at seconds: Double) { updateOverride { $0.start = max(0, seconds.rounded()) } }
-    func setIntroEnd(at seconds: Double) { updateOverride { $0.end = max(0, seconds.rounded()) } }
-    func clearIntroOverride() {
+    /// The show's custom intro was edited (IntroTimesTable): apply it now.
+    func reloadIntroOverride() {
         guard let key = introShowKey else { return }
-        introOverride = nil
-        saveIntroOverride(key, nil)
+        introOverride = loadIntroOverride(key)
         recomputeSegments()
-    }
-
-    private func updateOverride(_ change: (inout IntroOverride) -> Void) {
-        guard let key = introShowKey else { return }
-        var o = introOverride ?? IntroOverride(title: introShowTitle, start: nil, end: nil)
-        o.title = introShowTitle
-        change(&o)
-        introOverride = o
-        saveIntroOverride(key, o)
-        recomputeSegments()
+        autoSkipTracker.restart()
     }
 
     private func recomputeSegments() {

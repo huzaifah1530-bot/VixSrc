@@ -54,14 +54,14 @@ final class CatalogViewModel {
     private(set) var nativeSources: [StreamURLExtractor.ResolvedStream] = []
     private(set) var selectedNativeSourceIndex = 0
     private(set) var isResolvingStream = false
-    /// Set when a Nuvio provider server has nothing playable (no web
+    /// Set when an addon server has nothing playable (no web
     /// player exists to fall back to).
     private(set) var streamErrorMessage: String?
     private(set) var cast: [CastMember] = []
 
-    /// True when the current server is a Nuvio provider script.
+    /// True when the current server is a Stremio addon (no web player).
     var currentStreamIsProvider: Bool {
-        currentStreamURL.map(NuvioRoute.isProviderURL) ?? false
+        currentStreamURL.map(AddonRoute.isAddonURL) ?? false
     }
 
     let playerManager = VideoPlayerManager()
@@ -676,7 +676,7 @@ final class CatalogViewModel {
                 self.nativeSources = sources
                 self.selectedNativeSourceIndex = 0
                 self.loadNativeSource(at: 0)
-            case .embed where NuvioRoute.isProviderURL(pageURL):
+            case .embed where AddonRoute.isAddonURL(pageURL):
                 self.playerManager.cleanup()
                 self.streamErrorMessage = "\(self.currentServerName) found no streams. Try another server."
             case .embed:
@@ -728,7 +728,6 @@ final class CatalogViewModel {
         let store = store
         playerManager.autoSkipEnabled = { store.autoSkipIntro }
         playerManager.loadIntroOverride = { store.introOverrides[$0] }
-        playerManager.saveIntroOverride = { key, value in store.introOverrides[key] = value }
         var fetch: (@Sendable (Double) async -> [SkipSegment])?
         var showKey: String?
         if let item = selected, item.type == .tv, let season = selectedSeason?.seasonNumber,

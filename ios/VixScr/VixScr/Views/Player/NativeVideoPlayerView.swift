@@ -504,55 +504,6 @@ private struct PlayerSurface: View {
             .accessibilityLabel("Server")
             .simultaneousGesture(TapGesture().onEnded { reveal(autoHide: false) })
         }
-        if playerManager.introShowKey != nil {
-            introMenu(size: size)
-        }
-    }
-
-    /// Custom intro times for the whole show, set from the current position.
-    private func introMenu(size: CGFloat) -> some View {
-        let now = playerManager.currentTime
-        let o = playerManager.introOverride
-        func clock(_ t: Double?) -> String {
-            guard let t, t.isFinite else { return "–" }
-            let s = Int(t)
-            return s >= 3600 ? String(format: "%d:%02d:%02d", s / 3600, (s % 3600) / 60, s % 60) : String(format: "%d:%02d", s / 60, s % 60)
-        }
-        let status: String
-        if let o, o.isComplete {
-            status = "Custom: \(clock(o.start)) – \(clock(o.end))"
-        } else if let o {
-            status = "Custom (incomplete): \(clock(o.start)) – \(clock(o.end))"
-        } else if let found = playerManager.foundIntro {
-            status = "Found: \(clock(found.start)) – \(clock(found.end))"
-        } else {
-            status = "None found for this episode"
-        }
-        return Menu {
-            Section("Intro for this show · \(status)") {
-                Button {
-                    playerManager.setIntroStart(at: now)
-                } label: {
-                    Label("Intro Starts Here (\(clock(now)))", systemImage: "arrow.right.to.line")
-                }
-                Button {
-                    playerManager.setIntroEnd(at: now)
-                } label: {
-                    Label("Intro Ends Here (\(clock(now)))", systemImage: "arrow.left.to.line")
-                }
-                if o != nil {
-                    Button(role: .destructive) {
-                        playerManager.clearIntroOverride()
-                    } label: {
-                        Label("Use Found Times Again", systemImage: "arrow.uturn.backward")
-                    }
-                }
-            }
-        } label: {
-            GlassIcon(systemImage: "forward.end.alt", size: size)
-        }
-        .accessibilityLabel("Intro times")
-        .simultaneousGesture(TapGesture().onEnded { reveal(autoHide: false) })
     }
 
     private var topBar: some View {

@@ -30,6 +30,11 @@ struct AnimePlayerSheet: View {
                     }
                     actionRow
                     if let item = viewModel.selected {
+                        IntroTimesTable(showKey: "\(item.type.rawValue):\(item.tmdbId)", title: item.title) {
+                            viewModel.playerManager.reloadIntroOverride()
+                        }
+                    }
+                    if let item = viewModel.selected {
                         Text(item.description)
                             .font(.subheadline)
                             .foregroundStyle(.secondary)

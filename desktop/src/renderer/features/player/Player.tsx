@@ -463,25 +463,6 @@ export function Player() {
               )}
             </MenuButton>
           )}
-          {native && introSkip.custom && (
-            <MenuButton label="Intro" icon="clock">
-              {close => {
-                const c = introSkip.custom!
-                const o = c.override
-                const range = (a: number | null | undefined, b: number | null | undefined) => `${a == null ? '–' : formatTime(a)} – ${b == null ? '–' : formatTime(b)}`
-                const now = video.current?.currentTime ?? time
-                return (
-                  <>
-                    <div className="menu-label">Intro for this show</div>
-                    <div className="menu-label">{o?.start != null && o?.end != null ? `Custom: ${range(o.start, o.end)}` : o ? `Custom (incomplete): ${range(o.start, o.end)}` : c.found ? `Found: ${range(c.found.start, c.found.end)}` : 'None found for this episode'}</div>
-                    <MenuItem onSelect={() => { c.setStart(now); close() }}>Intro starts here ({formatTime(now)})</MenuItem>
-                    <MenuItem onSelect={() => { c.setEnd(now); close() }}>Intro ends here ({formatTime(now)})</MenuItem>
-                    {o && <MenuItem onSelect={() => { c.clear(); close() }}>Use found times again</MenuItem>}
-                  </>
-                )
-              }}
-            </MenuButton>
-          )}
           <PartyButton />
           {native && document.pictureInPictureEnabled && (
             <button className="round-btn" aria-label="Picture in picture" title="Picture in picture" onClick={() => {

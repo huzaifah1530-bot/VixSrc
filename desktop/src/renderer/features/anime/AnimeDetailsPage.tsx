@@ -8,6 +8,7 @@ import { usePlayer } from '@/stores/player'
 import { useSettings } from '@/stores/settings'
 import { toast } from '@/stores/ui'
 import { cx } from '@/lib/format'
+import { IntroTimes } from '@/components/IntroTimes'
 
 export function AnimeDetailsPage({ item }: { item: MediaItem }) {
   const [details, setDetails] = useState<AnimeDetails | null>(null)
@@ -71,6 +72,7 @@ export function AnimeDetailsPage({ item }: { item: MediaItem }) {
                   <Icon name="heart" size={14} fill={favorite} />{favorite ? 'In Favourites' : 'Favourite'}
                 </button>
               </div>
+              <IntroTimes item={item} />
             </div>
           </div>
         </section>

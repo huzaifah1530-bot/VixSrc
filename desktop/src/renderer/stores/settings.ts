@@ -3,9 +3,9 @@ import { persist } from 'zustand/middleware'
 import type { AnimeServer, IntroOverride, StreamServer } from '@shared/types'
 import { legacySettings } from '@/lib/legacy'
 import { uuid } from '@/lib/format'
-import { nuvioServers } from '@shared/nuvio'
+import { NEBULA_STREAMS, isRetiredNuvio } from '@shared/stremio'
 
-/** The original embed servers, kept ahead of the Nuvio providers. */
+/** The original embed servers. */
 const EMBED_SERVERS = () => [
   { id: uuid(), name: 'VixSrc', base: 'https://vixsrc.to' },
   { id: uuid(), name: 'ApiPlayer', base: 'https://apiplayer.ru/embed' },
@@ -13,28 +13,20 @@ const EMBED_SERVERS = () => [
   { id: uuid(), name: 'Vidlink', base: 'https://vidlink.pro' },
   { id: uuid(), name: 'VidSrc', base: 'https://vidsrc.wiki/embed' }
 ]
-export const DEFAULT_SERVERS: StreamServer[] = [...EMBED_SERVERS(), ...nuvioServers(uuid)]
+export const DEFAULT_SERVERS: StreamServer[] = [...EMBED_SERVERS(), { id: uuid(), ...NEBULA_STREAMS }]
 
 const norm = (base: string) => base.replace(/\/+$/, '').toLowerCase()
-const NUVIO_RENAMES: Record<string, string> = { 'vidlink.js': 'Vidlink (Nuvio)' }
 
 /**
- * v1/v2 → v3: the Nuvio providers are added after the user's servers, and
- * the embeds v2 dropped (ApiPlayer, Cinezo, Vidlink) come back, each only
- * if missing. Nuvio's "Vidlink" is renamed so the two don't clash by name.
+ * → v4: drops the Nuvio provider servers earlier builds added, makes sure
+ * the embeds (ApiPlayer, Cinezo, Vidlink…) are present, and adds the
+ * NebulaStreams Stremio addon. Existing servers keep their order.
  */
 export function migrateServers(servers: StreamServer[]): StreamServer[] {
-  const renamed = servers.map(s => {
-    const file = /\/providers\/([\w.-]+\.js)$/i.exec(s.base)?.[1]?.toLowerCase()
-    return file && NUVIO_RENAMES[file] && s.name === 'Vidlink' ? { ...s, name: NUVIO_RENAMES[file] } : s
-  })
-  const have = new Set(renamed.map(s => norm(s.base)))
-  const embeds = EMBED_SERVERS().filter(s => !have.has(norm(s.base)))
-  // Restored embeds go before the first Nuvio provider.
-  const firstNuvio = renamed.findIndex(s => /\/providers\/[\w.-]+\.js$/i.test(s.base))
-  const merged = firstNuvio < 0 ? [...renamed, ...embeds] : [...renamed.slice(0, firstNuvio), ...embeds, ...renamed.slice(firstNuvio)]
-  const now = new Set(merged.map(s => norm(s.base)))
-  return [...merged, ...nuvioServers(uuid).filter(s => !now.has(norm(s.base)))]
+  const kept = servers.filter(s => !isRetiredNuvio(s.base))
+  const have = new Set(kept.map(s => norm(s.base)))
+  const add = [...EMBED_SERVERS(), { id: uuid(), ...NEBULA_STREAMS }].filter(s => !have.has(norm(s.base)))
+  return [...kept, ...add]
 }
 export const DEFAULT_ANIME_SERVERS: AnimeServer[] = [
   { id: uuid(), name: 'AnimeKai', base: 'https://animekaitv.to' },
@@ -93,10 +85,10 @@ export const useSettings = create<SettingsState>()(
     }),
     {
       name: KEY,
-      version: 3,
+      version: 4,
       migrate: (persisted, version) => {
         const s = (persisted ?? {}) as Partial<SettingsState>
-        if (version < 3 && Array.isArray(s.servers)) s.servers = migrateServers(s.servers)
+        if (version < 4 && Array.isArray(s.servers)) s.servers = migrateServers(s.servers)
         return s as SettingsState
       }
     }

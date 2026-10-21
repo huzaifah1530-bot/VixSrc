@@ -10,7 +10,7 @@ import { getResponse, getText, DESKTOP_UA } from './http'
 import { LinkServer } from './link/server'
 import { embedControl, embedState } from './link/embedBridge'
 import type { LinkEvent } from '@shared/link'
-import { isNuvioUrl } from '@shared/nuvio'
+import { isAddonUrl } from '@shared/stremio'
 import type { AnimeIdentity } from '@shared/introSkip'
 import { aniSkip, introDbTv } from './skip'
 
@@ -188,8 +188,8 @@ function registerIpc() {
   })
   ipcMain.handle('fetch-text', (_e, url: string, headers: Record<string, string>) => getText(url, { 'User-Agent': DESKTOP_UA, ...headers }))
   ipcMain.handle('check-server', async (_e, url: string) => {
-    // Nuvio providers: "reachable" means the provider found a stream.
-    if (isNuvioUrl(url)) return (await resolveStreams(url).catch(() => [])).length > 0
+    // Stremio addons: "reachable" means it returned a playable stream.
+    if (isAddonUrl(url)) return (await resolveStreams(url).catch(() => [])).length > 0
     try { const r = await getResponse(url, { 'User-Agent': DESKTOP_UA }, 8000); r.body?.cancel().catch(() => {}); return true } catch { return false }
   })
   ipcMain.handle('playback-headers', (_e, h: Record<string, string> | null) => setPlaybackHeaders(h))

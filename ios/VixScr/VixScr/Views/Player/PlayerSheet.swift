@@ -73,6 +73,8 @@ struct PlayerSheet: View {
                     .padding(.horizontal, 20)
                 actionRow
                     .padding(.horizontal, 20)
+                introTimes
+                    .padding(.horizontal, 20)
                 descriptionView
                     .padding(.horizontal, 20)
                 metaLine
@@ -236,6 +238,15 @@ struct PlayerSheet: View {
             options.onNextEpisode = { Task { await viewModel.playNextEpisode() } }
         }
         return options
+    }
+
+    /// Custom intro start / end for this show (TV only).
+    @ViewBuilder private var introTimes: some View {
+        if let item = viewModel.selected, item.type == .tv {
+            IntroTimesTable(showKey: "\(item.type.rawValue):\(item.tmdbId)", title: item.title) {
+                viewModel.playerManager.reloadIntroOverride()
+            }
+        }
     }
 
     // MARK: - Action row

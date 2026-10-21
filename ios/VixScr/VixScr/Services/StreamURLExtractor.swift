@@ -60,9 +60,10 @@ struct StreamURLExtractor {
             return [ResolvedStream(id: serverURL.absoluteString, name: "Direct stream", url: serverURL)]
         }
 
-        // Nuvio provider: run the bundled script; never scrape its URL.
-        if NuvioRoute.isProviderURL(serverURL) {
-            return await nuvioStreams(for: serverURL)
+        // Stremio addon: ask its stream API; never scrape the manifest URL.
+        if AddonRoute.isAddonURL(serverURL) {
+            guard let route = AddonRoute(url: serverURL) else { return [] }
+            return await StremioAddonClient.streams(for: route)
         }
 
         // VixSrc serves a short-lived embed token from /api/movie or /api/tv,
@@ -92,45 +93,6 @@ struct StreamURLExtractor {
             )]
         }
         return []
-    }
-
-    private static func nuvioStreams(for pageURL: URL) async -> [ResolvedStream] {
-        guard let route = NuvioRoute(url: pageURL),
-              let raw = try? await NuvioRuntime.shared.streams(for: route) else { return [] }
-        let placeholder: Set<String> = ["unknown", "n/a", "auto"]
-        func known(_ value: String) -> String? {
-            let v = value.trimmingCharacters(in: .whitespaces)
-            return v.isEmpty || placeholder.contains(v.lowercased()) ? nil : v
-        }
-        // AVPlayer plays HLS and MP4; MKV/WebM/raw TS files never load.
-        return raw.filter { ["hls", "mp4"].contains($0.format) }.compactMap { stream -> ResolvedStream? in
-            guard let url = URL(string: stream.url) else { return nil }
-            var name = (known(stream.name) ?? known(stream.title) ?? route.provider.name)
-                .replacingOccurrences(of: "\n", with: " ")
-            var extra: [String] = []
-            if let q = known(stream.quality), !name.lowercased().contains(q.lowercased()) { extra.append(q) }
-            if let size = known(stream.size) { extra.append(size) }
-            if !extra.isEmpty { name += " · " + extra.joined(separator: " · ") }
-            let subtitles = stream.subtitles.compactMap { sub -> ExternalSubtitle? in
-                guard let subURL = URL(string: sub.url) else { return nil }
-                let ext = subURL.pathExtension.lowercased()
-                guard !["srt", "ass", "ssa"].contains(ext) else { return nil }
-                return ExternalSubtitle(
-                    label: known(sub.name) ?? known(sub.language) ?? "Subtitles",
-                    url: subURL,
-                    referer: sub.headers["Referer"] ?? sub.headers["referer"] ?? ""
-                )
-            }
-            var headers = stream.headers
-            if headers["User-Agent"] == nil && headers["user-agent"] == nil { headers["User-Agent"] = userAgent }
-            return ResolvedStream(
-                id: stream.url,
-                name: String(name.prefix(120)),
-                url: url,
-                requestHeaders: headers,
-                subtitles: subtitles
-            )
-        }
     }
 
     private static func extractCinezoStreams(from pageURL: URL) async -> [ResolvedStream]? {

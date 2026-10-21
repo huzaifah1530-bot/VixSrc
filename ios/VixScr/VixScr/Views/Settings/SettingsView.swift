@@ -226,7 +226,7 @@ struct SettingsView: View {
         } header: {
             Text("Player")
         } footer: {
-            Text("Double-tap the left or right of the video to skip back or forward. Hold either edge for 2× speed. Caption Size applies to subtitles Vela draws itself, such as anime subtitles. Skip Intro appears when an intro's timestamps are known (TheIntroDB, AniSkip); in a watch party only the host skips automatically. Set custom intro times for a show from the intro button in the player; they apply to every episode.")
+            Text("Double-tap the left or right of the video to skip back or forward. Hold either edge for 2× speed. Caption Size applies to subtitles Vela draws itself, such as anime subtitles. Skip Intro appears when an intro's timestamps are known (TheIntroDB, AniSkip); in a watch party only the host skips automatically. Set custom intro times in the Intro start / end boxes under a show's player (both 00:00 = off); they apply to every episode.")
         }
     }
 

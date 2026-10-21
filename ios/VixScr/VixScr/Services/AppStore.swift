@@ -39,9 +39,9 @@ final class AppStore {
         static let animeEnabled = "vixsrc_live_anime_enabled"
         static let autoSkipIntro = "vela_auto_skip_intro"
         static let introOverrides = "vela_intro_overrides"
-        /// Set once the saved server list has had the Nuvio import applied.
-        /// v2: also restores the embeds v1 removed.
-        static let serversMigratedNuvio = "vela_servers_migrated_nuvio_v2"
+        /// Set once the saved server list has been migrated (Nuvio removed, NebulaStreams added).
+        
+        static let serversMigratedNuvio = "vela_servers_migrated_v3"
     }
 
     /// Optional built-in credential. The Electron app hardcodes one directly
@@ -331,7 +331,7 @@ final class AppStore {
         self.storedIntroOverrides = AppStore.load([String: IntroOverride].self, key: Keys.introOverrides, defaults: defaults) ?? [:]
         var servers = AppStore.load([StreamServer].self, key: Keys.servers, defaults: defaults) ?? StreamServer.defaults
         if !defaults.bool(forKey: Keys.serversMigratedNuvio) {
-            servers = StreamServer.migratedForNuvio(servers)
+            servers = StreamServer.migrated(servers)
             if let data = try? JSONEncoder().encode(servers) { defaults.set(data, forKey: Keys.servers) }
             defaults.set(true, forKey: Keys.serversMigratedNuvio)
         }

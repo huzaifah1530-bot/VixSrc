@@ -354,7 +354,6 @@ final class AnimeViewModel {
         let store = store
         playerManager.autoSkipEnabled = { store.autoSkipIntro }
         playerManager.loadIntroOverride = { store.introOverrides[$0] }
-        playerManager.saveIntroOverride = { key, value in store.introOverrides[key] = value }
         var fetch: (@Sendable (Double) async -> [SkipSegment])?
         if let identity = details?.identity, let episode = selectedEpisode?.number {
             fetch = { duration in

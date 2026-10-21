@@ -105,7 +105,7 @@ function General() {
           <div className="segmented small">{CAPTION_SIZES.map(c => <button key={c.v} className={cx('seg', (s.captionScale ?? 1) === c.v && 'is-active')} onClick={() => s.set({ captionScale: c.v })}>{c.label}</button>)}</div>
         </Field>
       </Group>
-      <Group title="Custom intro times" footer="Set these from the Intro menu in the player while a show or anime is playing. They apply to every episode of that show and replace TheIntroDB / AniSkip times.">
+      <Group title="Custom intro times" footer="Set these in the Intro start / end boxes on a show’s or anime’s page (00:00 and 00:00 = off). They apply to every episode and replace TheIntroDB / AniSkip times.">
         {Object.keys(s.introOverrides ?? {}).length === 0 && <div className="form-row"><span className="muted">None yet.</span></div>}
         {Object.entries(s.introOverrides ?? {}).map(([key, o]) => (
           <Field key={key} label={o.title || key} hint={`${o.start == null ? '–' : formatTime(o.start)} – ${o.end == null ? '–' : formatTime(o.end)}${o.start == null || o.end == null ? ' (incomplete, not used)' : ''}`}>
@@ -163,7 +163,7 @@ function Servers({ kind }: { kind: 'regular' | 'anime' }) {
       title={kind === 'anime' ? 'Anime servers' : 'Stream servers'}
       footer={kind === 'anime'
         ? 'Sites that use the AnimeKai layout. The first server feeds the Anime catalogue.'
-        : 'Each server is tried as <address>/movie/<id> or /tv/<id>/<season>/<episode>. Nuvio providers (addresses ending in .js) and VixSrc play in the native player; others open their own web player. Test runs a provider against Fight Club.'}
+        : 'Each server is tried as <address>/movie/<id> or /tv/<id>/<season>/<episode>. Stremio stream addons (addresses ending in /manifest.json, e.g. NebulaStreams) and VixSrc play in the native player; others open their own web player. Test asks an addon for Fight Club.'}
     >
       <div className={cx('server-list', disabled && 'is-disabled')}>
         {list.map((s, i) => (

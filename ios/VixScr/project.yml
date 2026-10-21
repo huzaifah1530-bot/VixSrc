@@ -21,10 +21,6 @@ targets:
       - path: VixScr
         excludes:
           - "Info.plist"
-      # Nuvio providers + runtime, built by providers/build.mjs and shared
-      # with the desktop app. Loaded by NuvioRuntime.swift.
-      - path: ../../providers/bundle/nuvio-bundle.js
-        buildPhase: resources
     # No `info:` block on purpose. XcodeGen *generates* a plist when `info:` is
     # present, overwriting the hand-written VixScr/Info.plist and silently
     # dropping CFBundleURLTypes (the vixscr:// scheme), NSAppTransportSecurity,

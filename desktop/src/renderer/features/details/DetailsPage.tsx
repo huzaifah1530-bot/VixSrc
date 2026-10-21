@@ -8,6 +8,7 @@ import { usePlayer } from '@/stores/player'
 import { toast } from '@/stores/ui'
 import { seasonsOf } from './actions'
 import { cx } from '@/lib/format'
+import { IntroTimes } from '@/components/IntroTimes'
 
 export function DetailsPage({ item }: { item: MediaItem }) {
   const [tv, setTv] = useState<TvDetails | null>(null)
@@ -85,6 +86,7 @@ export function DetailsPage({ item }: { item: MediaItem }) {
                 </button>
                 <button className="btn btn-icon" aria-label="View on TMDB" title="View on TMDB" onClick={() => window.vela.openExternal(`https://www.themoviedb.org/${item.type}/${item.tmdbId}`)}><Icon name="info" size={15} /></button>
               </div>
+              {item.type === 'tv' && <IntroTimes item={item} />}
             </div>
           </div>
         </section>
