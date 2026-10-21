@@ -23,24 +23,42 @@ struct StreamServer: Codable, Identifiable, Hashable {
 
     var isNuvio: Bool { URL(string: base).map(NuvioRoute.isProviderURL) ?? false }
 
-    static let defaults: [StreamServer] = [
-        StreamServer(name: "VixSrc", base: "https://vixsrc.to"),
-        StreamServer(name: "VidSrc", base: "https://vidsrc.wiki/embed"),
-    ] + NuvioProviders.all.map { StreamServer(name: $0.name, base: $0.base) }
+    /// The original embed servers, kept ahead of the Nuvio providers.
+    static var embedDefaults: [StreamServer] {
+        [
+            StreamServer(name: "VixSrc", base: "https://vixsrc.to"),
+            StreamServer(name: "ApiPlayer", base: "https://apiplayer.ru/embed"),
+            StreamServer(name: "Cinezo", base: "https://player.cinezo.live/embed"),
+            StreamServer(name: "Vidlink", base: "https://vidlink.pro"),
+            StreamServer(name: "VidSrc", base: "https://vidsrc.wiki/embed"),
+        ]
+    }
 
-    /// One-time import: drops the retired embeds (ApiPlayer, Cinezo, Vidlink)
-    /// and appends any Nuvio provider not already in the list.
+    static let defaults: [StreamServer] = embedDefaults
+        + NuvioProviders.all.map { StreamServer(name: $0.name, base: $0.base) }
+
+    /// Adds the Nuvio providers after the user's servers and brings back
+    /// ApiPlayer / Cinezo / Vidlink if an earlier build removed them, each
+    /// only when missing. Nuvio's "Vidlink" is renamed so names don't clash.
     static func migratedForNuvio(_ servers: [StreamServer]) -> [StreamServer] {
-        let retired = ["apiplayer.ru", "cinezo.live", "vidlink.pro"]
-        let kept = servers.filter { server in
-            guard let host = URL(string: server.base)?.host?.lowercased() else { return true }
-            return !retired.contains { host == $0 || host.hasSuffix("." + $0) }
+        func norm(_ s: String) -> String { s.trimmedTrailingSlash.lowercased() }
+        let renamed = servers.map { server -> StreamServer in
+            var s = server
+            if s.name == "Vidlink", s.base.lowercased().hasSuffix("/providers/vidlink.js") { s.name = "Vidlink (Nuvio)" }
+            return s
         }
-        let have = Set(kept.map { $0.base.trimmedTrailingSlash.lowercased() })
-        let added = NuvioProviders.all
-            .filter { !have.contains($0.base.lowercased()) }
+        let have = Set(renamed.map { norm($0.base) })
+        let embeds = embedDefaults.filter { !have.contains(norm($0.base)) }
+        var merged = renamed
+        if let firstNuvio = renamed.firstIndex(where: { $0.isNuvio }) {
+            merged.insert(contentsOf: embeds, at: firstNuvio)
+        } else {
+            merged += embeds
+        }
+        let now = Set(merged.map { norm($0.base) })
+        return merged + NuvioProviders.all
+            .filter { !now.contains(norm($0.base)) }
             .map { StreamServer(name: $0.name, base: $0.base) }
-        return kept + added
     }
 }
 

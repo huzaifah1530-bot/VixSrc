@@ -75,7 +75,10 @@ export function Player() {
     hls.current?.destroy(); hls.current = null
 
     const fail = (why: string) => usePlayer.getState().rejectCurrent(why)
-    const isHls = /\.m3u8|\/hls|playlist|master/i.test(source.url) || !/\.(mp4|webm|mov)(\?|$)/i.test(source.url)
+    // Probed streams say what they are; others are guessed from the URL.
+    const isHls = source.format
+      ? source.format === 'hls'
+      : /\.m3u8|\/hls|playlist|master/i.test(source.url) || !/\.(mp4|webm|mov|mkv)(\?|$)/i.test(source.url)
     if (isHls && Hls.isSupported()) {
       const h = new Hls({ enableWorker: true, maxBufferLength: 45, startFragPrefetch: true })
       hls.current = h
@@ -458,6 +461,25 @@ export function Player() {
                   {hlsTracks.map((t, i) => <MenuItem key={'h' + i} selected={caption.kind === 'hls' && caption.index === i} onSelect={() => { setCaption({ kind: 'hls', index: i }); close() }}>{t}</MenuItem>)}
                 </>
               )}
+            </MenuButton>
+          )}
+          {native && introSkip.custom && (
+            <MenuButton label="Intro" icon="clock">
+              {close => {
+                const c = introSkip.custom!
+                const o = c.override
+                const range = (a: number | null | undefined, b: number | null | undefined) => `${a == null ? '–' : formatTime(a)} – ${b == null ? '–' : formatTime(b)}`
+                const now = video.current?.currentTime ?? time
+                return (
+                  <>
+                    <div className="menu-label">Intro for this show</div>
+                    <div className="menu-label">{o?.start != null && o?.end != null ? `Custom: ${range(o.start, o.end)}` : o ? `Custom (incomplete): ${range(o.start, o.end)}` : c.found ? `Found: ${range(c.found.start, c.found.end)}` : 'None found for this episode'}</div>
+                    <MenuItem onSelect={() => { c.setStart(now); close() }}>Intro starts here ({formatTime(now)})</MenuItem>
+                    <MenuItem onSelect={() => { c.setEnd(now); close() }}>Intro ends here ({formatTime(now)})</MenuItem>
+                    {o && <MenuItem onSelect={() => { c.clear(); close() }}>Use found times again</MenuItem>}
+                  </>
+                )
+              }}
             </MenuButton>
           )}
           <PartyButton />

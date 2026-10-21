@@ -21,7 +21,7 @@ const DESKTOP_LIST = resolve(ROOT, '../desktop/src/shared/nuvioProviders.ts')
 const IOS_LIST = resolve(ROOT, '../ios/VixScr/VixScr/Models/NuvioProviders.swift')
 
 // Names that would clash (case-insensitively) with servers the apps keep.
-const RENAME = { vixsrc: 'Vixsrc (Nuvio)' }
+const RENAME = { vixsrc: 'Vixsrc (Nuvio)', vidlink: 'Vidlink (Nuvio)' }
 
 function sync(arg) {
   let src = typeof arg === 'string' ? resolve(arg) : null

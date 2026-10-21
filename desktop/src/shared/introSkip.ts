@@ -200,6 +200,18 @@ export function parseKitsu(body: unknown): KitsuCandidate[] {
 
 // ── Playback ────────────────────────────────────────────────────────────
 
+/** Override key for a show: `tv:<tmdbId>` (TMDB) or `tv:kai:<slug>` (anime). */
+export const showKey = (item: { type: string; tmdbId: string }) => `${item.type}:${item.tmdbId}`
+
+/**
+ * A complete custom intro replaces every found intro; found outros stay.
+ * Incomplete overrides (only a start or only an end) change nothing.
+ */
+export function withOverride(found: SkipSegment[], o: { start: number | null; end: number | null } | null | undefined): SkipSegment[] {
+  if (!o || o.start == null || o.end == null || !(o.end > o.start)) return found
+  return [{ kind: 'intro', start: o.start, end: o.end, source: 'custom' }, ...found.filter(s => s.kind !== 'intro')]
+}
+
 /** The intro the playhead is in (and not in its last second), if any. */
 export function activeIntro(segments: SkipSegment[], t: number): SkipSegment | null {
   return segments.find(s => s.kind === 'intro' && t >= s.start && t < s.end - 1) ?? null

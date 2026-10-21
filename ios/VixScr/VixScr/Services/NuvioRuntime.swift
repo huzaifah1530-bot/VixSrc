@@ -26,6 +26,8 @@ final class NuvioRuntime: @unchecked Sendable {
         let size: String
         let headers: [String: String]
         let subtitles: [Subtitle]
+        /// What the URL served when probed: hls | mp4 | mkv | ts | webm.
+        let format: String
     }
 
     enum RuntimeError: LocalizedError {
@@ -180,6 +182,8 @@ final class NuvioRuntime: @unchecked Sendable {
         let bodyBase64: String?
         let redirect: String?
         let timeout: Double?
+        /// Stop reading the body after this many bytes (stream probes).
+        let maxBytes: Int?
     }
 
     /// Stops URLSession following redirects so `redirect: 'manual'` sees the 3xx.
@@ -220,9 +224,27 @@ final class NuvioRuntime: @unchecked Sendable {
 
         do {
             let manual = req.redirect == "manual"
-            let (data, response) = manual
-                ? try await session.data(for: request, delegate: ManualRedirect())
-                : try await session.data(for: request)
+            let data: Data
+            let response: URLResponse
+            if let max = req.maxBytes, max > 0 {
+                // Probe: read only the first bytes, then drop the connection.
+                let (bytes, resp) = manual
+                    ? try await session.bytes(for: request, delegate: ManualRedirect())
+                    : try await session.bytes(for: request)
+                var buffer = Data()
+                buffer.reserveCapacity(max)
+                for try await byte in bytes {
+                    buffer.append(byte)
+                    if buffer.count >= max { break }
+                }
+                bytes.task.cancel()
+                data = buffer
+                response = resp
+            } else {
+                (data, response) = manual
+                    ? try await session.data(for: request, delegate: ManualRedirect())
+                    : try await session.data(for: request)
+            }
             guard let http = response as? HTTPURLResponse else { return ("Not an HTTP response", nil) }
             var pairs: [[String]] = []
             for (key, value) in http.allHeaderFields {

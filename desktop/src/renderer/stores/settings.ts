@@ -1,23 +1,40 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { AnimeServer, StreamServer } from '@shared/types'
+import type { AnimeServer, IntroOverride, StreamServer } from '@shared/types'
 import { legacySettings } from '@/lib/legacy'
 import { uuid } from '@/lib/format'
 import { nuvioServers } from '@shared/nuvio'
 
-export const DEFAULT_SERVERS: StreamServer[] = [
+/** The original embed servers, kept ahead of the Nuvio providers. */
+const EMBED_SERVERS = () => [
   { id: uuid(), name: 'VixSrc', base: 'https://vixsrc.to' },
-  { id: uuid(), name: 'VidSrc', base: 'https://vidsrc.wiki/embed' },
-  ...nuvioServers(uuid)
+  { id: uuid(), name: 'ApiPlayer', base: 'https://apiplayer.ru/embed' },
+  { id: uuid(), name: 'Cinezo', base: 'https://player.cinezo.live/embed' },
+  { id: uuid(), name: 'Vidlink', base: 'https://vidlink.pro' },
+  { id: uuid(), name: 'VidSrc', base: 'https://vidsrc.wiki/embed' }
 ]
-/** Embed servers dropped when the Nuvio providers were imported (settings v2). */
-const RETIRED_SERVER = /^https?:\/\/(?:[^/]*\.)?(?:apiplayer\.ru|cinezo\.live|vidlink\.pro)(?:\/|$)/i
+export const DEFAULT_SERVERS: StreamServer[] = [...EMBED_SERVERS(), ...nuvioServers(uuid)]
 
-/** v1 → v2: drop the retired embeds and append any missing Nuvio providers. */
+const norm = (base: string) => base.replace(/\/+$/, '').toLowerCase()
+const NUVIO_RENAMES: Record<string, string> = { 'vidlink.js': 'Vidlink (Nuvio)' }
+
+/**
+ * v1/v2 → v3: the Nuvio providers are added after the user's servers, and
+ * the embeds v2 dropped (ApiPlayer, Cinezo, Vidlink) come back, each only
+ * if missing. Nuvio's "Vidlink" is renamed so the two don't clash by name.
+ */
 export function migrateServers(servers: StreamServer[]): StreamServer[] {
-  const kept = servers.filter(s => !RETIRED_SERVER.test(s.base))
-  const have = new Set(kept.map(s => s.base.replace(/\/+$/, '').toLowerCase()))
-  return [...kept, ...nuvioServers(uuid).filter(s => !have.has(s.base.toLowerCase()))]
+  const renamed = servers.map(s => {
+    const file = /\/providers\/([\w.-]+\.js)$/i.exec(s.base)?.[1]?.toLowerCase()
+    return file && NUVIO_RENAMES[file] && s.name === 'Vidlink' ? { ...s, name: NUVIO_RENAMES[file] } : s
+  })
+  const have = new Set(renamed.map(s => norm(s.base)))
+  const embeds = EMBED_SERVERS().filter(s => !have.has(norm(s.base)))
+  // Restored embeds go before the first Nuvio provider.
+  const firstNuvio = renamed.findIndex(s => /\/providers\/[\w.-]+\.js$/i.test(s.base))
+  const merged = firstNuvio < 0 ? [...renamed, ...embeds] : [...renamed.slice(0, firstNuvio), ...embeds, ...renamed.slice(firstNuvio)]
+  const now = new Set(merged.map(s => norm(s.base)))
+  return [...merged, ...nuvioServers(uuid).filter(s => !now.has(norm(s.base)))]
 }
 export const DEFAULT_ANIME_SERVERS: AnimeServer[] = [
   { id: uuid(), name: 'AnimeKai', base: 'https://animekaitv.to' },
@@ -45,6 +62,8 @@ export interface SettingsState {
   captionScale: number
   /** Seek past known intros automatically (TheIntroDB / AniSkip). Off by default. */
   autoSkipIntro: boolean
+  /** Per-show custom intro times, keyed `tv:<tmdbId>` or `tv:kai:<slug>`. */
+  introOverrides: Record<string, IntroOverride>
   set: (patch: Partial<Omit<SettingsState, 'set'>>) => void
 }
 
@@ -68,15 +87,16 @@ export const useSettings = create<SettingsState>()(
       muted: false,
       captionScale: 1,
       autoSkipIntro: false,
+      introOverrides: {},
       ...(fresh ? legacySettings() : {}),
       set: patch => set(patch)
     }),
     {
       name: KEY,
-      version: 2,
+      version: 3,
       migrate: (persisted, version) => {
         const s = (persisted ?? {}) as Partial<SettingsState>
-        if (version < 2 && Array.isArray(s.servers)) s.servers = migrateServers(s.servers)
+        if (version < 3 && Array.isArray(s.servers)) s.servers = migrateServers(s.servers)
         return s as SettingsState
       }
     }

@@ -17,13 +17,29 @@ export async function hostFetch(raw) {
     redirect: req.redirect === 'manual' ? 'manual' : req.redirect === 'error' ? 'error' : 'follow',
     signal: AbortSignal.timeout(req.timeout || 20000)
   })
-  const bytes = Buffer.from(await res.arrayBuffer())
+  const bytes = await readBody(res, req.maxBytes)
   const pairs = []
   res.headers.forEach((v, k) => { if (k !== 'set-cookie') pairs.push([k, v]) })
   for (const c of res.headers.getSetCookie()) pairs.push(['set-cookie', c])
   const out = { status: res.status, statusText: res.statusText, url: res.url || req.url, redirected: res.redirected, headers: pairs }
   try { out.text = utf8.decode(bytes) } catch { out.base64 = bytes.toString('base64') }
   return JSON.stringify(out)
+}
+
+/** Whole body, or only the first `max` bytes (then the download is cancelled). */
+async function readBody(res, max) {
+  if (!(max > 0) || !res.body) return Buffer.from(await res.arrayBuffer())
+  const reader = res.body.getReader()
+  const chunks = []
+  let size = 0
+  while (size < max) {
+    const { done, value } = await reader.read()
+    if (done) break
+    chunks.push(value)
+    size += value.length
+  }
+  reader.cancel().catch(() => {})
+  return Buffer.concat(chunks).subarray(0, max)
 }
 
 export function createRuntime(bundlePath, { log = () => {} } = {}) {

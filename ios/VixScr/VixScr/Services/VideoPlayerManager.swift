@@ -286,9 +286,21 @@ final class VideoPlayerManager {
     @ObservationIgnored private var autoSkipTracker = AutoSkipTracker()
     @ObservationIgnored private var autoSkipTrackerKey = ""
 
+    // Custom per-show intro times (override found ones). Storage is the
+    // app store's, reached through these hooks set by the view models.
+    @ObservationIgnored var loadIntroOverride: (String) -> IntroOverride? = { _ in nil }
+    @ObservationIgnored var saveIntroOverride: (String, IntroOverride?) -> Void = { _, _ in }
+    /// `tv:<tmdbId>` / `tv:kai:<slug>`; nil for movies (no custom times).
+    private(set) var introShowKey: String?
+    @ObservationIgnored private var introShowTitle = ""
+    private(set) var introOverride: IntroOverride?
+    /// The found (not custom) intro for this episode, for the Intro menu.
+    private(set) var foundIntro: SkipSegment?
+
     /// Call right after `load`. `episodeKey` is the progress id; `fetch` is
     /// given the duration (0 if unknown) and must return [] on failure.
-    func configureIntroSkip(episodeKey: String, streamSegments: [SkipSegment],
+    func configureIntroSkip(episodeKey: String, showKey: String? = nil, showTitle: String = "",
+                            streamSegments: [SkipSegment],
                             fetch: (@Sendable (Double) async -> [SkipSegment])?) {
         introTask?.cancel()
         introKey = episodeKey
@@ -297,6 +309,10 @@ final class VideoPlayerManager {
         introFetch = nil
         introRaw = nil
         skipSegments = []
+        foundIntro = nil
+        introShowKey = showKey
+        introShowTitle = showTitle
+        introOverride = showKey.flatMap { loadIntroOverride($0) }
         if autoSkipTrackerKey != episodeKey {
             autoSkipTracker = AutoSkipTracker()
             autoSkipTrackerKey = episodeKey
@@ -309,7 +325,33 @@ final class VideoPlayerManager {
             applyIntro(cached)
         } else {
             introFetch = fetch
+            recomputeSegments()
         }
+    }
+
+    func setIntroStart(at seconds: Double) { updateOverride { $0.start = max(0, seconds.rounded()) } }
+    func setIntroEnd(at seconds: Double) { updateOverride { $0.end = max(0, seconds.rounded()) } }
+    func clearIntroOverride() {
+        guard let key = introShowKey else { return }
+        introOverride = nil
+        saveIntroOverride(key, nil)
+        recomputeSegments()
+    }
+
+    private func updateOverride(_ change: (inout IntroOverride) -> Void) {
+        guard let key = introShowKey else { return }
+        var o = introOverride ?? IntroOverride(title: introShowTitle, start: nil, end: nil)
+        o.title = introShowTitle
+        change(&o)
+        introOverride = o
+        saveIntroOverride(key, o)
+        recomputeSegments()
+    }
+
+    private func recomputeSegments() {
+        let found = SkipSegments.valid(introRaw ?? [], duration: duration)
+        foundIntro = found.first { $0.kind == .intro }
+        skipSegments = SkipSegments.valid(SkipSegments.withOverride(introRaw ?? [], introOverride), duration: duration)
     }
 
     func skipIntro() {
@@ -319,7 +361,7 @@ final class VideoPlayerManager {
 
     private func applyIntro(_ raw: [SkipSegment]) {
         introRaw = raw
-        skipSegments = SkipSegments.valid(raw, duration: duration)
+        recomputeSegments()
         autoSkipTracker.restart()
     }
 
@@ -527,7 +569,7 @@ final class VideoPlayerManager {
         let seconds = item.duration.seconds
         guard seconds.isFinite, seconds > 0 else { return }
         duration = seconds
-        if let introRaw { skipSegments = SkipSegments.valid(introRaw, duration: seconds) }
+        if introRaw != nil || introOverride != nil { recomputeSegments() }
         publishNowPlayingInfo()
         if pendingResumePosition > 0 {
             let resume = min(pendingResumePosition, seconds)
@@ -770,6 +812,9 @@ final class VideoPlayerManager {
         introFetch = nil
         introFetchStarted = false
         skipSegments = []
+        foundIntro = nil
+        introOverride = nil
+        introShowKey = nil
     }
 }
 

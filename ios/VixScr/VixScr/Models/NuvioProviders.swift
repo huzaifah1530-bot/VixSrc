@@ -24,7 +24,7 @@ enum NuvioProviders {
         NuvioProvider(id: "yflix", name: "YFlix", file: "yflix.js", base: "https://raw.githubusercontent.com/yoruix/nuvio-providers/main/providers/yflix.js", types: ["movie", "tv"]),
         NuvioProvider(id: "videasy", name: "VIDEASY", file: "videasy.js", base: "https://raw.githubusercontent.com/yoruix/nuvio-providers/main/providers/videasy.js", types: ["movie", "tv"]),
         NuvioProvider(id: "mallumv", name: "MalluMV", file: "mallumv.js", base: "https://raw.githubusercontent.com/yoruix/nuvio-providers/main/providers/mallumv.js", types: ["movie"]),
-        NuvioProvider(id: "vidlink", name: "Vidlink", file: "vidlink.js", base: "https://raw.githubusercontent.com/yoruix/nuvio-providers/main/providers/vidlink.js", types: ["movie", "tv"]),
+        NuvioProvider(id: "vidlink", name: "Vidlink (Nuvio)", file: "vidlink.js", base: "https://raw.githubusercontent.com/yoruix/nuvio-providers/main/providers/vidlink.js", types: ["movie", "tv"]),
         NuvioProvider(id: "vidnest", name: "Vidnest", file: "vidnest.js", base: "https://raw.githubusercontent.com/yoruix/nuvio-providers/main/providers/vidnest.js", types: ["movie", "tv"]),
         NuvioProvider(id: "vidnest-anime", name: "VidnestAnime", file: "vidnest-anime.js", base: "https://raw.githubusercontent.com/yoruix/nuvio-providers/main/providers/vidnest-anime.js", types: ["movie", "tv"]),
         NuvioProvider(id: "cinevibe", name: "Cinevibe", file: "cinevibe.js", base: "https://raw.githubusercontent.com/yoruix/nuvio-providers/main/providers/cinevibe.js", types: ["movie"]),

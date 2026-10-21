@@ -154,3 +154,13 @@ async function main() {
   process.exit(process.exitCode ?? 0)
 }
 main()
+
+// Custom per-show times (run with the others via `npm run test:intro`).
+import { withOverride, showKey } from '../src/shared/introSkip'
+const found: SkipSegment[] = [{ kind: 'intro', start: 60, end: 150, source: 'theintrodb' }, { kind: 'outro', start: 1300, end: 1390, source: 'theintrodb' }]
+assert.deepEqual(withOverride(found, { start: 0, end: 85 }).map(s => [s.kind, s.start, s.end, s.source]), [['intro', 0, 85, 'custom'], ['outro', 1300, 1390, 'theintrodb']])
+assert.deepEqual(withOverride(found, { start: 10, end: null }), found, 'incomplete override changes nothing')
+assert.deepEqual(withOverride(found, { start: 90, end: 30 }), found, 'inverted override changes nothing')
+assert.deepEqual(withOverride([], { start: 5, end: 95 })[0].source, 'custom', 'override works with no found data')
+assert.equal(showKey({ type: 'tv', tmdbId: 'kai:jujutsu-kaisen-tv-8ssye' }), 'tv:kai:jujutsu-kaisen-tv-8ssye')
+console.log('  ok   custom intro overrides')

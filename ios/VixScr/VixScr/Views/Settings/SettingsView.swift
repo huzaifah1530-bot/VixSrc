@@ -175,6 +175,12 @@ struct SettingsView: View {
         }
     }
 
+    private static func clock(_ t: Double?) -> String {
+        guard let t, t.isFinite else { return "–" }
+        let s = Int(t)
+        return s >= 3600 ? String(format: "%d:%02d:%02d", s / 3600, (s % 3600) / 60, s % 60) : String(format: "%d:%02d", s / 60, s % 60)
+    }
+
     private var playerSection: some View {
         Section {
             Picker("Double-Tap Skip", selection: Binding(
@@ -195,10 +201,32 @@ struct SettingsView: View {
                 get: { store.autoSkipIntro },
                 set: { store.autoSkipIntro = $0 }
             ))
+            if !store.introOverrides.isEmpty {
+                ForEach(store.introOverrides.keys.sorted(), id: \.self) { key in
+                    if let o = store.introOverrides[key] {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(o.title.isEmpty ? key : o.title)
+                                Text("Custom intro \(Self.clock(o.start)) – \(Self.clock(o.end))\(o.isComplete ? "" : " (incomplete)")")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Button(role: .destructive) {
+                                store.introOverrides[key] = nil
+                            } label: {
+                                Image(systemName: "trash")
+                            }
+                            .buttonStyle(.borderless)
+                            .accessibilityLabel("Remove custom intro for \(o.title)")
+                        }
+                    }
+                }
+            }
         } header: {
             Text("Player")
         } footer: {
-            Text("Double-tap the left or right of the video to skip back or forward. Hold either edge for 2× speed. Caption Size applies to subtitles Vela draws itself, such as anime subtitles. Skip Intro appears when an intro's timestamps are known (TheIntroDB, AniSkip); in a watch party only the host skips automatically.")
+            Text("Double-tap the left or right of the video to skip back or forward. Hold either edge for 2× speed. Caption Size applies to subtitles Vela draws itself, such as anime subtitles. Skip Intro appears when an intro's timestamps are known (TheIntroDB, AniSkip); in a watch party only the host skips automatically. Set custom intro times for a show from the intro button in the player; they apply to every episode.")
         }
     }
 

@@ -5,7 +5,7 @@ import Foundation
 /// (desktop's `npm run test:intro` covers the shared rules).
 struct SkipSegment: Hashable, Sendable {
     enum Kind: String, Sendable { case intro, outro }
-    enum Source: String, Sendable { case stream, theintrodb, aniskip }
+    enum Source: String, Sendable { case stream, theintrodb, aniskip, custom }
 
     /// Only intros are skipped today; outros (credits / ED) are kept for later.
     let kind: Kind
@@ -14,7 +14,26 @@ struct SkipSegment: Hashable, Sendable {
     let source: Source
 }
 
+/// Intro times the user set for a whole show; replaces found intros.
+/// Keyed like desktop: `tv:<tmdbId>` or `tv:kai:<slug>`.
+struct IntroOverride: Codable, Hashable, Sendable {
+    var title: String
+    var start: Double?
+    var end: Double?
+
+    var isComplete: Bool {
+        guard let start, let end else { return false }
+        return end > start
+    }
+}
+
 enum SkipSegments {
+    /// A complete custom intro replaces every found intro; outros stay.
+    static func withOverride(_ found: [SkipSegment], _ override: IntroOverride?) -> [SkipSegment] {
+        guard let override, override.isComplete, let start = override.start, let end = override.end else { return found }
+        return [SkipSegment(kind: .intro, start: start, end: end, source: .custom)] + found.filter { $0.kind != .intro }
+    }
+
     /// Longest plausible intro; anything longer is treated as bad data.
     static let maxIntroSeconds: Double = 600
     static let minSegmentSeconds: Double = 3

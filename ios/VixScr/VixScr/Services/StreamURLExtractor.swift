@@ -102,7 +102,8 @@ struct StreamURLExtractor {
             let v = value.trimmingCharacters(in: .whitespaces)
             return v.isEmpty || placeholder.contains(v.lowercased()) ? nil : v
         }
-        return raw.compactMap { stream -> ResolvedStream? in
+        // AVPlayer plays HLS and MP4; MKV/WebM/raw TS files never load.
+        return raw.filter { ["hls", "mp4"].contains($0.format) }.compactMap { stream -> ResolvedStream? in
             guard let url = URL(string: stream.url) else { return nil }
             var name = (known(stream.name) ?? known(stream.title) ?? route.provider.name)
                 .replacingOccurrences(of: "\n", with: " ")

@@ -188,7 +188,7 @@ export const NUVIO_PROVIDERS: NuvioProvider[] = [
   },
   {
     "id": "vidlink",
-    "name": "Vidlink",
+    "name": "Vidlink (Nuvio)",
     "file": "vidlink.js",
     "base": "https://raw.githubusercontent.com/yoruix/nuvio-providers/main/providers/vidlink.js",
     "types": [

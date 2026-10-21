@@ -38,8 +38,10 @@ final class AppStore {
         static let seekInterval = "vixsrc_live_seek_interval"
         static let animeEnabled = "vixsrc_live_anime_enabled"
         static let autoSkipIntro = "vela_auto_skip_intro"
+        static let introOverrides = "vela_intro_overrides"
         /// Set once the saved server list has had the Nuvio import applied.
-        static let serversMigratedNuvio = "vela_servers_migrated_nuvio_v1"
+        /// v2: also restores the embeds v1 removed.
+        static let serversMigratedNuvio = "vela_servers_migrated_nuvio_v2"
     }
 
     /// Optional built-in credential. The Electron app hardcodes one directly
@@ -180,6 +182,21 @@ final class AppStore {
         }
     }
 
+    /// Per-show custom intro times (`tv:<tmdbId>` / `tv:kai:<slug>`).
+    @ObservationIgnored private var storedIntroOverrides: [String: IntroOverride]
+    var introOverrides: [String: IntroOverride] {
+        get {
+            access(keyPath: \.introOverrides)
+            return storedIntroOverrides
+        }
+        set {
+            withMutation(keyPath: \.introOverrides) {
+                storedIntroOverrides = newValue
+                save(newValue, key: Keys.introOverrides)
+            }
+        }
+    }
+
     /// Shows the Anime tab and enables anime servers. On by default.
     @ObservationIgnored private var storedAnimeEnabled: Bool
     var animeEnabled: Bool {
@@ -311,6 +328,7 @@ final class AppStore {
         self.storedPerformanceMode = defaults.bool(forKey: Keys.perfMode)
         self.storedUltraPerformanceMode = defaults.bool(forKey: Keys.ultraPerfMode)
         self.storedAutoSkipIntro = defaults.bool(forKey: Keys.autoSkipIntro)
+        self.storedIntroOverrides = AppStore.load([String: IntroOverride].self, key: Keys.introOverrides, defaults: defaults) ?? [:]
         var servers = AppStore.load([StreamServer].self, key: Keys.servers, defaults: defaults) ?? StreamServer.defaults
         if !defaults.bool(forKey: Keys.serversMigratedNuvio) {
             servers = StreamServer.migratedForNuvio(servers)

@@ -727,15 +727,20 @@ final class CatalogViewModel {
     private func configureIntroSkip(progressID: String) {
         let store = store
         playerManager.autoSkipEnabled = { store.autoSkipIntro }
+        playerManager.loadIntroOverride = { store.introOverrides[$0] }
+        playerManager.saveIntroOverride = { key, value in store.introOverrides[key] = value }
         var fetch: (@Sendable (Double) async -> [SkipSegment])?
+        var showKey: String?
         if let item = selected, item.type == .tv, let season = selectedSeason?.seasonNumber,
            let episode = selectedEpisode?.episodeNumber {
             let tmdbId = item.tmdbId
+            showKey = "\(item.type.rawValue):\(item.tmdbId)"
             fetch = { duration in
                 await IntroSkipService.shared.tv(tmdbId: tmdbId, season: season, episode: episode, duration: duration)
             }
         }
-        playerManager.configureIntroSkip(episodeKey: progressID, streamSegments: [], fetch: fetch)
+        playerManager.configureIntroSkip(episodeKey: progressID, showKey: showKey, showTitle: selected?.title ?? "",
+                                         streamSegments: [], fetch: fetch)
     }
 
     private var nowPlayingEpisodeSubtitle: String? {

@@ -238,7 +238,9 @@ function fetchImpl(input, init = {}) {
     signal?.addEventListener?.('abort', () => finish(reject, signal.reason ?? abortError()))
     const request = {
       url, method, headers: headers._pairs(), redirect: init.redirect ?? 'follow',
-      timeout: Number(init.timeout) > 0 ? Number(init.timeout) : 20000, ...payload
+      timeout: Number(init.timeout) > 0 ? Number(init.timeout) : 20000, ...payload,
+      // Vela extension: stop reading the body after this many bytes.
+      ...(Number(init.maxBytes) > 0 ? { maxBytes: Number(init.maxBytes) } : {})
     }
     host.fetch(JSON.stringify(request), (err, raw) => {
       // Like Nuvio's FetchBridge: network errors resolve as status 0.
@@ -344,6 +346,54 @@ function normalize(list) {
   return out
 }
 
+// Headers a player must not be handed: they belong to the connection
+// (Accept-Encoding would make CDNs gzip video segments players can't read).
+const HOP_HEADERS = new Set(['accept-encoding', 'connection', 'keep-alive', 'host', 'content-length', 'transfer-encoding', 'icy-metadata', 'te', 'upgrade'])
+function playerHeaders(h) {
+  const out = {}
+  for (const k of Object.keys(h)) if (!HOP_HEADERS.has(k.toLowerCase())) out[k] = h[k]
+  return out
+}
+
+/**
+ * Looks at what a stream URL really serves (first 2 KB): providers often
+ * return landing pages or dead links next to real files. Returns
+ * hls | mp4 | mkv | ts | webm | null (not video).
+ */
+function sniffFormat(bytes, type, url) {
+  const b = bytes
+  const ascii = String.fromCharCode.apply(null, Array.from(b.subarray(0, 64)))
+  if (ascii.replace(/^\uFEFF/, '').trimStart().startsWith('#EXTM3U')) return 'hls'
+  if (b.length >= 4 && b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3) {
+    return /webm/i.test(type) || /\.webm(\?|$)/i.test(url) ? 'webm' : 'mkv'
+  }
+  if (b.length >= 8 && ascii.slice(4, 8) === 'ftyp') return 'mp4'
+  if (b.length >= 189 && b[0] === 0x47 && b[188] === 0x47) return 'ts'
+  if (/mpegurl/i.test(type)) return 'hls'
+  if (/^video\/(mp4|quicktime)/i.test(type)) return 'mp4'
+  if (/matroska/i.test(type)) return 'mkv'
+  return null
+}
+
+function probe(stream) {
+  const ctrl = new G.AbortController()
+  const timer = G.setTimeout(() => ctrl.abort(), 8000)
+  return G.fetch(stream.url, { headers: { ...stream.headers, Range: 'bytes=0-2047' }, signal: ctrl.signal, timeout: 8000, maxBytes: 4096 })
+    .then(res => {
+      if (res.status < 200 || res.status >= 400) return null
+      return res.arrayBuffer().then(buf => sniffFormat(new Uint8Array(buf), res.headers.get('content-type') || '', res.url || stream.url))
+    })
+    .catch(() => null)
+    .then(format => { G.clearTimeout(timer); return format })
+}
+
+/** Keeps only streams that serve video right now, tagged with their format. */
+function verify(list) {
+  const head = list.slice(0, 30)
+  return Promise.all(head.map(s => probe(s).then(format => (format ? { ...s, format, headers: playerHeaders(s.headers) } : null))))
+    .then(out => out.filter(Boolean))
+}
+
 G.__velaNuvio = {
   register(id, factory) { factories[id] = factory },
   ids() { return Object.keys(factories) },
@@ -351,7 +401,7 @@ G.__velaNuvio = {
   run(id, tmdbId, mediaType, season, episode, timeoutMs, cb) {
     let done = false
     const finish = (err, value) => { if (done) return; done = true; G.clearTimeout(timer); cb(err, value) }
-    const timer = G.setTimeout(() => finish('Timed out', null), Number(timeoutMs) > 0 ? Number(timeoutMs) : 45000)
+    const timer = G.setTimeout(() => finish('Timed out', null), Number(timeoutMs) > 0 ? Number(timeoutMs) : 55000)
     try {
       G.SCRAPER_ID = id
       const mod = load(id)
@@ -359,7 +409,8 @@ G.__velaNuvio = {
       const s = mediaType === 'tv' && season != null ? Number(season) : undefined
       const e = mediaType === 'tv' && episode != null ? Number(episode) : undefined
       Promise.resolve(mod.getStreams(String(tmdbId), mediaType, s, e))
-        .then(list => finish(null, JSON.stringify(normalize(list))))
+        .then(list => verify(normalize(list)))
+        .then(list => finish(null, JSON.stringify(list)))
         .catch(err => finish(str(err && err.message ? err.message : err) || 'Provider failed', null))
     } catch (err) {
       finish(str(err && err.message ? err.message : err) || 'Provider failed', null)

@@ -353,13 +353,17 @@ final class AnimeViewModel {
         // MAL id verified from the watch page (never a title guess).
         let store = store
         playerManager.autoSkipEnabled = { store.autoSkipIntro }
+        playerManager.loadIntroOverride = { store.introOverrides[$0] }
+        playerManager.saveIntroOverride = { key, value in store.introOverrides[key] = value }
         var fetch: (@Sendable (Double) async -> [SkipSegment])?
         if let identity = details?.identity, let episode = selectedEpisode?.number {
             fetch = { duration in
                 await IntroSkipService.shared.anime(identity: identity, episode: episode, duration: duration)
             }
         }
-        playerManager.configureIntroSkip(episodeKey: progressID, streamSegments: source.segments, fetch: fetch)
+        let showKey = selected.map { "\($0.type.rawValue):\($0.tmdbId)" }
+        playerManager.configureIntroSkip(episodeKey: progressID, showKey: showKey, showTitle: selected?.title ?? "",
+                                         streamSegments: source.segments, fetch: fetch)
     }
 
     /// A source failed in AVPlayer: try the next one (same audio first).

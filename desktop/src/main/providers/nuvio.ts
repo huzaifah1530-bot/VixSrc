@@ -10,6 +10,8 @@ import { parseNuvioRoute } from '@shared/nuvio'
 
 interface RawStream {
   name: string; title: string; url: string; quality: string; size: string
+  /** What the URL actually served when probed (runtime `verify`). */
+  format: 'hls' | 'mp4' | 'mkv' | 'ts' | 'webm'
   headers: Record<string, string>
   subtitles: { url: string; name: string; language: string; headers: Record<string, string> }[]
 }
@@ -24,6 +26,7 @@ const debug = !!process.env.VELA_PROVIDER_DEBUG
 async function hostFetch(raw: string): Promise<string> {
   const req = JSON.parse(raw) as {
     url: string; method: string; headers: [string, string][]; body?: string; bodyBase64?: string; redirect: string; timeout: number
+    maxBytes?: number
   }
   const headers = new Headers()
   for (const [k, v] of req.headers ?? []) { try { headers.append(k, v) } catch { /* invalid header */ } }
@@ -34,13 +37,29 @@ async function hostFetch(raw: string): Promise<string> {
     redirect: req.redirect === 'manual' ? 'manual' : req.redirect === 'error' ? 'error' : 'follow',
     signal: AbortSignal.timeout(Math.min(req.timeout || 20_000, 60_000))
   })
-  const bytes = Buffer.from(await res.arrayBuffer())
+  const bytes = await readBody(res, req.maxBytes)
   const pairs: [string, string][] = []
   res.headers.forEach((v, k) => { if (k !== 'set-cookie') pairs.push([k, v]) })
   for (const c of res.headers.getSetCookie()) pairs.push(['set-cookie', c])
   const out: Record<string, unknown> = { status: res.status, statusText: res.statusText, url: res.url || req.url, redirected: res.redirected, headers: pairs }
   try { out.text = utf8.decode(bytes) } catch { out.base64 = bytes.toString('base64') }
   return JSON.stringify(out)
+}
+
+/** Whole body, or only the first `max` bytes (then the download is cancelled). */
+async function readBody(res: Response, max?: number): Promise<Buffer> {
+  if (!max || max <= 0 || !res.body) return Buffer.from(await res.arrayBuffer())
+  const reader = res.body.getReader()
+  const chunks: Uint8Array[] = []
+  let size = 0
+  while (size < max) {
+    const { done, value } = await reader.read()
+    if (done) break
+    chunks.push(value)
+    size += value.length
+  }
+  reader.cancel().catch(() => {})
+  return Buffer.concat(chunks).subarray(0, max)
 }
 
 let api: Api | null = null
@@ -97,11 +116,14 @@ export async function nuvioStreams(pageUrl: string): Promise<ResolvedStream[] | 
     const quality = (s.quality || QUALITY.exec(`${s.name} ${s.title}`)?.[1] || '').toLowerCase()
     return {
       id: s.url,
-      name: label(s, route.provider.name),
+      name: label(s, route.provider.name) + (s.format === 'mkv' ? ' · MKV' : ''),
       url: s.url,
       requestHeaders: s.headers,
       quality: quality || undefined,
-      subtitles
+      subtitles,
+      format: s.format
     }
   })
+    // HLS and MP4 play reliably; MKV only for some codecs, so try it last.
+    .sort((a, b) => Number(a.format === 'mkv') - Number(b.format === 'mkv'))
 }

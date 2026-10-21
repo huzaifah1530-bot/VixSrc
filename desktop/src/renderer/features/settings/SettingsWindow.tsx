@@ -9,7 +9,7 @@ import { CAPTION_SIZES, DEFAULT_ANIME_SERVERS, DEFAULT_SERVERS, SEEK_OPTIONS, us
 import { useLibrary } from '@/stores/library'
 import { exportBackup, importBackup } from '@/lib/backup'
 import { toast } from '@/stores/ui'
-import { cx, uuid } from '@/lib/format'
+import { cx, formatTime, uuid } from '@/lib/format'
 import type { UpdateCheckResult } from '@shared/types'
 import { startLinkStatus, useLink } from '@/stores/link'
 
@@ -104,6 +104,16 @@ function General() {
         <Field label="Caption size" hint="Subtitles drawn by Vela’s player">
           <div className="segmented small">{CAPTION_SIZES.map(c => <button key={c.v} className={cx('seg', (s.captionScale ?? 1) === c.v && 'is-active')} onClick={() => s.set({ captionScale: c.v })}>{c.label}</button>)}</div>
         </Field>
+      </Group>
+      <Group title="Custom intro times" footer="Set these from the Intro menu in the player while a show or anime is playing. They apply to every episode of that show and replace TheIntroDB / AniSkip times.">
+        {Object.keys(s.introOverrides ?? {}).length === 0 && <div className="form-row"><span className="muted">None yet.</span></div>}
+        {Object.entries(s.introOverrides ?? {}).map(([key, o]) => (
+          <Field key={key} label={o.title || key} hint={`${o.start == null ? '–' : formatTime(o.start)} – ${o.end == null ? '–' : formatTime(o.end)}${o.start == null || o.end == null ? ' (incomplete, not used)' : ''}`}>
+            <button className="tb-btn danger" aria-label={`Remove custom intro for ${o.title || key}`} onClick={() => {
+              const next = { ...s.introOverrides }; delete next[key]; s.set({ introOverrides: next })
+            }}><Icon name="trash" /></button>
+          </Field>
+        ))}
       </Group>
       <Group title="Appearance" footer="Performance modes turn off the glass blur on slower PCs. Ultra also removes translucency.">
         <Field label="Poster size">

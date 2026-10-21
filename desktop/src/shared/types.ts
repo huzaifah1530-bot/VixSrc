@@ -57,7 +57,15 @@ export interface SkipSegment {
   kind: 'intro' | 'outro'
   start: number
   end: number
-  source: 'stream' | 'theintrodb' | 'aniskip'
+  source: 'stream' | 'theintrodb' | 'aniskip' | 'custom'
+}
+
+/** Intro times the user set for a whole show (overrides found ones). */
+export interface IntroOverride {
+  title: string
+  /** Seconds; both must be set for the override to apply. */
+  start: number | null
+  end: number | null
 }
 
 export interface ResolvedStream {
@@ -70,6 +78,8 @@ export interface ResolvedStream {
   subtitles: ExternalSubtitle[]
   /** Timestamps the host ships with this exact stream (anime). */
   segments?: SkipSegment[]
+  /** Container the URL serves, when known (Nuvio streams are probed). */
+  format?: 'hls' | 'mp4' | 'mkv' | 'ts' | 'webm'
 }
 
 export interface AnimeShow {
