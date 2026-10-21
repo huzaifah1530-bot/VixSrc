@@ -44,6 +44,8 @@ struct AnimeKaiClient {
         var show: Show
         var description: String
         var episodes: [EpisodeInfo]
+        /// What the watch page says about the show; used to find its MAL id.
+        var identity: AnimeIdentity? = nil
     }
 
     enum ResolveError: LocalizedError {
@@ -142,7 +144,30 @@ struct AnimeKaiClient {
         let show = Show(slug: slug, title: heading.isEmpty ? slug : heading, japaneseTitle: japanese,
                         posterURL: poster, kind: kind,
                         subCount: episodes.filter(\.hasSub).count, dubCount: episodes.filter(\.hasDub).count)
-        return Details(show: show, description: synopsis, episodes: episodes)
+        return Details(show: show, description: synopsis, episodes: episodes,
+                       identity: pageIdentity(html: html, heading: heading, japanese: japanese))
+    }
+
+    /// Type / first air date / episode total / titles from the watch page.
+    private static func pageIdentity(html: String, heading: String, japanese: String) -> AnimeIdentity {
+        func meta(_ label: String) -> String {
+            firstMatch(label + #":\s*<span[^>]*>([\s\S]*?)</span>"#, in: html, group: 1)
+                .map { decodeEntities(stripTags($0)).trimmingCharacters(in: .whitespacesAndNewlines) } ?? ""
+        }
+        let names = firstMatch(#"class="names[^"]*"[^>]*>([\s\S]*?)</div>"#, in: html, group: 1)
+            .map { decodeEntities(stripTags($0)) } ?? ""
+        var titles: [String] = []
+        for t in [heading, japanese] + names.components(separatedBy: ";") {
+            let trimmed = t.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty && !titles.contains(trimmed) { titles.append(trimmed) }
+        }
+        let episodes = Int(meta("Episodes"))
+        return AnimeIdentity(
+            titles: titles,
+            type: AnimeIdentity.normType(meta("Type")),
+            aired: AnimeIdentity.parseAired(meta("Aired")),
+            episodes: (episodes ?? 0) > 0 ? episodes : nil
+        )
     }
 
     private static func parseCards(_ html: String) -> [Show] {
@@ -193,6 +218,8 @@ struct AnimeKaiClient {
         var audio: String
         var quality: String
         var subtitles: [ExternalSubtitle]
+        /// Opening / ending the host ships with this stream.
+        var segments: [SkipSegment] = []
 
         var resolved: StreamURLExtractor.ResolvedStream {
             StreamURLExtractor.ResolvedStream(
@@ -202,7 +229,8 @@ struct AnimeKaiClient {
                 requestHeaders: headers,
                 audio: audio,
                 quality: quality,
-                subtitles: subtitles
+                subtitles: subtitles,
+                segments: segments
             )
         }
     }
@@ -332,7 +360,14 @@ struct AnimeKaiClient {
         }
         // Dubs carry an English track too; it's still useful (signs/songs),
         // so it's offered but the player only auto-enables it for subs.
+        // MegaPlay ships the episode's opening/ending; 0/0 means none.
+        let segments = SkipSegments.fromStream(json)
         return try await variants(master: master, referer: referer, audio: audio, subtitles: tracks)
+            .map { stream in
+                var s = stream
+                s.segments = segments
+                return s
+            }
     }
 
     private static func playlistURL(from value: Any?) -> String? {

@@ -98,6 +98,9 @@ function General() {
         <Field label="Skip interval" hint="Arrow keys, J / L and the skip buttons">
           <div className="segmented small">{SEEK_OPTIONS.map(v => <button key={v} className={cx('seg', s.seekInterval === v && 'is-active')} onClick={() => s.set({ seekInterval: v })}>{v}s</button>)}</div>
         </Field>
+        <Field label="Automatically skip intros" hint="When the intro’s timestamps are known (TheIntroDB, AniSkip). Skip Intro (S) is always offered. In a watch party only the host skips.">
+          <Toggle label="Automatically skip intros" checked={!!s.autoSkipIntro} onChange={v => s.set({ autoSkipIntro: v })} />
+        </Field>
         <Field label="Caption size" hint="Subtitles drawn by Vela’s player">
           <div className="segmented small">{CAPTION_SIZES.map(c => <button key={c.v} className={cx('seg', (s.captionScale ?? 1) === c.v && 'is-active')} onClick={() => s.set({ captionScale: c.v })}>{c.label}</button>)}</div>
         </Field>
@@ -150,7 +153,7 @@ function Servers({ kind }: { kind: 'regular' | 'anime' }) {
       title={kind === 'anime' ? 'Anime servers' : 'Stream servers'}
       footer={kind === 'anime'
         ? 'Sites that use the AnimeKai layout. The first server feeds the Anime catalogue.'
-        : 'Each server is tried as <address>/movie/<id> or /tv/<id>/<season>/<episode>. VixSrc and Cinezo play in the native player; others open their own web player.'}
+        : 'Each server is tried as <address>/movie/<id> or /tv/<id>/<season>/<episode>. Nuvio providers (addresses ending in .js) and VixSrc play in the native player; others open their own web player. Test runs a provider against Fight Club.'}
     >
       <div className={cx('server-list', disabled && 'is-disabled')}>
         {list.map((s, i) => (

@@ -54,7 +54,15 @@ final class CatalogViewModel {
     private(set) var nativeSources: [StreamURLExtractor.ResolvedStream] = []
     private(set) var selectedNativeSourceIndex = 0
     private(set) var isResolvingStream = false
+    /// Set when a Nuvio provider server has nothing playable (no web
+    /// player exists to fall back to).
+    private(set) var streamErrorMessage: String?
     private(set) var cast: [CastMember] = []
+
+    /// True when the current server is a Nuvio provider script.
+    var currentStreamIsProvider: Bool {
+        currentStreamURL.map(NuvioRoute.isProviderURL) ?? false
+    }
 
     let playerManager = VideoPlayerManager()
     private var streamResolutionTask: Task<Void, Never>?
@@ -636,7 +644,7 @@ final class CatalogViewModel {
     }
 
     func reloadPlayer() {
-        if DeviceLink.shared.routesPlayback {
+        if DeviceLink.shared.routesPlayback || currentStreamIsProvider {
             startPlaybackForCurrentSelection()
             return
         }
@@ -655,6 +663,7 @@ final class CatalogViewModel {
 
     private func resolvePlaybackURL() {
         currentNativeVideoURL = nil
+        streamErrorMessage = nil
         isResolvingStream = true
         streamResolutionTask?.cancel()
         guard let pageURL = currentStreamURL else { return }
@@ -667,6 +676,9 @@ final class CatalogViewModel {
                 self.nativeSources = sources
                 self.selectedNativeSourceIndex = 0
                 self.loadNativeSource(at: 0)
+            case .embed where NuvioRoute.isProviderURL(pageURL):
+                self.playerManager.cleanup()
+                self.streamErrorMessage = "\(self.currentServerName) found no streams. Try another server."
             case .embed:
                 self.playerManager.cleanup()
                 if let item = self.selected {
@@ -708,6 +720,22 @@ final class CatalogViewModel {
             subtitle: nowPlayingEpisodeSubtitle,
             artworkURL: selected?.posterURL
         )
+        configureIntroSkip(progressID: progressID)
+    }
+
+    /// TheIntroDB lookup for TMDB TV episodes (TMDB id + TMDB numbering).
+    private func configureIntroSkip(progressID: String) {
+        let store = store
+        playerManager.autoSkipEnabled = { store.autoSkipIntro }
+        var fetch: (@Sendable (Double) async -> [SkipSegment])?
+        if let item = selected, item.type == .tv, let season = selectedSeason?.seasonNumber,
+           let episode = selectedEpisode?.episodeNumber {
+            let tmdbId = item.tmdbId
+            fetch = { duration in
+                await IntroSkipService.shared.tv(tmdbId: tmdbId, season: season, episode: episode, duration: duration)
+            }
+        }
+        playerManager.configureIntroSkip(episodeKey: progressID, streamSegments: [], fetch: fetch)
     }
 
     private var nowPlayingEpisodeSubtitle: String? {
@@ -767,6 +795,21 @@ final class CatalogViewModel {
     func rejectNativeStream(_ url: URL) {
         guard currentNativeVideoURL == url else { return }
         rejectedNativeStreamURLs.insert(url)
+        // Provider servers: try the next untried source, then give up
+        // (there's no web player behind a provider script).
+        if currentStreamIsProvider {
+            if let next = nativeSources.indices.first(where: { !rejectedNativeStreamURLs.contains(nativeSources[$0].url) }) {
+                selectedNativeSourceIndex = next
+                loadNativeSource(at: next)
+                return
+            }
+            playerManager.cleanup()
+            currentNativeVideoURL = nil
+            nativeSources = []
+            selectedNativeSourceIndex = 0
+            streamErrorMessage = "None of the streams would play. Try another server."
+            return
+        }
         playerManager.cleanup()
         currentNativeVideoURL = nil
         nativeSources = []
@@ -784,6 +827,7 @@ final class CatalogViewModel {
         nativeSources = []
         selectedNativeSourceIndex = 0
         isResolvingStream = false
+        streamErrorMessage = nil
         streamResolutionTask?.cancel()
         playerManager.cleanup()
         startHeroCycle()

@@ -348,6 +348,18 @@ final class AnimeViewModel {
         )
         // Soft subs switch on by default for the subtitled track only.
         playerManager.setExternalSubtitles(source.subtitles, autoSelect: source.audio == "Sub")
+
+        // Intro: the stream's own timestamps win; otherwise AniSkip via a
+        // MAL id verified from the watch page (never a title guess).
+        let store = store
+        playerManager.autoSkipEnabled = { store.autoSkipIntro }
+        var fetch: (@Sendable (Double) async -> [SkipSegment])?
+        if let identity = details?.identity, let episode = selectedEpisode?.number {
+            fetch = { duration in
+                await IntroSkipService.shared.anime(identity: identity, episode: episode, duration: duration)
+            }
+        }
+        playerManager.configureIntroSkip(episodeKey: progressID, streamSegments: source.segments, fetch: fetch)
     }
 
     /// A source failed in AVPlayer: try the next one (same audio first).

@@ -1,7 +1,9 @@
 // Port of iOS StreamURLExtractor: turns an embed page URL into direct
 // HLS/MP4 sources for the native player. Empty result = use the embed.
 import type { ResolvedStream } from '@shared/types'
+import { isNuvioUrl } from '@shared/nuvio'
 import { MOBILE_UA, DESKTOP_UA, firstMatch, getJson, getResponse, getText } from '../http'
+import { nuvioStreams } from '../providers/nuvio'
 
 const stream = (name: string, url: string, headers: Record<string, string>): ResolvedStream => ({
   id: url, name, url, requestHeaders: headers, subtitles: []
@@ -16,6 +18,8 @@ export async function resolveStreams(pageUrl: string): Promise<ResolvedStream[]>
   if (['mp4', 'm3u8', 'm3u', 'webm', 'mov'].includes(ext) || lower.includes('.m3u8?') || lower.includes('.mp4?')) {
     return [stream('Direct stream', pageUrl, {})]
   }
+  // Nuvio provider: run it and never scrape the script URL as a page.
+  if (isNuvioUrl(pageUrl)) return (await nuvioStreams(pageUrl)) ?? []
   const host = url.hostname.toLowerCase()
   if (host.includes('vixsrc')) {
     const s = await vixSrc(url).catch(() => null)

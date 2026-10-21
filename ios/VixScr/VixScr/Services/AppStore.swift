@@ -37,6 +37,9 @@ final class AppStore {
         static let animeSearchHistory = "vixsrc_live_anime_search_history"
         static let seekInterval = "vixsrc_live_seek_interval"
         static let animeEnabled = "vixsrc_live_anime_enabled"
+        static let autoSkipIntro = "vela_auto_skip_intro"
+        /// Set once the saved server list has had the Nuvio import applied.
+        static let serversMigratedNuvio = "vela_servers_migrated_nuvio_v1"
     }
 
     /// Optional built-in credential. The Electron app hardcodes one directly
@@ -157,6 +160,22 @@ final class AppStore {
                 storedSeekInterval = newValue
                 defaults.set(newValue, forKey: Keys.seekInterval)
                 onSyncableChange?()
+            }
+        }
+    }
+
+    /// Seek past known intros automatically (TheIntroDB / AniSkip). Off by
+    /// default; the Skip Intro button is shown either way.
+    @ObservationIgnored private var storedAutoSkipIntro: Bool
+    var autoSkipIntro: Bool {
+        get {
+            access(keyPath: \.autoSkipIntro)
+            return storedAutoSkipIntro
+        }
+        set {
+            withMutation(keyPath: \.autoSkipIntro) {
+                storedAutoSkipIntro = newValue
+                defaults.set(newValue, forKey: Keys.autoSkipIntro)
             }
         }
     }
@@ -291,7 +310,14 @@ final class AppStore {
         self.storedCardSize = CardSize(rawValue: defaults.string(forKey: Keys.cardSize) ?? "large") ?? .large
         self.storedPerformanceMode = defaults.bool(forKey: Keys.perfMode)
         self.storedUltraPerformanceMode = defaults.bool(forKey: Keys.ultraPerfMode)
-        self.storedServers = AppStore.load([StreamServer].self, key: Keys.servers, defaults: defaults) ?? StreamServer.defaults
+        self.storedAutoSkipIntro = defaults.bool(forKey: Keys.autoSkipIntro)
+        var servers = AppStore.load([StreamServer].self, key: Keys.servers, defaults: defaults) ?? StreamServer.defaults
+        if !defaults.bool(forKey: Keys.serversMigratedNuvio) {
+            servers = StreamServer.migratedForNuvio(servers)
+            if let data = try? JSONEncoder().encode(servers) { defaults.set(data, forKey: Keys.servers) }
+            defaults.set(true, forKey: Keys.serversMigratedNuvio)
+        }
+        self.storedServers = servers
         self.storedAnimeServers = AppStore.load([AnimeServer].self, key: Keys.animeServers, defaults: defaults) ?? AnimeServer.defaults
         self.storedWatchProgress = AppStore.load([WatchProgress].self, key: Keys.watchProgress, defaults: defaults) ?? []
     }

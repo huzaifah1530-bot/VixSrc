@@ -7,6 +7,7 @@ import { useSettings } from './settings'
 import { useLibrary } from './library'
 import { toast } from './ui'
 import { animeSlug } from '@/lib/tmdb'
+import { isNuvioUrl } from '@shared/nuvio'
 
 export interface TvContext {
   seasons: { seasonNumber: number; episodeCount: number }[]
@@ -98,6 +99,9 @@ export const usePlayer = create<PlayerState>((set, get) => {
     if (sources.length) {
       set({ resolving: false, status: null, sources })
       loadSource(0)
+    } else if (isNuvioUrl(url)) {
+      // Provider servers have no web player to fall back to.
+      set({ resolving: false, status: null, error: `${useSettings.getState().servers[serverIndex]?.name ?? 'This server'} found no streams. Try another server.` })
     } else {
       set({ resolving: false, status: null, embedUrl: url })
     }
@@ -204,7 +208,8 @@ export const usePlayer = create<PlayerState>((set, get) => {
       window.vela.setPlaybackHeaders(null)
       if (kind === 'tmdb' && item) {
         const url = embedFor(item, tv, serverIndex)
-        set({ sources: [], embedUrl: url, error: url ? null : reason ?? 'Stream failed to play' })
+        if (isNuvioUrl(url)) set({ sources: [], error: 'None of the streams would play. Try another server.' })
+        else set({ sources: [], embedUrl: url, error: url ? null : reason ?? 'Stream failed to play' })
       } else {
         set({ sources: [], error: 'None of the streams would play. Try another server.' })
       }

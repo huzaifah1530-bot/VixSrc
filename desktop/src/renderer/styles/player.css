@@ -41,6 +41,9 @@
 
 .player-bottom { left: 0; right: 0; bottom: 0; padding: 0 22px 18px; }
 .next-ep { position: absolute; right: 22px; bottom: 64px; animation: pop-in .3s var(--spring); }
+/* Stays up while the controls auto-hide, like the platform players. */
+.skip-intro { position: absolute; z-index: 6; right: 22px; bottom: 82px; animation: pop-in .3s var(--spring); transition: bottom .3s var(--ease); }
+.player.is-idle .skip-intro { bottom: 28px; }
 @keyframes pop-in { from { opacity: 0; transform: scale(.85) translateY(8px); } }
 .timeline-row { display: flex; align-items: center; gap: 12px; }
 .time { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text-2); min-width: 48px; text-align: center; }

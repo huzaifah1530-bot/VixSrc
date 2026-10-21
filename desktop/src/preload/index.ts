@@ -13,6 +13,10 @@ const api: VelaApi = {
     findSlug: (base, title) => ipcRenderer.invoke('anime:find-slug', base, title),
     streams: (base, ids) => ipcRenderer.invoke('anime:streams', base, ids)
   },
+  skip: {
+    tv: (tmdbId, season, episode, duration) => ipcRenderer.invoke('skip:tv', tmdbId, season, episode, duration),
+    anime: (identity, episode, duration) => ipcRenderer.invoke('skip:anime', identity, episode, duration)
+  },
   fetchText: (url, headers) => ipcRenderer.invoke('fetch-text', url, headers),
   checkServer: url => ipcRenderer.invoke('check-server', url),
   setPlaybackHeaders: h => ipcRenderer.invoke('playback-headers', h),

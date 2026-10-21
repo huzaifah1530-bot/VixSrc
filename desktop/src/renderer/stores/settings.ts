@@ -3,14 +3,22 @@ import { persist } from 'zustand/middleware'
 import type { AnimeServer, StreamServer } from '@shared/types'
 import { legacySettings } from '@/lib/legacy'
 import { uuid } from '@/lib/format'
+import { nuvioServers } from '@shared/nuvio'
 
 export const DEFAULT_SERVERS: StreamServer[] = [
   { id: uuid(), name: 'VixSrc', base: 'https://vixsrc.to' },
-  { id: uuid(), name: 'ApiPlayer', base: 'https://apiplayer.ru/embed' },
-  { id: uuid(), name: 'Cinezo', base: 'https://player.cinezo.live/embed' },
-  { id: uuid(), name: 'Vidlink', base: 'https://vidlink.pro' },
-  { id: uuid(), name: 'VidSrc', base: 'https://vidsrc.wiki/embed' }
+  { id: uuid(), name: 'VidSrc', base: 'https://vidsrc.wiki/embed' },
+  ...nuvioServers(uuid)
 ]
+/** Embed servers dropped when the Nuvio providers were imported (settings v2). */
+const RETIRED_SERVER = /^https?:\/\/(?:[^/]*\.)?(?:apiplayer\.ru|cinezo\.live|vidlink\.pro)(?:\/|$)/i
+
+/** v1 → v2: drop the retired embeds and append any missing Nuvio providers. */
+export function migrateServers(servers: StreamServer[]): StreamServer[] {
+  const kept = servers.filter(s => !RETIRED_SERVER.test(s.base))
+  const have = new Set(kept.map(s => s.base.replace(/\/+$/, '').toLowerCase()))
+  return [...kept, ...nuvioServers(uuid).filter(s => !have.has(s.base.toLowerCase()))]
+}
 export const DEFAULT_ANIME_SERVERS: AnimeServer[] = [
   { id: uuid(), name: 'AnimeKai', base: 'https://animekaitv.to' },
   { id: uuid(), name: 'AniKoto', base: 'https://anikototv.to' }
@@ -35,6 +43,8 @@ export interface SettingsState {
   muted: boolean
   /** Caption text scale, same steps as iOS (0.5 … 1.6). */
   captionScale: number
+  /** Seek past known intros automatically (TheIntroDB / AniSkip). Off by default. */
+  autoSkipIntro: boolean
   set: (patch: Partial<Omit<SettingsState, 'set'>>) => void
 }
 
@@ -57,10 +67,19 @@ export const useSettings = create<SettingsState>()(
       volume: 1,
       muted: false,
       captionScale: 1,
+      autoSkipIntro: false,
       ...(fresh ? legacySettings() : {}),
       set: patch => set(patch)
     }),
-    { name: KEY, version: 1 }
+    {
+      name: KEY,
+      version: 2,
+      migrate: (persisted, version) => {
+        const s = (persisted ?? {}) as Partial<SettingsState>
+        if (version < 2 && Array.isArray(s.servers)) s.servers = migrateServers(s.servers)
+        return s as SettingsState
+      }
+    }
   )
 )
 

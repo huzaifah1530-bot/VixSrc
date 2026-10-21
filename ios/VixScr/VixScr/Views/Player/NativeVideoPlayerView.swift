@@ -138,6 +138,8 @@ private struct PlayerSurface: View {
                 }
 
                 speedBadge
+
+                skipIntroButton
             }
             .frame(width: geo.size.width, height: geo.size.height)
             .clipped()
@@ -344,6 +346,43 @@ private struct PlayerSurface: View {
             .padding(.horizontal, isFullscreen ? 44 : 14)
             .padding(.top, isFullscreen ? 20 : 10)
             .padding(.bottom, isFullscreen ? 20 : 8)
+        }
+    }
+
+    /// Shown only while the playhead is inside a known intro. Stays up when
+    /// the controls auto-hide; hidden for watch-party viewers who can't
+    /// control playback (the host's skip moves them anyway).
+    @ViewBuilder private var skipIntroButton: some View {
+        let party = PartySession.shared
+        if playerManager.activeIntro != nil, !playerManager.isLoading, playerManager.error == nil,
+           !(party.active && !party.canControl) {
+            VStack {
+                Spacer()
+                HStack {
+                    Spacer()
+                    Button {
+                        playerManager.skipIntro()
+                        reveal(autoHide: true)
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "forward.fill")
+                            Text("Skip Intro").lineLimit(1)
+                        }
+                        .font((isFullscreen ? Font.subheadline : Font.footnote).weight(.semibold))
+                        .foregroundStyle(.black)
+                        .padding(.horizontal, isFullscreen ? 18 : 14)
+                        .padding(.vertical, isFullscreen ? 11 : 8)
+                        .background(.white, in: Capsule())
+                        .shadow(color: .black.opacity(0.3), radius: 8, y: 3)
+                    }
+                    .buttonStyle(PlayerButtonStyle())
+                    .accessibilityLabel("Skip intro")
+                }
+            }
+            .padding(.horizontal, isFullscreen ? 44 : 14)
+            .padding(.bottom, showControls ? (isFullscreen ? 84 : 56) : (isFullscreen ? 24 : 12))
+            .animation(spring, value: showControls)
+            .transition(.move(edge: .trailing).combined(with: .opacity))
         }
     }
 

@@ -177,6 +177,21 @@ struct PlayerSheet: View {
                         },
                         options: playerOptions
                     )
+                } else if let message = viewModel.streamErrorMessage {
+                    Color.black
+                    VStack(spacing: 12) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.title2)
+                        Text(message)
+                            .font(.subheadline)
+                            .multilineTextAlignment(.center)
+                    }
+                    .foregroundStyle(.white.opacity(0.85))
+                    .padding(24)
+                } else if viewModel.currentStreamIsProvider {
+                    // Provider servers never load a web page; wait for streams.
+                    Color.black
+                    ProgressView().tint(.white)
                 } else if let url = viewModel.currentStreamURL {
                     StreamWebView(
                         url: url,

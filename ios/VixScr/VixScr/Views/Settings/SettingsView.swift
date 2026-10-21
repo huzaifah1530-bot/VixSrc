@@ -191,10 +191,14 @@ struct SettingsView: View {
                     Text(size.label).tag(size.rawValue)
                 }
             }
+            Toggle("Automatically Skip Intros", isOn: Binding(
+                get: { store.autoSkipIntro },
+                set: { store.autoSkipIntro = $0 }
+            ))
         } header: {
             Text("Player")
         } footer: {
-            Text("Double-tap the left or right of the video to skip back or forward. Hold either edge for 2× speed. Caption Size applies to subtitles Vela draws itself, such as anime subtitles.")
+            Text("Double-tap the left or right of the video to skip back or forward. Hold either edge for 2× speed. Caption Size applies to subtitles Vela draws itself, such as anime subtitles. Skip Intro appears when an intro's timestamps are known (TheIntroDB, AniSkip); in a watch party only the host skips automatically.")
         }
     }
 

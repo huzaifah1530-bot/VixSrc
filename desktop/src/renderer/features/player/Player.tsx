@@ -15,6 +15,7 @@ import { imageUrl } from '@/lib/tmdb'
 import { registerPlayer } from '@/lib/remote'
 import { party, partyActive, useParty } from '@/lib/party'
 import { PartyButton, PartyPanel } from '../party/PartyPanel'
+import { useIntroSkip } from './useIntroSkip'
 
 type Caption = { kind: 'off' } | { kind: 'external'; index: number } | { kind: 'hls'; index: number }
 
@@ -166,6 +167,11 @@ export function Player() {
     return true
   }, [])
 
+  const introSkip = useIntroSkip({ native, time, duration, seekTo })
+  // Keyboard handler reads the latest intro without re-subscribing.
+  const introSkipRef = useRef<(() => void) | null>(null)
+  introSkipRef.current = introSkip.intro && !partyLocked ? introSkip.skip : null
+
   const skip = useCallback((dir: -1 | 1) => {
     const v = video.current
     if (!v) return
@@ -253,6 +259,7 @@ export function Player() {
         case 'm': case 'M': setSettings({ muted: !muted }); break
         case 'f': case 'F': toggleFullscreen(); break
         case 'n': case 'N': if (usePlayer.getState().hasNext()) usePlayer.getState().next(); break
+        case 's': case 'S': if (introSkipRef.current) { e.preventDefault(); introSkipRef.current() } break
         case 'c': case 'C':
           if (source?.subtitles.length) setCaption(c => (c.kind === 'off' ? { kind: 'external', index: 0 } : { kind: 'off' }))
           break
@@ -465,6 +472,12 @@ export function Player() {
           </button>
         </div>
       </div>
+
+      {introSkip.intro && !partyLocked && !p.error && (
+        <button className="btn btn-primary skip-intro" onClick={() => { introSkip.skip(); poke() }}>
+          <Icon name="next" size={13} fill />Skip Intro
+        </button>
+      )}
 
       {native && (
         <>

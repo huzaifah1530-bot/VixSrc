@@ -263,6 +263,89 @@ final class VideoPlayerManager {
 
     var isWaiting: Bool { player?.timeControlStatus == .waitingToPlayAtSpecifiedRate || isLoading }
 
+    // MARK: - Intro skipping
+    //
+    // Timestamps come from the stream itself (anime hosts) or a background
+    // lookup (TheIntroDB / AniSkip) that starts once the duration is known,
+    // so playback never waits for it. Validated against the real duration.
+
+    /// Valid segments for the current item.
+    private(set) var skipSegments: [SkipSegment] = []
+    /// The intro the playhead is in; drives the Skip Intro button.
+    var activeIntro: SkipSegment? { SkipSegments.activeIntro(skipSegments, at: currentTime) }
+    /// Read on every tick so turning the setting on/off applies immediately.
+    @ObservationIgnored var autoSkipEnabled: () -> Bool = { false }
+    @ObservationIgnored private var introKey = ""
+    @ObservationIgnored private var introRaw: [SkipSegment]?
+    @ObservationIgnored private var introFetch: (@Sendable (Double) async -> [SkipSegment])?
+    @ObservationIgnored private var introFetchStarted = false
+    @ObservationIgnored private var introLoadedAt = Date()
+    @ObservationIgnored private var introTask: Task<Void, Never>?
+    /// Successful lookups this session, by episode key (survive source switches).
+    @ObservationIgnored private var fetchedIntros: [String: [SkipSegment]] = [:]
+    @ObservationIgnored private var autoSkipTracker = AutoSkipTracker()
+    @ObservationIgnored private var autoSkipTrackerKey = ""
+
+    /// Call right after `load`. `episodeKey` is the progress id; `fetch` is
+    /// given the duration (0 if unknown) and must return [] on failure.
+    func configureIntroSkip(episodeKey: String, streamSegments: [SkipSegment],
+                            fetch: (@Sendable (Double) async -> [SkipSegment])?) {
+        introTask?.cancel()
+        introKey = episodeKey
+        introLoadedAt = Date()
+        introFetchStarted = false
+        introFetch = nil
+        introRaw = nil
+        skipSegments = []
+        if autoSkipTrackerKey != episodeKey {
+            autoSkipTracker = AutoSkipTracker()
+            autoSkipTrackerKey = episodeKey
+        } else {
+            autoSkipTracker.restart()
+        }
+        if streamSegments.contains(where: { $0.kind == .intro }) {
+            applyIntro(streamSegments)
+        } else if let cached = fetchedIntros[episodeKey] {
+            applyIntro(cached)
+        } else {
+            introFetch = fetch
+        }
+    }
+
+    func skipIntro() {
+        guard let intro = activeIntro else { return }
+        seek(to: intro.end)
+    }
+
+    private func applyIntro(_ raw: [SkipSegment]) {
+        introRaw = raw
+        skipSegments = SkipSegments.valid(raw, duration: duration)
+        autoSkipTracker.restart()
+    }
+
+    private func tickIntro(_ t: Double) {
+        if introRaw == nil, let fetch = introFetch, !introFetchStarted,
+           duration > 0 || Date().timeIntervalSince(introLoadedAt) > 6 {
+            introFetchStarted = true
+            let key = introKey
+            let length = duration
+            introTask = Task { @MainActor [weak self] in
+                let list = await fetch(length)
+                // A newer episode may have loaded meanwhile: drop stale answers.
+                guard let self, !Task.isCancelled, self.introKey == key else { return }
+                self.fetchedIntros[key] = list
+                self.applyIntro(list)
+            }
+        }
+        guard !skipSegments.isEmpty, !introKey.isEmpty else { return }
+        // In a watch party only the host skips, through the room's seek.
+        let party = PartySession.shared
+        let allowed = autoSkipEnabled() && (!party.active || party.hostId == party.me)
+        if let target = autoSkipTracker.step(episodeKey: introKey, segments: skipSegments, time: t, allowed: allowed) {
+            seek(to: target)
+        }
+    }
+
     func rawPlay() { player?.play(); isPlaying = true }
     func rawPause() { player?.pause(); isPlaying = false }
     func rawSeek(to seconds: Double) {
@@ -378,6 +461,7 @@ final class VideoPlayerManager {
 
                 self.currentTime = seconds
                 self.updateCaption(at: seconds)
+                self.tickIntro(seconds)
 
                 // Notify progress update
                 if self.duration > 0 {
@@ -443,6 +527,7 @@ final class VideoPlayerManager {
         let seconds = item.duration.seconds
         guard seconds.isFinite, seconds > 0 else { return }
         duration = seconds
+        if let introRaw { skipSegments = SkipSegments.valid(introRaw, duration: seconds) }
         publishNowPlayingInfo()
         if pendingResumePosition > 0 {
             let resume = min(pendingResumePosition, seconds)
@@ -676,6 +761,15 @@ final class VideoPlayerManager {
         nowPlayingArtwork = nil
         nowPlayingArtworkURL = nil
         nowPlayingSubtitle = nil
+        // Lookups in flight are dropped; per-episode caches and the
+        // "already skipped" state survive for the next load.
+        introTask?.cancel()
+        introTask = nil
+        introKey = ""
+        introRaw = nil
+        introFetch = nil
+        introFetchStarted = false
+        skipSegments = []
     }
 }
 

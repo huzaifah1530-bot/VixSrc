@@ -1,0 +1,19 @@
+{
+  "name": "vela-providers",
+  "private": true,
+  "description": "Builds the vendored Nuvio providers into one bundle that the desktop (Node vm) and iOS (JavaScriptCore) apps run with the same runtime.",
+  "license": "GPL-3.0",
+  "scripts": {
+    "sync": "node build.mjs --sync",
+    "build": "node build.mjs",
+    "test": "node build.mjs && node test.mjs"
+  },
+  "devDependencies": {
+    "buffer": "6.0.3",
+    "cheerio-without-node-native": "0.20.2",
+    "core-js-pure": "3.51.0",
+    "crypto-js": "4.2.0",
+    "esbuild": "0.28.2",
+    "events": "3.3.0"
+  }
+}

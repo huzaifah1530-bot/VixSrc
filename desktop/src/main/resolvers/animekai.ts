@@ -2,7 +2,8 @@
 // extension). Browses the AnimeKai / AniKoto catalogue and resolves episodes
 // down to HLS playlists, split into Sub/Dub × quality sources.
 import { createDecipheriv, createHmac } from 'node:crypto'
-import type { AnimeDetails, AnimeEpisode, AnimeShow, ExternalSubtitle, ResolvedStream } from '@shared/types'
+import type { AnimeDetails, AnimeEpisode, AnimeShow, ExternalSubtitle, ResolvedStream, SkipSegment } from '@shared/types'
+import { normType, parseAired, streamSegments, type AnimeIdentity } from '@shared/introSkip'
 import { DESKTOP_UA as UA, allMatches, firstMatch, getText } from '../http'
 
 // Constants MegaPlay's own player ships in the clear.
@@ -74,7 +75,25 @@ export async function details(base: string, slug: string): Promise<AnimeDetails>
       subCount: episodes.filter(e => e.hasSub).length, dubCount: episodes.filter(e => e.hasDub).length
     },
     description: synopsis,
-    episodes
+    episodes,
+    identity: pageIdentity(html, heading, japanese)
+  }
+}
+
+/** Type / first air date / episode total / titles from the watch page meta. */
+export function pageIdentity(html: string, heading: string, japanese: string): AnimeIdentity {
+  const meta = (label: string) => {
+    const raw = firstMatch(new RegExp(`${label}:\\s*<span[^>]*>([\\s\\S]*?)</span>`, 'i'), html)
+    return raw ? decode(stripTags(raw)) : ''
+  }
+  const names = decode(stripTags(firstMatch(/class="names[^"]*"[^>]*>([\s\S]*?)<\/div>/i, html) ?? ''))
+  const titles = [heading, japanese, ...names.split(';')].map(t => t.trim()).filter(Boolean)
+  const episodes = Number(meta('Episodes'))
+  return {
+    titles: [...new Set(titles)],
+    type: normType(meta('Type')),
+    aired: parseAired(meta('Aired')),
+    episodes: Number.isInteger(episodes) && episodes > 0 ? episodes : null
   }
 }
 
@@ -182,7 +201,8 @@ async function fromSources(json: Record<string, unknown>, referer: string, audio
   const tracks: ExternalSubtitle[] = (Array.isArray(json.tracks) ? json.tracks : [])
     .filter((t: any) => t?.kind !== 'thumbnails' && typeof t?.file === 'string')
     .map((t: any) => ({ label: t.label ?? 'Subtitles', url: t.file, referer }))
-  return variants(signCdnUrl(file), referer, audio, tracks)
+  // MegaPlay ships the episode's opening/ending; 0/0 means none.
+  return variants(signCdnUrl(file), referer, audio, tracks, streamSegments(json))
 }
 
 function playlistUrl(v: unknown): string | null {
@@ -196,12 +216,12 @@ function playlistUrl(v: unknown): string | null {
 }
 
 /** Splits a master playlist into Auto + one source per resolution. */
-async function variants(master: string, referer: string, audio: 'Sub' | 'Dub', subtitles: ExternalSubtitle[]): Promise<ResolvedStream[]> {
+async function variants(master: string, referer: string, audio: 'Sub' | 'Dub', subtitles: ExternalSubtitle[], segments: SkipSegment[] = []): Promise<ResolvedStream[]> {
   const headers = { 'User-Agent': UA, Referer: referer }
   const body = await getText(master, headers)
   if (!body.includes('#EXTM3U')) return []
   const make = (url: string, quality: string): ResolvedStream => ({
-    id: `${audio}|${url}`, name: `${quality} · ${audio}`, url, requestHeaders: headers, audio, quality, subtitles
+    id: `${audio}|${url}`, name: `${quality} · ${audio}`, url, requestHeaders: headers, audio, quality, subtitles, segments
   })
   const out = [make(master, 'Auto')]
   if (!body.includes('#EXT-X-STREAM-INF')) return out

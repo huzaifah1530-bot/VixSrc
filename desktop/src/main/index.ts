@@ -10,6 +10,9 @@ import { getResponse, getText, DESKTOP_UA } from './http'
 import { LinkServer } from './link/server'
 import { embedControl, embedState } from './link/embedBridge'
 import type { LinkEvent } from '@shared/link'
+import { isNuvioUrl } from '@shared/nuvio'
+import type { AnimeIdentity } from '@shared/introSkip'
+import { aniSkip, introDbTv } from './skip'
 
 const DEFAULT_TMDB_CREDENTIAL = 'ce5e1892fe2fdf9006a6b4dfabe1fea4'
 const PROTOCOLS = ['vela', 'vixscr'] // vixscr:// kept so old links still open
@@ -171,8 +174,22 @@ function registerIpc() {
   ipcMain.handle('anime:details', (_e, base: string, slug: string) => anime.details(base, slug))
   ipcMain.handle('anime:find-slug', (_e, base: string, title: string) => anime.findSlug(base, title))
   ipcMain.handle('anime:streams', (_e, base: string, ids: string) => anime.streams(base, ids))
+  ipcMain.handle('skip:tv', (_e, tmdbId: unknown, season: unknown, episode: unknown, duration: unknown) =>
+    introDbTv(String(tmdbId), Number(season), Number(episode), Number(duration) || 0))
+  ipcMain.handle('skip:anime', (_e, identity: unknown, episode: unknown, duration: unknown) => {
+    const i = identity as AnimeIdentity | null
+    if (!i || !Array.isArray(i.titles) || typeof i.type !== 'string') return []
+    const clean: AnimeIdentity = {
+      titles: i.titles.filter((t): t is string => typeof t === 'string').slice(0, 10).map(t => t.slice(0, 200)),
+      type: i.type.slice(0, 20), aired: typeof i.aired === 'string' ? i.aired.slice(0, 10) : null,
+      episodes: Number.isInteger(i.episodes) ? i.episodes : null
+    }
+    return aniSkip(clean, String(episode).slice(0, 10), Number(duration) || 0)
+  })
   ipcMain.handle('fetch-text', (_e, url: string, headers: Record<string, string>) => getText(url, { 'User-Agent': DESKTOP_UA, ...headers }))
   ipcMain.handle('check-server', async (_e, url: string) => {
+    // Nuvio providers: "reachable" means the provider found a stream.
+    if (isNuvioUrl(url)) return (await resolveStreams(url).catch(() => [])).length > 0
     try { const r = await getResponse(url, { 'User-Agent': DESKTOP_UA }, 8000); r.body?.cancel().catch(() => {}); return true } catch { return false }
   })
   ipcMain.handle('playback-headers', (_e, h: Record<string, string> | null) => setPlaybackHeaders(h))
