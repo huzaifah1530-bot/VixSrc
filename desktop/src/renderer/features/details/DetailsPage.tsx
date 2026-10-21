@@ -86,7 +86,12 @@ export function DetailsPage({ item }: { item: MediaItem }) {
                 </button>
                 <button className="btn btn-icon" aria-label="View on TMDB" title="View on TMDB" onClick={() => window.vela.openExternal(`https://www.themoviedb.org/${item.type}/${item.tmdbId}`)}><Icon name="info" size={15} /></button>
               </div>
-              {item.type === 'tv' && <IntroTimes item={item} />}
+              {item.type === 'tv' && (() => {
+                // Found times are per episode: show the one you'd resume.
+                const s = recent?.resumeSeason ?? seasons[0]?.seasonNumber ?? 1
+                const e = recent?.resumeEpisode ?? 1
+                return <IntroTimes item={item} episodeLabel={`S${s} · E${e}`} lookup={() => window.vela.skip.tv(item.tmdbId, s, e, 0)} />
+              })()}
             </div>
           </div>
         </section>

@@ -59,9 +59,9 @@ final class CatalogViewModel {
     private(set) var streamErrorMessage: String?
     private(set) var cast: [CastMember] = []
 
-    /// True when the current server is a Stremio addon (no web player).
+    /// True when the current server has no web player to fall back to (none today).
     var currentStreamIsProvider: Bool {
-        currentStreamURL.map(AddonRoute.isAddonURL) ?? false
+        false
     }
 
     let playerManager = VideoPlayerManager()
@@ -676,7 +676,7 @@ final class CatalogViewModel {
                 self.nativeSources = sources
                 self.selectedNativeSourceIndex = 0
                 self.loadNativeSource(at: 0)
-            case .embed where AddonRoute.isAddonURL(pageURL):
+            case .embed where self.currentStreamIsProvider:
                 self.playerManager.cleanup()
                 self.streamErrorMessage = "\(self.currentServerName) found no streams. Try another server."
             case .embed:

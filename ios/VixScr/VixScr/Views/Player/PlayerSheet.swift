@@ -243,7 +243,7 @@ struct PlayerSheet: View {
     /// Custom intro start / end for this show (TV only).
     @ViewBuilder private var introTimes: some View {
         if let item = viewModel.selected, item.type == .tv {
-            IntroTimesTable(showKey: "\(item.type.rawValue):\(item.tmdbId)", title: item.title) {
+            IntroTimesTable(showKey: "\(item.type.rawValue):\(item.tmdbId)", title: item.title, found: viewModel.playerManager.foundIntro) {
                 viewModel.playerManager.reloadIntroOverride()
             }
         }

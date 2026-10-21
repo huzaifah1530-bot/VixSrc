@@ -1,11 +1,16 @@
 import SwiftUI
 
-/// Per-show custom intro: start / end boxes under Reload and Save. They
-/// replace TheIntroDB / AniSkip times for every episode. Both 00:00 = off.
+/// Intro start / end for a show, under Reload and Save. With no custom
+/// times the boxes show the intro found for the playing episode
+/// (TheIntroDB / AniSkip), which can differ per episode; 00:00 → 00:00
+/// when nothing is found. Typing new times saves a custom intro used for
+/// every episode; the reset button goes back to the found times.
 /// Same rules as desktop components/IntroTimes.tsx.
 struct IntroTimesTable: View {
     let showKey: String
     let title: String
+    /// The intro found for the episode that's playing, if any.
+    var found: SkipSegment?
     /// Called after a change is saved so the playing episode picks it up.
     var onChange: () -> Void = {}
 
@@ -35,11 +40,25 @@ struct IntroTimesTable: View {
             : String(format: "%02d:%02d", s / 60, s % 60)
     }
 
+    private var custom: IntroOverride? {
+        guard let o = store.introOverrides[showKey], o.isComplete else { return nil }
+        return o
+    }
+    private var shownStart: Double { custom?.start ?? found?.start ?? 0 }
+    private var shownEnd: Double { custom?.end ?? found?.end ?? 0 }
+
     private var parsed: (start: Double?, end: Double?) { (Self.parse(start), Self.parse(end)) }
-    private var isOff: Bool { parsed.start == 0 && parsed.end == 0 }
+    private var isZero: Bool { parsed.start == 0 && parsed.end == 0 }
     private var isInvalid: Bool {
         guard let s = parsed.start, let e = parsed.end else { return true }
-        return !isOff && e <= s
+        return !isZero && e <= s
+    }
+
+    private var hint: String {
+        if isInvalid { return "Use mm:ss, with the end after the start." }
+        if custom != nil { return "Custom: used for every episode of this show." }
+        if found != nil { return "Found for this episode (can differ per episode). Edit to set your own for all episodes." }
+        return "No intro found for this episode. Enter times to set one for all episodes."
     }
 
     var body: some View {
@@ -48,23 +67,31 @@ struct IntroTimesTable: View {
                 GridRow {
                     Text("Intro start").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                     Text("Intro end").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    Color.clear.frame(width: 28, height: 1)
                 }
                 GridRow {
                     timeField("Intro start", text: $start, field: .start)
                     timeField("Intro end", text: $end, field: .end)
+                    Button(action: reset) {
+                        Image(systemName: "arrow.counterclockwise")
+                            .font(.footnote.weight(.semibold))
+                            .frame(width: 28, height: 28)
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(custom == nil)
+                    .opacity(custom == nil ? 0.3 : 1)
+                    .accessibilityLabel("Reset to found intro times")
                 }
             }
-            Text(isInvalid
-                 ? "Use mm:ss, with the end after the start."
-                 : isOff ? "Off: using TheIntroDB / AniSkip times when they exist. Both 00:00 = off."
-                         : "Skip Intro uses these times for every episode of this show.")
+            Text(hint)
                 .font(.caption)
                 .foregroundStyle(isInvalid ? Color.red : Color.secondary)
         }
         .padding(14)
         .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .onAppear(perform: loadSaved)
-        .onChange(of: showKey) { _, _ in loadSaved() }
+        .onAppear(perform: showCurrent)
+        .onChange(of: showKey) { _, _ in showCurrent() }
+        .onChange(of: found) { _, _ in if focused == nil { showCurrent() } }
         .onChange(of: focused) { old, new in if old != nil && new == nil { commit() } }
     }
 
@@ -83,21 +110,24 @@ struct IntroTimesTable: View {
             .accessibilityLabel("\(label), minutes and seconds")
     }
 
-    private func loadSaved() {
-        let o = store.introOverrides[showKey]
-        start = Self.clock(o?.start)
-        end = Self.clock(o?.end)
+    private func showCurrent() {
+        start = Self.clock(shownStart)
+        end = Self.clock(shownEnd)
+    }
+
+    private func reset() {
+        store.introOverrides[showKey] = nil
+        showCurrent()
+        onChange()
     }
 
     private func commit() {
         guard !isInvalid, let s = parsed.start, let e = parsed.end else { return }
-        if isOff {
-            store.introOverrides[showKey] = nil
-        } else {
-            store.introOverrides[showKey] = IntroOverride(title: title, start: s, end: e)
-        }
-        start = Self.clock(s)
-        end = Self.clock(e)
+        // Unchanged from what's shown: nothing to save.
+        if s.rounded() == shownStart.rounded() && e.rounded() == shownEnd.rounded() { showCurrent(); return }
+        if isZero { reset(); return }
+        store.introOverrides[showKey] = IntroOverride(title: title, start: s, end: e)
+        showCurrent()
         onChange()
     }
 }

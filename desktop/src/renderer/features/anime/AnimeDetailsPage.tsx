@@ -72,7 +72,9 @@ export function AnimeDetailsPage({ item }: { item: MediaItem }) {
                   <Icon name="heart" size={14} fill={favorite} />{favorite ? 'In Favourites' : 'Favourite'}
                 </button>
               </div>
-              <IntroTimes item={item} />
+              <IntroTimes item={item}
+                episodeLabel={resumeEp ? `E${resumeEp.number}` : null}
+                lookup={details?.identity && resumeEp ? () => window.vela.skip.anime(details.identity!, resumeEp.number, 0) : null} />
             </div>
           </div>
         </section>

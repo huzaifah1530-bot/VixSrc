@@ -39,9 +39,9 @@ final class AppStore {
         static let animeEnabled = "vixsrc_live_anime_enabled"
         static let autoSkipIntro = "vela_auto_skip_intro"
         static let introOverrides = "vela_intro_overrides"
-        /// Set once the saved server list has been migrated (Nuvio removed, NebulaStreams added).
+        /// Set once the saved server list has been cut to VixSrc + VidSrc.
         
-        static let serversMigratedNuvio = "vela_servers_migrated_v3"
+        static let serversMigratedNuvio = "vela_servers_migrated_v4"
     }
 
     /// Optional built-in credential. The Electron app hardcodes one directly

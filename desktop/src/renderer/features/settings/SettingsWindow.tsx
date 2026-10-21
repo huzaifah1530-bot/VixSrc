@@ -163,7 +163,7 @@ function Servers({ kind }: { kind: 'regular' | 'anime' }) {
       title={kind === 'anime' ? 'Anime servers' : 'Stream servers'}
       footer={kind === 'anime'
         ? 'Sites that use the AnimeKai layout. The first server feeds the Anime catalogue.'
-        : 'Each server is tried as <address>/movie/<id> or /tv/<id>/<season>/<episode>. Stremio stream addons (addresses ending in /manifest.json, e.g. NebulaStreams) and VixSrc play in the native player; others open their own web player. Test asks an addon for Fight Club.'}
+        : 'Each server is tried as <address>/movie/<id> or /tv/<id>/<season>/<episode>. VixSrc plays in the native player; others open their own web player.'}
     >
       <div className={cx('server-list', disabled && 'is-disabled')}>
         {list.map((s, i) => (

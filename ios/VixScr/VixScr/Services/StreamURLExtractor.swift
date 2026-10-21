@@ -60,12 +60,6 @@ struct StreamURLExtractor {
             return [ResolvedStream(id: serverURL.absoluteString, name: "Direct stream", url: serverURL)]
         }
 
-        // Stremio addon: ask its stream API; never scrape the manifest URL.
-        if AddonRoute.isAddonURL(serverURL) {
-            guard let route = AddonRoute(url: serverURL) else { return [] }
-            return await StremioAddonClient.streams(for: route)
-        }
-
         // VixSrc serves a short-lived embed token from /api/movie or /api/tv,
         // then publishes the signed HLS master playlist in the embed HTML.
         // Resolve that chain before falling back to the web player.

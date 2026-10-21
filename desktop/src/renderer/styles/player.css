@@ -50,6 +50,8 @@
 .intro-times table { width: 100%; border-collapse: separate; border-spacing: 8px 4px; margin: 0 -8px; }
 .intro-times th { text-align: left; font-size: 11px; font-weight: 600; color: var(--text-2); text-transform: uppercase; letter-spacing: .04em; }
 .intro-times .text-input { width: 100%; font-variant-numeric: tabular-nums; }
+.intro-times td:last-child, .intro-times th:last-child { width: 28px; }
+.intro-reset:disabled { opacity: .3; }
 @keyframes pop-in { from { opacity: 0; transform: scale(.85) translateY(8px); } }
 .timeline-row { display: flex; align-items: center; gap: 12px; }
 .time { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text-2); min-width: 48px; text-align: center; }

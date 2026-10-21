@@ -3,30 +3,22 @@ import { persist } from 'zustand/middleware'
 import type { AnimeServer, IntroOverride, StreamServer } from '@shared/types'
 import { legacySettings } from '@/lib/legacy'
 import { uuid } from '@/lib/format'
-import { NEBULA_STREAMS, isRetiredNuvio } from '@shared/stremio'
 
-/** The original embed servers. */
-const EMBED_SERVERS = () => [
+export const DEFAULT_SERVERS: StreamServer[] = [
   { id: uuid(), name: 'VixSrc', base: 'https://vixsrc.to' },
-  { id: uuid(), name: 'ApiPlayer', base: 'https://apiplayer.ru/embed' },
-  { id: uuid(), name: 'Cinezo', base: 'https://player.cinezo.live/embed' },
-  { id: uuid(), name: 'Vidlink', base: 'https://vidlink.pro' },
   { id: uuid(), name: 'VidSrc', base: 'https://vidsrc.wiki/embed' }
 ]
-export const DEFAULT_SERVERS: StreamServer[] = [...EMBED_SERVERS(), { id: uuid(), ...NEBULA_STREAMS }]
 
-const norm = (base: string) => base.replace(/\/+$/, '').toLowerCase()
+const host = (base: string) => { try { return new URL(base).hostname.toLowerCase() } catch { return '' } }
 
 /**
- * → v4: drops the Nuvio provider servers earlier builds added, makes sure
- * the embeds (ApiPlayer, Cinezo, Vidlink…) are present, and adds the
- * NebulaStreams Stremio addon. Existing servers keep their order.
+ * → v5: the server list is just VixSrc and VidSrc. Everything else (Nuvio
+ * providers, NebulaStreams, ApiPlayer, Cinezo, Vidlink, user-added) is
+ * dropped; VixSrc / VidSrc entries the user already had are kept.
  */
 export function migrateServers(servers: StreamServer[]): StreamServer[] {
-  const kept = servers.filter(s => !isRetiredNuvio(s.base))
-  const have = new Set(kept.map(s => norm(s.base)))
-  const add = [...EMBED_SERVERS(), { id: uuid(), ...NEBULA_STREAMS }].filter(s => !have.has(norm(s.base)))
-  return [...kept, ...add]
+  const kept = DEFAULT_SERVERS.map(d => servers.find(s => host(s.base) === host(d.base)) ?? { ...d, id: uuid() })
+  return kept
 }
 export const DEFAULT_ANIME_SERVERS: AnimeServer[] = [
   { id: uuid(), name: 'AnimeKai', base: 'https://animekaitv.to' },
@@ -85,10 +77,10 @@ export const useSettings = create<SettingsState>()(
     }),
     {
       name: KEY,
-      version: 4,
+      version: 5,
       migrate: (persisted, version) => {
         const s = (persisted ?? {}) as Partial<SettingsState>
-        if (version < 4 && Array.isArray(s.servers)) s.servers = migrateServers(s.servers)
+        if (version < 5 && Array.isArray(s.servers)) s.servers = migrateServers(s.servers)
         return s as SettingsState
       }
     }
