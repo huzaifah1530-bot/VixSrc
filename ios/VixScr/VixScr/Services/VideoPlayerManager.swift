@@ -3,6 +3,7 @@ import AVKit
 import MediaPlayer
 import Observation
 import UIKit
+import Speech
 
 /// Manages native video playback with AVPlayer, tracking progress,
 /// handling resume positions, and providing playback controls.
@@ -48,14 +49,21 @@ final class VideoPlayerManager {
     private(set) var externalSubtitles: [ExternalSubtitle] = []
     private(set) var selectedExternalSubtitleIndex: Int?
     private(set) var currentCaption: String?
-    private enum CaptionPreference: Codable, Equatable { case off, external(String), embedded(String) }
+    private(set) var generatedCaptionLocale: String?
+    private(set) var generatedCaptionError: String?
+    private enum CaptionPreference: Codable, Equatable { case off, external(String), embedded(String), generated(String) }
     private static let captionPreferenceKey = "vela_caption_preference"
     @ObservationIgnored private var captionPreference: CaptionPreference?
     @ObservationIgnored private var externalCues: [SubtitleCue] = []
     @ObservationIgnored private var subtitleTask: Task<Void, Never>?
+    @ObservationIgnored private var autoCaptionEngine: AnyObject?
     @ObservationIgnored private var lifecycleObservers: [NSObjectProtocol] = []
 
-    var hasAnySubtitles: Bool { !subtitleOptions.isEmpty || !externalSubtitles.isEmpty }
+    var canGenerateCaptions: Bool {
+        if #available(iOS 27.0, *) { return true }
+        return false
+    }
+    var hasAnySubtitles: Bool { canGenerateCaptions || !subtitleOptions.isEmpty || !externalSubtitles.isEmpty }
     
     init() {
         if let saved = UserDefaults.standard.data(forKey: Self.captionPreferenceKey) {
@@ -150,6 +158,7 @@ final class VideoPlayerManager {
     }
 
     func selectExternalSubtitle(at index: Int?, remember: Bool = true) {
+        if index != nil { stopGeneratedCaptions() }
         subtitleTask?.cancel()
         externalCues = []
         currentCaption = nil
@@ -176,22 +185,23 @@ final class VideoPlayerManager {
     }
 
     private func updateCaption(at time: Double) {
-        guard !externalCues.isEmpty else {
+        let cues = generatedCaptionLocale == nil ? externalCues : generatedCues
+        guard !cues.isEmpty else {
             if currentCaption != nil { currentCaption = nil }
             return
         }
         // Binary search for the last cue starting at or before `time`.
-        var low = 0, high = externalCues.count - 1, found = -1
+        var low = 0, high = cues.count - 1, found = -1
         while low <= high {
             let mid = (low + high) / 2
-            if externalCues[mid].start <= time { found = mid; low = mid + 1 } else { high = mid - 1 }
+            if cues[mid].start <= time { found = mid; low = mid + 1 } else { high = mid - 1 }
         }
         var lines: [String] = []
         if found >= 0 {
             var i = found
             // Overlapping cues (signs + dialogue) render together.
             while i >= 0, i >= found - 4 {
-                let cue = externalCues[i]
+                let cue = cues[i]
                 if cue.start <= time, cue.end > time { lines.insert(cue.text, at: 0) }
                 i -= 1
             }
@@ -249,6 +259,9 @@ final class VideoPlayerManager {
                         self.updateDuration(from: item)
                         self.observeDuration(for: item)
                         self.updateSubtitleOptions(for: item)
+                        if case .generated(let locale) = self.captionPreference {
+                            Task { await self.selectGeneratedCaptions(locale: locale, remember: false) }
+                        }
                         self.publishNowPlayingInfo()
                     }
                     self.setupPeriodicTimeObserver()
@@ -605,7 +618,11 @@ final class VideoPlayerManager {
     }
 
     func selectSubtitle(at index: Int?, remember: Bool = true) {
-        if index == nil, remember { rememberCaption(.off) }
+        if index != nil { stopGeneratedCaptions() }
+        if index == nil, remember {
+            stopGeneratedCaptions()
+            rememberCaption(.off)
+        }
         guard let item = player?.currentItem,
               let group = item.asset.mediaSelectionGroup(forMediaCharacteristic: .legible) else { return }
         if let index, subtitleOptions.indices.contains(index) {
@@ -617,6 +634,47 @@ final class VideoPlayerManager {
             item.select(nil, in: group)
             selectedSubtitleIndex = nil
         }
+    }
+
+    @ObservationIgnored private var generatedCues: [SubtitleCue] = []
+
+    func selectGeneratedCaptions(locale: String, remember: Bool = true) async {
+        guard #available(iOS 27.0, *), let item = player?.currentItem else { return }
+        generatedCaptionError = nil
+        guard await AutoCaptionEngine.authorize() else {
+            generatedCaptionError = AutoCaptionEngine.Failure.permission.localizedDescription
+            return
+        }
+        guard player?.currentItem === item else { return }
+        stopGeneratedCaptions()
+        selectSubtitle(at: nil, remember: false)
+        selectExternalSubtitle(at: nil, remember: false)
+        let engine = AutoCaptionEngine()
+        do {
+            try engine.start(item: item, locale: Locale(identifier: locale),
+                             playbackTime: { [weak self] in self?.currentTime ?? 0 },
+                             onCues: { [weak self] cues in
+                guard let self else { return }
+                self.generatedCues = cues
+                self.updateCaption(at: self.currentTime)
+            })
+            autoCaptionEngine = engine
+            generatedCaptionLocale = locale
+            if remember { rememberCaption(.generated(locale)) }
+        } catch {
+            generatedCaptionError = error.localizedDescription
+            engine.stop()
+        }
+    }
+
+    private func stopGeneratedCaptions() {
+        if #available(iOS 27.0, *) {
+            (autoCaptionEngine as? AutoCaptionEngine)?.stop()
+        }
+        autoCaptionEngine = nil
+        generatedCaptionLocale = nil
+        generatedCues = []
+        currentCaption = nil
     }
     
     // MARK: - Audio Session
@@ -774,6 +832,7 @@ final class VideoPlayerManager {
     // MARK: - Cleanup
     
     func cleanup() {
+        stopGeneratedCaptions()
         saveProgress()
         artworkTask?.cancel()
         artworkTask = nil

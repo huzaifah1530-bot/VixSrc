@@ -52,6 +52,8 @@
 	</array>
 	<key>NSCameraUsageDescription</key>
 	<string>Vela uses the camera to scan the pairing code shown on your computer.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Vela generates captions from the video audio on this device when you choose auto-generated captions.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>

@@ -75,6 +75,7 @@ private struct PlayerSurface: View {
     @State private var showControls = true
     @State private var hideTask: Task<Void, Never>?
     @State private var showCaptions = false
+    @State private var showGeneratedCaptionError = false
     /// Content of the seek ripple. Kept after it hides so it can fade out
     /// with its text intact instead of vanishing.
     @State private var seekFeedback: SeekFeedback?
@@ -185,6 +186,11 @@ private struct PlayerSurface: View {
         }
         .animation(spring, value: showControls)
         .animation(spring, value: playerManager.isLoading)
+        .alert("Generated captions unavailable", isPresented: $showGeneratedCaptionError) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(playerManager.generatedCaptionError ?? "Could not generate captions for this video.")
+        }
         .onAppear { scheduleHide() }
         .onDisappear {
             speedBadgeTask?.cancel()
@@ -477,7 +483,7 @@ private struct PlayerSurface: View {
     }
 
     private var captionsMenu: some View {
-        let captionsOn = playerManager.selectedSubtitleIndex != nil || playerManager.selectedExternalSubtitleIndex != nil
+        let captionsOn = playerManager.selectedSubtitleIndex != nil || playerManager.selectedExternalSubtitleIndex != nil || playerManager.generatedCaptionLocale != nil
         return Menu {
             Section("Captions") {
                 Button {
@@ -485,6 +491,30 @@ private struct PlayerSurface: View {
                     playerManager.selectExternalSubtitle(at: nil)
                 } label: {
                     if !captionsOn { Label("Off", systemImage: "checkmark") } else { Text("Off") }
+                }
+                if playerManager.canGenerateCaptions {
+                    Section("Auto-generated") {
+                        Button {
+                            Task {
+                                await playerManager.selectGeneratedCaptions(locale: "en-US")
+                                showGeneratedCaptionError = playerManager.generatedCaptionError != nil
+                            }
+                        } label: {
+                            if playerManager.generatedCaptionLocale == "en-US" {
+                                Label("English", systemImage: "checkmark")
+                            } else { Text("English") }
+                        }
+                        Button {
+                            Task {
+                                await playerManager.selectGeneratedCaptions(locale: "ja-JP")
+                                showGeneratedCaptionError = playerManager.generatedCaptionError != nil
+                            }
+                        } label: {
+                            if playerManager.generatedCaptionLocale == "ja-JP" {
+                                Label("Japanese", systemImage: "checkmark")
+                            } else { Text("Japanese") }
+                        }
+                    }
                 }
                 ForEach(Array(playerManager.subtitleOptions.enumerated()), id: \.offset) { index, option in
                     Button {
