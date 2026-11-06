@@ -31,6 +31,22 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    NavigationLink {
+                        AccountView()
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: "person.crop.circle.fill")
+                                .font(.system(size: 36)).foregroundStyle(.blue)
+                            VStack(alignment: .leading) {
+                                Text(storeAccountName)
+                                    .font(.headline)
+                                Text(CloudAccount.shared.username == nil ? "Sign in or create a Vela account" : "Cloud backup and account settings")
+                                    .font(.subheadline).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
                 credentialSection
                 devicesSection
                 performanceSection
@@ -57,6 +73,8 @@ struct SettingsView: View {
         }
         .onAppear { credentialText = store.credential }
     }
+
+    private var storeAccountName: String { CloudAccount.shared.username ?? "Vela Account" }
 
     private func showToast(_ message: String) {
         toastTask?.cancel()

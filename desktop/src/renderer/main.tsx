@@ -8,4 +8,5 @@ import { App } from './App'
 import { SettingsWindow } from './features/settings/SettingsWindow'
 
 const isSettings = location.hash.replace('#', '') === 'settings'
+if (!isSettings) void import('./lib/cloudSync')
 createRoot(document.getElementById('root')!).render(isSettings ? <SettingsWindow /> : <App />)

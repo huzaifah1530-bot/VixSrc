@@ -192,6 +192,8 @@ struct RootView: View {
                 case .active:
                     DeviceLink.shared.appBecameActive()
                     PartySession.shared.appBecameActive()
+                    CloudAccount.shared.scheduleSync(after: 1)
+                    Task { await CloudAccount.shared.refreshSession() }
                 case .background: DeviceLink.shared.appEnteredBackground()
                 default: break
                 }

@@ -7,14 +7,16 @@ import { Toast } from '@/components/Media'
 import { TrafficLights, useWindowFocusClass } from '@/components/Chrome'
 import { CAPTION_SIZES, DEFAULT_ANIME_SERVERS, DEFAULT_SERVERS, SEEK_OPTIONS, useSettings } from '@/stores/settings'
 import { useLibrary } from '@/stores/library'
-import { exportBackup, importBackup } from '@/lib/backup'
+import { applyBackup, buildBackup, exportBackup, importBackup } from '@/lib/backup'
+import type { AccountApi } from '@shared/account'
 import { toast } from '@/stores/ui'
 import { cx, formatTime, uuid } from '@/lib/format'
 import type { UpdateCheckResult } from '@shared/types'
 import { startLinkStatus, useLink } from '@/stores/link'
 
-type Pane = 'general' | 'servers' | 'anime' | 'devices' | 'data'
+type Pane = 'account' | 'general' | 'servers' | 'anime' | 'devices' | 'data'
 const panes: { id: Pane; label: string; icon: IconName }[] = [
+  { id: 'account', label: 'Account', icon: 'people' },
   { id: 'general', label: 'General', icon: 'gear' },
   { id: 'servers', label: 'Servers', icon: 'server' },
   { id: 'anime', label: 'Anime', icon: 'sparkles' },
@@ -23,7 +25,7 @@ const panes: { id: Pane; label: string; icon: IconName }[] = [
 ]
 
 export function SettingsWindow() {
-  const [pane, setPane] = useState<Pane>('general')
+  const [pane, setPane] = useState<Pane>('account')
   const perf = useSettings(s => s.performanceMode)
   const ultra = useSettings(s => s.ultraPerformanceMode)
   useWindowFocusClass()
@@ -49,6 +51,7 @@ export function SettingsWindow() {
         </div>
       </header>
       <main className="prefs-body" role="tabpanel">
+        {pane === 'account' && <AccountPane />}
         {pane === 'general' && <General />}
         {pane === 'servers' && <Servers kind="regular" />}
         {pane === 'anime' && <AnimePane />}
@@ -74,6 +77,94 @@ function Field({ label, children, hint }: { label: string; children: React.React
 }
 function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
   return <button role="switch" aria-checked={checked} aria-label={label} className={cx('switch', checked && 'is-on')} onClick={() => onChange(!checked)}><span /></button>
+}
+
+const accountApi = (window.vela as typeof window.vela & { account: AccountApi }).account
+
+function AccountPane() {
+  const [username, setUsername] = useState<string | null>(null)
+  const [name, setName] = useState('')
+  const [pin, setPin] = useState('')
+  const [confirmPin, setConfirmPin] = useState('')
+  const [creating, setCreating] = useState(false)
+  const [recovery, setRecovery] = useState(false)
+  const [recoveryInput, setRecoveryInput] = useState('')
+  const [recoveryCode, setRecoveryCode] = useState<string | null>(null)
+  const [newName, setNewName] = useState('')
+  const [newPin, setNewPin] = useState('')
+  const [devices, setDevices] = useState<{ device_id: string; device_name: string; created_at: number; current: boolean }[]>([])
+  const [deleteConfirm, setDeleteConfirm] = useState(false)
+  const [downloadConfirm, setDownloadConfirm] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  useEffect(() => { accountApi.call('status').finally(() => accountApi.status().then(s => setUsername(s.username))) }, [])
+  useEffect(() => { if (username) accountApi.call('devices').then(r => { if (r.status === 200) setDevices(r.data.devices ?? []) }) }, [username])
+  const message = (code: string) => ({
+    invalid_credentials: 'Incorrect username or PIN.', username_taken: 'That username is already taken.',
+    invalid_pin: 'Choose a 4- or 6-digit PIN that is not a simple sequence.',
+    temporarily_locked: 'Too many attempts. Try again later.', rate_limited: 'Too many attempts. Try again later.',
+    conflict: 'Cloud data changed on another device. Download it before saving again.',
+    unauthorized: 'Your session expired. Sign in again.', unavailable: 'Vela Cloud is unavailable.'
+  }[code] ?? `Cloud request failed (${code}).`)
+  const run = async (action: string, body?: Record<string, unknown>) => {
+    setBusy(true); setError(null)
+    try {
+      const result = await accountApi.call(action, body)
+      if (result.status < 200 || result.status >= 300) { setError(message(result.data.error?.code ?? 'unavailable')); return null }
+      setUsername((await accountApi.status()).username)
+      return result.data
+    } catch { setError('Vela Cloud is unavailable.'); return null }
+    finally { setBusy(false) }
+  }
+  return <div aria-busy={busy}>
+    {!username ? <>
+      <Group title="Vela Account" footer="Sign In and Create Account are separate actions. A mistyped username in Sign In will never create an account.">
+        <Field label="Action"><div className="segmented small"><button className={cx('seg', !creating && 'is-active')} onClick={() => setCreating(false)}>Sign In</button><button className={cx('seg', creating && 'is-active')} onClick={() => setCreating(true)}>Create Account</button></div></Field>
+        <Field label="Username"><input className="text-input" value={name} onChange={e => setName(e.target.value)} autoCapitalize="off" autoCorrect="off" /></Field>
+        <Field label={creating ? 'Choose a 4- or 6-digit PIN' : 'PIN'}><input className="text-input" type="password" inputMode="numeric" value={pin} onChange={e => setPin(e.target.value)} /></Field>
+        {creating && <Field label="Confirm PIN"><input className="text-input" type="password" inputMode="numeric" value={confirmPin} onChange={e => setConfirmPin(e.target.value)} /></Field>}
+        <Field label=""><button className="btn btn-primary small" disabled={busy || !name || !pin || (creating && !confirmPin)} onClick={async () => {
+          if (creating && pin !== confirmPin) { setError('The PINs do not match.'); return }
+          const result = await run(creating ? 'register' : 'login', { username: name, pin, deviceName: 'Vela Windows PC' })
+          if (result) { setRecoveryCode(result.recoveryCode ?? null); setPin(''); setConfirmPin('') }
+        }}>{creating ? 'Confirm New Account' : 'Sign In'}</button></Field>
+      </Group>
+      <Group title="Recovery" footer="There is no email reset. Save the recovery code shown when you create an account.">
+        <Field label="Have a recovery code?"><Toggle checked={recovery} onChange={setRecovery} label="Use recovery code" /></Field>
+        {recovery && <>
+          <Field label="Recovery code"><input className="text-input" value={recoveryInput} onChange={e => setRecoveryInput(e.target.value)} /></Field>
+          <Field label=""><button className="btn small" disabled={busy || !name || !pin || !recoveryInput} onClick={async () => {
+            const result = await run('recover', { username: name, pin, recoveryCode: recoveryInput, deviceName: 'Vela Windows PC' })
+            if (result) setRecoveryCode(result.recoveryCode ?? null)
+          }}>Reset PIN and Sign In</button></Field>
+        </>}
+      </Group>
+    </> : <>
+      <Group title="Vela Account"><Field label={username} hint="Signed in on this PC"><Icon name="check" size={20} /></Field></Group>
+      <Group title="Cloud Data" footer="Download replaces this PC's local data. Signing out keeps your local data; deleting the account removes its cloud data.">
+        <Field label="Back up this PC"><button className="btn small" disabled={busy} onClick={async () => {
+          const current = await accountApi.call('download')
+          if (current.status !== 200 && current.status !== 404) { setError(message(current.data.error?.code ?? 'unavailable')); return }
+          const revision = current.status === 200 ? current.data.revision : 0
+          const result = await run('upload', { baseRevision: revision, payload: JSON.parse(buildBackup()) })
+          if (result) toast('Cloud backup saved')
+        }}>Back Up Now</button></Field>
+        <Field label="Download from cloud">{downloadConfirm ? <><button className="btn small danger" onClick={async () => { const result = await run('download'); if (result?.payload) { applyBackup(JSON.stringify(result.payload)); toast('Cloud data downloaded') } setDownloadConfirm(false) }}>Replace local data</button><button className="btn small" onClick={() => setDownloadConfirm(false)}>Cancel</button></> : <button className="btn small" onClick={() => setDownloadConfirm(true)}>Download…</button>}</Field>
+      </Group>
+      <Group title="Change Username"><Field label="New username"><input className="text-input" value={newName} onChange={e => setNewName(e.target.value)} /></Field><Field label=""><button className="btn small" disabled={busy || !newName} onClick={async () => { if (await run('rename', { next: newName })) setNewName('') }}>Change Username</button></Field></Group>
+      <Group title="Change PIN"><Field label="Current PIN"><input className="text-input" type="password" inputMode="numeric" value={pin} onChange={e => setPin(e.target.value)} /></Field><Field label="New 4- or 6-digit PIN"><input className="text-input" type="password" inputMode="numeric" value={newPin} onChange={e => setNewPin(e.target.value)} /></Field><Field label=""><button className="btn small" disabled={busy || !pin || !newPin} onClick={async () => { if (await run('changePin', { currentPin: pin, newPin })) { setPin(''); setNewPin(''); toast('PIN changed') } }}>Change PIN</button></Field></Group>
+      <Group title="Signed-In Devices">
+        {devices.map(d => <Field key={d.device_id} label={`${d.device_name}${d.current ? ' (this PC)' : ''}`} hint={new Date(d.created_at).toLocaleDateString()}><button className="btn small danger" onClick={async () => { if (await run(`revoke:${d.device_id}`)) { const list = await run('devices'); setDevices(list?.devices ?? []) } }}>Sign Out</button></Field>)}
+        <Field label=""><button className="btn small" onClick={async () => { const list = await run('devices'); setDevices(list?.devices ?? []) }}>Refresh</button></Field>
+      </Group>
+      <Group title="Account Actions">
+        <Field label="This PC"><button className="btn small" onClick={() => run('logout')}>Sign Out</button></Field>
+        <Field label="Delete account" hint="Permanently removes cloud data and all signed-in sessions">{deleteConfirm ? <><input className="text-input" type="password" inputMode="numeric" value={pin} placeholder="Confirm PIN" onChange={e => setPin(e.target.value)} /><button className="btn small danger" disabled={!pin || busy} onClick={() => run('deleteAccount', { pin })}>Delete Account</button><button className="btn small" onClick={() => setDeleteConfirm(false)}>Cancel</button></> : <button className="btn small danger" onClick={() => setDeleteConfirm(true)}>Delete…</button>}</Field>
+      </Group>
+    </>}
+    {recoveryCode && <Group title="Save Your Recovery Code" footer="Keep this code somewhere safe. It is shown only once and replaces any previous recovery code."><Field label={recoveryCode}><button className="btn small" onClick={() => navigator.clipboard.writeText(recoveryCode)}>Copy</button><button className="btn small" onClick={() => setRecoveryCode(null)}>I've Saved It</button></Field></Group>}
+    {error && <p role="alert" className="form-footer">{error}</p>}
+  </div>
 }
 
 function General() {

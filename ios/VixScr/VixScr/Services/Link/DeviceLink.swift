@@ -127,8 +127,12 @@ final class DeviceLink {
     func attach(store: AppStore) {
         guard sync == nil else { return }
         let engine = SyncEngine(store: store)
-        engine.onLocalChange = { [weak self] in self?.pushLocalChanges() }
+        engine.onLocalChange = { [weak self] in
+            self?.pushLocalChanges()
+            CloudAccount.shared.scheduleSync()
+        }
         sync = engine
+        CloudAccount.shared.attach(sync: engine)
         startRefreshLoop()
     }
 

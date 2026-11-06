@@ -13,6 +13,7 @@ import type { LinkEvent } from '@shared/link'
 import type { AnimeIdentity } from '@shared/introSkip'
 import { aniSkip, skipDb, skipDbAnimeId, tmdbAnimeId, tvSkip } from './skip'
 import { mergeSegmentSources } from '@shared/introSkip'
+import { accountCall, accountStatus } from './account'
 
 const DEFAULT_TMDB_CREDENTIAL = 'ce5e1892fe2fdf9006a6b4dfabe1fea4'
 const PROTOCOLS = ['vela', 'vixscr'] // vixscr:// kept so old links still open
@@ -155,6 +156,8 @@ function buildMenu() {
 
 // ── IPC ───────────────────────────────────────────────────────────────
 function registerIpc() {
+  ipcMain.handle('account:status', () => accountStatus())
+  ipcMain.handle('account:call', (_e, action: string, body?: Record<string, unknown>) => accountCall(action, body))
   ipcMain.handle('tmdb', async (_e, path: string, params: Record<string, string>, credential?: string) => {
     const key = (credential || DEFAULT_TMDB_CREDENTIAL).trim()
     const url = new URL('https://api.themoviedb.org/3' + path)

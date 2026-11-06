@@ -160,6 +160,7 @@ private struct PlayerSurface: View {
             }
             .ignoresSafeArea()
         }
+        .contentShape(Rectangle())
         // The touch zones are a background sibling of the video. Attach the
         // pinch to their common parent so it receives the same touches.
         .simultaneousGesture(
@@ -197,6 +198,11 @@ private struct PlayerSurface: View {
         }
         .onChange(of: playerManager.isSpeedBoosted) { _, boosted in
             if boosted { showSpeedBadge = true }
+        }
+        .onChange(of: isFullscreen) { _, _ in
+            playerManager.endSpeedBoost()
+            boostSide = nil
+            showSpeedBadge = false
         }
         .onChange(of: holdingSide) { _, side in
             if let side {
@@ -303,11 +309,17 @@ private struct PlayerSurface: View {
         if let feedback = seekFeedback {
             let isLeft = feedback.side == .left
             ZStack {
-                // Curved highlight hugging the tapped edge.
-                Ellipse()
-                    .fill(.white.opacity(0.14))
-                    .frame(width: size.width * 0.75, height: size.height * 1.6)
-                    .offset(x: isLeft ? -size.width * 0.5 : size.width * 0.5)
+                // Start the glow at the physical edge, then fade it into the
+                // picture. An ellipse left transparent gaps at the corners.
+                HStack(spacing: 0) {
+                    if !isLeft { Spacer(minLength: 0) }
+                    LinearGradient(
+                        colors: isLeft ? [.white.opacity(0.17), .white.opacity(0.07), .clear] : [.clear, .white.opacity(0.07), .white.opacity(0.17)],
+                        startPoint: .leading, endPoint: .trailing
+                    )
+                    .frame(width: size.width * 0.46)
+                    if isLeft { Spacer(minLength: 0) }
+                }
 
                 VStack(spacing: 6) {
                     Image(systemName: isLeft ? "backward.fill" : "forward.fill")

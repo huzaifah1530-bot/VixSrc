@@ -1,7 +1,12 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { VelaApi } from '@shared/types'
+import type { AccountApi } from '@shared/account'
 
-const api: VelaApi = {
+const api: VelaApi & { account: AccountApi } = {
+  account: {
+    status: () => ipcRenderer.invoke('account:status'),
+    call: (action, body) => ipcRenderer.invoke('account:call', action, body)
+  },
   platform: process.platform,
   version: process.argv.find(a => a.startsWith('--vela-version='))?.split('=')[1] ?? '',
   tmdb: (path, params, credential) => ipcRenderer.invoke('tmdb', path, params, credential),
