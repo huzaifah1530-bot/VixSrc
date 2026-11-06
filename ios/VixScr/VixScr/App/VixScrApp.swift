@@ -193,8 +193,11 @@ struct RootView: View {
                     DeviceLink.shared.appBecameActive()
                     PartySession.shared.appBecameActive()
                     CloudAccount.shared.scheduleSync(after: 1)
+                    CloudAccount.shared.startPolling()
                     Task { await CloudAccount.shared.refreshSession() }
-                case .background: DeviceLink.shared.appEnteredBackground()
+                case .background:
+                    DeviceLink.shared.appEnteredBackground()
+                    CloudAccount.shared.stopPolling()
                 default: break
                 }
             }

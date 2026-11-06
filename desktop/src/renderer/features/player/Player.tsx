@@ -18,7 +18,13 @@ import { PartyButton, PartyPanel } from '../party/PartyPanel'
 import { useIntroSkip } from './useIntroSkip'
 
 type Caption = { kind: 'off' } | { kind: 'external'; index: number } | { kind: 'hls'; index: number }
-let captionPreference: { kind: Caption['kind']; label?: string; index?: number } | null = null
+const captionPreferenceKey = 'vela_caption_preference'
+let captionPreference: { kind: Caption['kind']; label?: string; index?: number } | null = (() => {
+  try {
+    const saved = JSON.parse(localStorage.getItem(captionPreferenceKey) ?? 'null')
+    return saved && ['off', 'external', 'hls'].includes(saved.kind) ? saved : null
+  } catch { return null }
+})()
 
 export function Player() {
   const p = usePlayer()
@@ -72,6 +78,7 @@ export function Player() {
       : choice.kind === 'hls'
         ? { kind: 'hls', label: hlsTracks[choice.index], index: choice.index }
         : { kind: 'off' }
+    localStorage.setItem(captionPreferenceKey, JSON.stringify(captionPreference))
     setCaption(choice)
   }
 

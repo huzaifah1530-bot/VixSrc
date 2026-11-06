@@ -2,6 +2,7 @@ import Foundation
 import Observation
 import Security
 import UIKit
+import CryptoKit
 
 @MainActor @Observable
 final class CloudAccount {
@@ -19,8 +20,19 @@ final class CloudAccount {
     private struct Session: Codable { var username: String; var token: String; var accountKey: String }
     private var session: Session?
     @ObservationIgnored private weak var syncEngine: SyncEngine?
+    @ObservationIgnored private weak var backupStore: AppStore?
     @ObservationIgnored private var syncTask: Task<Void, Never>?
+    @ObservationIgnored private var pollingTask: Task<Void, Never>?
     var username: String? { session?.username }
+    private var revisionKey: String? { session.map { "vela_cloud_ios_revision_\($0.accountKey)" } }
+    private var backupHashKey: String? { session.map { "vela_cloud_ios_hash_\($0.accountKey)" } }
+
+    private func backupHash(_ payload: [String: Any]) -> String? {
+        var stable = payload
+        stable.removeValue(forKey: "exportedAt")
+        guard let data = try? JSONSerialization.data(withJSONObject: stable, options: [.sortedKeys]) else { return nil }
+        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
 
     private init() {
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
@@ -108,6 +120,7 @@ final class CloudAccount {
         guard let code = try await authenticate("register", username: username, pin: pin) else {
             throw CloudError.message("No recovery code was returned.")
         }
+        if let key = revisionKey { UserDefaults.standard.set(0, forKey: key) }
         return code
     }
     func signIn(username: String, pin: String) async throws { _ = try await authenticate("login", username: username, pin: pin) }
@@ -159,6 +172,8 @@ final class CloudAccount {
         let (_, result) = try await request("backup/ios")
         guard let payload = result["payload"] as? [String: Any] else { throw CloudError.message("Cloud backup is empty.") }
         try store.importBackup(JSONSerialization.data(withJSONObject: payload))
+        if let key = revisionKey { UserDefaults.standard.set(result["revision"] as? Int ?? 0, forKey: key) }
+        if let key = backupHashKey, let hash = backupHash(payload) { UserDefaults.standard.set(hash, forKey: key) }
     }
     func upload(from store: AppStore) async throws {
         let data = try store.exportBackup()
@@ -168,10 +183,13 @@ final class CloudAccount {
         var revision = 0
         if let (_, result) = try? await request("backup/ios") { revision = result["revision"] as? Int ?? 0 }
         _ = try await request("backup/ios", method: "PUT", body: ["baseRevision": revision, "payload": payload])
+        if let key = revisionKey { UserDefaults.standard.set(revision + 1, forKey: key) }
+        if let key = backupHashKey, let hash = backupHash(payload) { UserDefaults.standard.set(hash, forKey: key) }
     }
 
-    func attach(sync engine: SyncEngine) {
+    func attach(sync engine: SyncEngine, store: AppStore) {
         syncEngine = engine
+        backupStore = store
         scheduleSync(after: 1)
     }
 
@@ -183,6 +201,22 @@ final class CloudAccount {
             guard !Task.isCancelled else { return }
             await self?.syncShared()
         }
+    }
+
+    func startPolling() {
+        pollingTask?.cancel()
+        pollingTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(60))
+                guard !Task.isCancelled else { return }
+                self?.scheduleSync(after: 0)
+            }
+        }
+    }
+
+    func stopPolling() {
+        pollingTask?.cancel()
+        pollingTask = nil
     }
 
     private func syncShared() async {
@@ -197,10 +231,27 @@ final class CloudAccount {
             guard let payload = engine.current.jsonObject as? [String: Any] else { return }
             do {
                 _ = try await request("backup/shared", method: "PUT", body: ["baseRevision": revision, "payload": payload])
+                await autoUploadBackup()
                 return
             } catch CloudError.message(let message) where message.contains("changed on another device") {
                 continue
             } catch { return }
         }
+    }
+
+    private func autoUploadBackup() async {
+        guard let store = backupStore, let revisionKey, let backupHashKey,
+              let revision = UserDefaults.standard.object(forKey: revisionKey) as? Int,
+              let data = try? store.exportBackup(),
+              let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let hash = backupHash(payload),
+              hash != UserDefaults.standard.string(forKey: backupHashKey) else { return }
+        do {
+            _ = try await request("backup/ios", method: "PUT", body: ["baseRevision": revision, "payload": payload])
+            UserDefaults.standard.set(revision + 1, forKey: revisionKey)
+            UserDefaults.standard.set(hash, forKey: backupHashKey)
+        } catch CloudError.message(let message) where message.contains("changed on another device") {
+            UserDefaults.standard.removeObject(forKey: revisionKey)
+        } catch { /* Offline: keep the revision and retry on the next sync. */ }
     }
 }

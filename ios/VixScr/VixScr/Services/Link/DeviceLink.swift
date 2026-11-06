@@ -132,7 +132,7 @@ final class DeviceLink {
             CloudAccount.shared.scheduleSync()
         }
         sync = engine
-        CloudAccount.shared.attach(sync: engine)
+        CloudAccount.shared.attach(sync: engine, store: store)
         startRefreshLoop()
     }
 

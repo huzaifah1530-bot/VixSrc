@@ -9,6 +9,7 @@ import { CAPTION_SIZES, DEFAULT_ANIME_SERVERS, DEFAULT_SERVERS, SEEK_OPTIONS, us
 import { useLibrary } from '@/stores/library'
 import { applyBackup, buildBackup, exportBackup, importBackup } from '@/lib/backup'
 import type { AccountApi } from '@shared/account'
+import { backupHash, hashKey, revisionKey } from '@/lib/accountBackup'
 import { toast } from '@/stores/ui'
 import { cx, formatTime, uuid } from '@/lib/format'
 import type { UpdateCheckResult } from '@shared/types'
@@ -126,7 +127,10 @@ function AccountPane() {
         <Field label=""><button className="btn btn-primary small" disabled={busy || !name || !pin || (creating && !confirmPin)} onClick={async () => {
           if (creating && pin !== confirmPin) { setError('The PINs do not match.'); return }
           const result = await run(creating ? 'register' : 'login', { username: name, pin, deviceName: 'Vela Windows PC' })
-          if (result) { setRecoveryCode(result.recoveryCode ?? null); setPin(''); setConfirmPin('') }
+          if (result) {
+            setRecoveryCode(result.recoveryCode ?? null); setPin(''); setConfirmPin('')
+            if (creating) { const { accountKey } = await accountApi.status(); if (accountKey) localStorage.setItem(revisionKey(accountKey), '0') }
+          }
         }}>{creating ? 'Confirm New Account' : 'Sign In'}</button></Field>
       </Group>
       <Group title="Recovery" footer="There is no email reset. Save the recovery code shown when you create an account.">
@@ -147,9 +151,17 @@ function AccountPane() {
           if (current.status !== 200 && current.status !== 404) { setError(message(current.data.error?.code ?? 'unavailable')); return }
           const revision = current.status === 200 ? current.data.revision : 0
           const result = await run('upload', { baseRevision: revision, payload: JSON.parse(buildBackup()) })
-          if (result) toast('Cloud backup saved')
+          if (result) {
+            const { accountKey } = await accountApi.status()
+            if (accountKey) {
+              const payload = JSON.parse(buildBackup()) as Record<string, unknown>
+              localStorage.setItem(revisionKey(accountKey), String(result.revision))
+              localStorage.setItem(hashKey(accountKey), await backupHash(payload))
+            }
+            toast('Cloud backup saved')
+          }
         }}>Back Up Now</button></Field>
-        <Field label="Download from cloud">{downloadConfirm ? <><button className="btn small danger" onClick={async () => { const result = await run('download'); if (result?.payload) { applyBackup(JSON.stringify(result.payload)); toast('Cloud data downloaded') } setDownloadConfirm(false) }}>Replace local data</button><button className="btn small" onClick={() => setDownloadConfirm(false)}>Cancel</button></> : <button className="btn small" onClick={() => setDownloadConfirm(true)}>Download…</button>}</Field>
+        <Field label="Download from cloud">{downloadConfirm ? <><button className="btn small danger" onClick={async () => { const result = await run('download'); if (result?.payload) { applyBackup(JSON.stringify(result.payload)); const { accountKey } = await accountApi.status(); if (accountKey) { localStorage.setItem(revisionKey(accountKey), String(result.revision)); localStorage.setItem(hashKey(accountKey), await backupHash(result.payload)) } toast('Cloud data downloaded') } setDownloadConfirm(false) }}>Replace local data</button><button className="btn small" onClick={() => setDownloadConfirm(false)}>Cancel</button></> : <button className="btn small" onClick={() => setDownloadConfirm(true)}>Download…</button>}</Field>
       </Group>
       <Group title="Change Username"><Field label="New username"><input className="text-input" value={newName} onChange={e => setNewName(e.target.value)} /></Field><Field label=""><button className="btn small" disabled={busy || !newName} onClick={async () => { if (await run('rename', { next: newName })) setNewName('') }}>Change Username</button></Field></Group>
       <Group title="Change PIN"><Field label="Current PIN"><input className="text-input" type="password" inputMode="numeric" value={pin} onChange={e => setPin(e.target.value)} /></Field><Field label="New 4- or 6-digit PIN"><input className="text-input" type="password" inputMode="numeric" value={newPin} onChange={e => setNewPin(e.target.value)} /></Field><Field label=""><button className="btn small" disabled={busy || !pin || !newPin} onClick={async () => { if (await run('changePin', { currentPin: pin, newPin })) { setPin(''); setNewPin(''); toast('PIN changed') } }}>Change PIN</button></Field></Group>

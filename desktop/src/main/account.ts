@@ -24,7 +24,7 @@ function save(value: Session | null) {
   session = value
 }
 
-export const accountStatus = () => ({ username: load()?.username ?? null })
+export const accountStatus = () => ({ username: load()?.username ?? null, accountKey: load()?.accountKey ?? null })
 
 const routes: Record<string, [string, string, boolean]> = {
   register: ['register', 'POST', false], login: ['login', 'POST', false], recover: ['recover', 'POST', false],

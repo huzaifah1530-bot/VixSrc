@@ -48,7 +48,8 @@ final class VideoPlayerManager {
     private(set) var externalSubtitles: [ExternalSubtitle] = []
     private(set) var selectedExternalSubtitleIndex: Int?
     private(set) var currentCaption: String?
-    private enum CaptionPreference: Equatable { case off, external(String), embedded(String) }
+    private enum CaptionPreference: Codable, Equatable { case off, external(String), embedded(String) }
+    private static let captionPreferenceKey = "vela_caption_preference"
     @ObservationIgnored private var captionPreference: CaptionPreference?
     @ObservationIgnored private var externalCues: [SubtitleCue] = []
     @ObservationIgnored private var subtitleTask: Task<Void, Never>?
@@ -57,8 +58,18 @@ final class VideoPlayerManager {
     var hasAnySubtitles: Bool { !subtitleOptions.isEmpty || !externalSubtitles.isEmpty }
     
     init() {
+        if let saved = UserDefaults.standard.data(forKey: Self.captionPreferenceKey) {
+            captionPreference = try? JSONDecoder().decode(CaptionPreference.self, from: saved)
+        }
         setupAudioSession()
         observeAppLifecycle()
+    }
+
+    private func rememberCaption(_ choice: CaptionPreference) {
+        captionPreference = choice
+        if let data = try? JSONEncoder().encode(choice) {
+            UserDefaults.standard.set(data, forKey: Self.captionPreferenceKey)
+        }
     }
 
     /// Leaving the app stops playback outright. Keeping the audio session and
@@ -144,14 +155,14 @@ final class VideoPlayerManager {
         currentCaption = nil
         guard let index, externalSubtitles.indices.contains(index) else {
             selectedExternalSubtitleIndex = nil
-            if remember { captionPreference = .off }
+            if remember { rememberCaption(.off) }
             return
         }
         // Only one caption source at a time.
         if selectedSubtitleIndex != nil { selectSubtitle(at: nil, remember: false) }
         selectedExternalSubtitleIndex = index
         let track = externalSubtitles[index]
-        if remember { captionPreference = .external(track.label) }
+        if remember { rememberCaption(.external(track.label)) }
         subtitleTask = Task { [weak self] in
             var request = URLRequest(url: track.url)
             request.setValue(StreamURLExtractor.userAgent, forHTTPHeaderField: "User-Agent")
@@ -594,14 +605,14 @@ final class VideoPlayerManager {
     }
 
     func selectSubtitle(at index: Int?, remember: Bool = true) {
-        if index == nil, remember { captionPreference = .off }
+        if index == nil, remember { rememberCaption(.off) }
         guard let item = player?.currentItem,
               let group = item.asset.mediaSelectionGroup(forMediaCharacteristic: .legible) else { return }
         if let index, subtitleOptions.indices.contains(index) {
             if selectedExternalSubtitleIndex != nil { selectExternalSubtitle(at: nil, remember: false) }
             item.select(subtitleOptions[index], in: group)
             selectedSubtitleIndex = index
-            if remember { captionPreference = .embedded(subtitleOptions[index].displayName) }
+            if remember { rememberCaption(.embedded(subtitleOptions[index].displayName)) }
         } else {
             item.select(nil, in: group)
             selectedSubtitleIndex = nil
