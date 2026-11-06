@@ -1,6 +1,11 @@
 name: Account Service Deploy
 
 on:
+  push:
+    branches: [codex/vela-account-sync]
+    paths:
+      - "account/**"
+      - ".github/workflows/account-deploy.yml"
   workflow_dispatch: {}
 
 jobs:
