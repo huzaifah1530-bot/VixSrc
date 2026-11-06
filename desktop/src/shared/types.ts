@@ -143,8 +143,8 @@ export interface VelaApi {
     streams(base: string, episodeIds: string): Promise<ResolvedStream[]>
   }
   skip: {
-    tv(tmdbId: string, imdbId: string, season: number, episode: number, duration: number): Promise<SkipSegment[]>
-    movie(imdbId: string, duration: number): Promise<SkipSegment[]>
+    tv(tmdbId: string, imdbId: string, season: number, episode: number, duration: number, title?: string, year?: string): Promise<SkipSegment[]>
+    movie(imdbId: string, duration: number, title?: string, year?: string): Promise<SkipSegment[]>
     anime(identity: import('./introSkip').AnimeIdentity, episode: string, duration: number, credential?: string): Promise<SkipSegment[]>
   }
   fetchText(url: string, headers: Record<string, string>): Promise<string>

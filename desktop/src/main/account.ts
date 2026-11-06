@@ -53,6 +53,7 @@ export async function accountCall(action: string, body?: Record<string, unknown>
     response = await fetch(endpoint + path, { method, headers, body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(15_000) })
   } catch { return { status: 503, data: { error: { code: 'unavailable' } } } }
   const data = await response.json().catch(() => ({})) as Record<string, any>
+  if (response.status === 401 && authenticated) save(null)
   if (response.ok && ['register', 'login', 'recover'].includes(action) && typeof data.token === 'string' && typeof data.accountKey === 'string' && typeof body?.username === 'string') {
     save({ username: body.username.trim().toLowerCase(), token: data.token, accountKey: data.accountKey })
   }

@@ -52,8 +52,8 @@ export function useIntroSkip(opts: { native: boolean; time: number; duration: nu
         .then(raw => (raw as { imdb_id?: unknown })?.imdb_id)
         .catch(() => null)
         .then(imdb => item.type === 'tv' && p.tv
-          ? window.vela.skip.tv(item.tmdbId, typeof imdb === 'string' ? imdb : '', p.tv!.season, p.tv!.episode, len)
-          : window.vela.skip.movie(typeof imdb === 'string' ? imdb : '', len))
+          ? window.vela.skip.tv(item.tmdbId, typeof imdb === 'string' ? imdb : '', p.tv!.season, p.tv!.episode, len, item.title, item.year)
+          : window.vela.skip.movie(typeof imdb === 'string' ? imdb : '', len, item.title, item.year))
     } else if (kind === 'anime' && p.anime?.details.identity) {
       const identity = p.anime.details.identity
       request = window.vela.skip.anime(identity, p.anime.episode.number, len, credential)

@@ -6,7 +6,7 @@ import {
   theIntroDbSegments, validSegment, validSegments, type AnimeIdentity, type KitsuCandidate
 } from '../src/shared/introSkip'
 import type { SkipSegment } from '../src/shared/types'
-import { aniSkip, introDbTv, skipDb, skipDbAnimeId, tvSkip } from '../src/main/skip'
+import { aniSkip, introDbTv, skipDb, skipDbAnimeId, skipDbTitleId, tvSkip } from '../src/main/skip'
 import * as anime from '../src/main/resolvers/animekai'
 
 let passed = 0
@@ -175,6 +175,13 @@ async function main() {
     const segments = await skipDb('tt0455275', 1, 2, 2700)
     assert.ok(segments.some(s => s.kind === 'recap' && s.start === 0), JSON.stringify(segments))
     assert.ok(segments.some(s => s.kind === 'outro' && s.end === 2700), JSON.stringify(segments))
+  })
+  await test('SkipDB: Prison Break title resolves without an IMDb API', async () => {
+    assert.equal(await skipDbTitleId(['Prison Break'], '2005', 'series'), 'tt0455275')
+    const segments = await tvSkip('2288', '', 1, 2, 2600, 'Prison Break', '2005')
+    assert.ok(segments.some(s => s.kind === 'recap' && s.source === 'skipdb'))
+    assert.ok(segments.some(s => s.kind === 'intro' && s.source === 'skipdb'))
+    assert.ok(!segments.some(s => s.kind === 'outro' && s.source === 'skipdb'))
   })
   await test('SkipDB: exact anime title and year resolve to covered IMDb series', async () => {
     const id = await skipDbAnimeId({ titles: ['Jujutsu Kaisen'], type: 'tv', aired: '2020-10-03', episodes: 24 })

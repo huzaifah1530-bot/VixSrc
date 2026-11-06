@@ -11,7 +11,7 @@ import { LinkServer } from './link/server'
 import { embedControl, embedState } from './link/embedBridge'
 import type { LinkEvent } from '@shared/link'
 import type { AnimeIdentity } from '@shared/introSkip'
-import { aniSkip, skipDb, skipDbAnimeId, tmdbAnimeId, tvSkip } from './skip'
+import { aniSkip, movieSkip, skipDb, skipDbAnimeId, tmdbAnimeId, tvSkip } from './skip'
 import { mergeSegmentSources } from '@shared/introSkip'
 import { accountCall, accountStatus } from './account'
 
@@ -177,10 +177,10 @@ function registerIpc() {
   ipcMain.handle('anime:details', (_e, base: string, slug: string) => anime.details(base, slug))
   ipcMain.handle('anime:find-slug', (_e, base: string, title: string) => anime.findSlug(base, title))
   ipcMain.handle('anime:streams', (_e, base: string, ids: string) => anime.streams(base, ids))
-  ipcMain.handle('skip:tv', (_e, tmdbId: unknown, imdbId: unknown, season: unknown, episode: unknown, duration: unknown) =>
-    tvSkip(String(tmdbId), String(imdbId), Number(season), Number(episode), Number(duration) || 0))
-  ipcMain.handle('skip:movie', (_e, imdbId: unknown, duration: unknown) =>
-    skipDb(String(imdbId), null, null, Number(duration) || 0))
+  ipcMain.handle('skip:tv', (_e, tmdbId: unknown, imdbId: unknown, season: unknown, episode: unknown, duration: unknown, title: unknown, year: unknown) =>
+    tvSkip(String(tmdbId), String(imdbId), Number(season), Number(episode), Number(duration) || 0, String(title ?? '').slice(0, 200), String(year ?? '').slice(0, 10)))
+  ipcMain.handle('skip:movie', (_e, imdbId: unknown, duration: unknown, title: unknown, year: unknown) =>
+    movieSkip(String(imdbId), Number(duration) || 0, String(title ?? '').slice(0, 200), String(year ?? '').slice(0, 10)))
   ipcMain.handle('skip:anime', async (_e, identity: unknown, episode: unknown, duration: unknown, credential: unknown) => {
     const i = identity as AnimeIdentity | null
     if (!i || !Array.isArray(i.titles) || typeof i.type !== 'string') return []

@@ -92,7 +92,7 @@ export function DetailsPage({ item }: { item: MediaItem }) {
                 const e = recent?.resumeEpisode ?? 1
                 return <IntroTimes item={item} episodeLabel={`S${s} · E${e}`} lookup={async () => {
                   const ids = await tmdb<{ imdb_id?: string }>(`/tv/${item.tmdbId}/external_ids`).catch((): { imdb_id?: string } => ({}))
-                  return window.vela.skip.tv(item.tmdbId, ids.imdb_id ?? '', s, e, 0)
+                  return window.vela.skip.tv(item.tmdbId, ids.imdb_id ?? '', s, e, 0, item.title, item.year)
                 }} />
               })()}
             </div>

@@ -60,23 +60,26 @@ export function skipDb(imdbId: string, season: number | null, episode: number | 
   }, [])
 }
 
-/** SkipDB's local catalogue can identify anime already covered by its data. */
-export function skipDbAnimeId(identity: AnimeIdentity): Promise<string | null> {
-  const title = identity.titles[0]
-  const year = identity.aired?.slice(0, 4)
-  if (!title || !year) return Promise.resolve(null)
-  return cached(`skipdb:anime-id:${identity.type}:${year}:${normTitle(title)}`, async () => {
+/** Resolve a covered title without an IMDb API or a TMDB lookup. */
+export function skipDbTitleId(titles: string[], year: string, mediaType: 'movie' | 'series'): Promise<string | null> {
+  const title = titles[0]
+  if (!title || !/^\d{4}$/.test(year)) return Promise.resolve(null)
+  return cached(`skipdb:title-id:${mediaType}:${year}:${titles.map(normTitle).join('|')}`, async () => {
     const { status, body } = await getJsonStatus(`https://skipdb.tv/api/titles/search?q=${encodeURIComponent(title)}`)
     if (status !== 200) return null
     const local = (body as { local?: unknown })?.local
-    const names = new Set(identity.titles.map(normTitle))
+    const names = new Set(titles.map(normTitle))
     const matches = (Array.isArray(local) ? local : []).filter((x: any) =>
       /^tt\d+$/.test(String(x?.imdb_id)) && String(x?.year) === year &&
-      x?.mediaType === (identity.type === 'movie' ? 'movie' : 'series') && names.has(normTitle(String(x?.name ?? ''))))
+      x?.mediaType === mediaType && names.has(normTitle(String(x?.name ?? ''))))
     const ids = [...new Set(matches.map((x: any) => String(x.imdb_id)))]
     const value = ids.length === 1 ? ids[0] : null
     return { value, ttl: value ? HIT_TTL : MISS_TTL }
   }, null)
+}
+
+export function skipDbAnimeId(identity: AnimeIdentity): Promise<string | null> {
+  return skipDbTitleId(identity.titles, identity.aired?.slice(0, 4) ?? '', identity.type === 'movie' ? 'movie' : 'series')
 }
 
 export async function tmdbAnimeId(identity: AnimeIdentity, credential: string): Promise<string | null> {
@@ -125,11 +128,17 @@ export function introDbTv(tmdbId: string, season: number, episode: number, durat
   }, [])
 }
 
-export async function tvSkip(tmdbId: string, imdbId: string, season: number, episode: number, duration: number): Promise<SkipSegment[]> {
-  const primary = await skipDb(imdbId, season, episode, duration)
+export async function tvSkip(tmdbId: string, imdbId: string, season: number, episode: number, duration: number, title = '', year = ''): Promise<SkipSegment[]> {
+  const resolved = await skipDbTitleId([title], year.slice(0, 4), 'series') ?? imdbId
+  const primary = await skipDb(resolved, season, episode, duration)
   if (['intro', 'recap', 'outro', 'preview'].every(kind => primary.some(s => s.kind === kind))) return primary
   const fallback = await introDbTv(tmdbId, season, episode, duration)
   return mergeSegmentSources(duration, primary, fallback)
+}
+
+export async function movieSkip(imdbId: string, duration: number, title = '', year = ''): Promise<SkipSegment[]> {
+  const resolved = await skipDbTitleId([title], year.slice(0, 4), 'movie') ?? imdbId
+  return skipDb(resolved, null, null, duration)
 }
 
 // ── AniSkip (via a verified MAL id) ────────────────────────────────────

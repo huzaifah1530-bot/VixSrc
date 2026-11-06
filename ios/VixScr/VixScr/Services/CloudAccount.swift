@@ -65,8 +65,13 @@ final class CloudAccount {
     }
 
     enum CloudError: LocalizedError {
-        case message(String)
-        var errorDescription: String? { if case .message(let text) = self { return text }; return nil }
+        case message(String), unauthorized
+        var errorDescription: String? {
+            switch self {
+            case .message(let text): return text
+            case .unauthorized: return "This device was signed out. Sign in again."
+            }
+        }
     }
 
     private func request(_ path: String, method: String = "GET", body: [String: Any]? = nil,
@@ -89,6 +94,10 @@ final class CloudAccount {
         let (data, response) = try await URLSession.shared.data(for: req)
         guard let http = response as? HTTPURLResponse else { throw CloudError.message("No response from Vela Cloud.") }
         let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+        if authenticated && http.statusCode == 401 {
+            try? save(nil)
+            throw CloudError.unauthorized
+        }
         if !(200..<300).contains(http.statusCode) && !(allowMissing && http.statusCode == 404) {
             let code = (object["error"] as? [String: Any])?["code"] as? String ?? "unavailable"
             let text: String
@@ -136,8 +145,8 @@ final class CloudAccount {
         try? save(nil)
     }
     func refreshSession() async {
-        guard var current = session,
-              let (_, result) = try? await request("session"),
+        guard var current = session else { return }
+        guard let (_, result) = try? await request("session"),
               let name = result["username"] as? String else { return }
         if name != current.username {
             current.username = name
