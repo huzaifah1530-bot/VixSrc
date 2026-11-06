@@ -1,8 +1,8 @@
 name: Desktop Build
 
-# Builds the Windows installer for Vela whenever the desktop app changes.
-# The installer is uploaded as a workflow artifact and attached to a GitHub
-# release tagged desktop-v<version> (re-uploaded if that version already exists).
+# Builds the Windows installer when the desktop app changes.
+# Keep the installer as a workflow artifact. Releases are published separately
+# only when explicitly requested.
 on:
   push:
     branches: [main]
@@ -12,7 +12,7 @@ on:
   workflow_dispatch: {}
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: desktop-build-${{ github.ref }}
@@ -56,17 +56,3 @@ jobs:
           name: Vela-Setup-${{ steps.version.outputs.version }}
           path: desktop/release/Vela-Setup-*.exe
           if-no-files-found: error
-
-      - name: Publish release
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          TAG="desktop-v$VERSION"
-          FILE=$(ls release/Vela-Setup-*.exe | head -n 1)
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "$FILE" --clobber
-          else
-            gh release create "$TAG" "$FILE" --title "Vela Desktop $VERSION" --notes "Windows installer for Vela $VERSION (commit ${GITHUB_SHA::7}). Installing over an existing copy updates it in place; your library and settings are kept." --target "$GITHUB_SHA"
-          fi
