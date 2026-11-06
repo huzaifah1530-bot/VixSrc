@@ -16,6 +16,7 @@ struct AccountView: View {
     @State private var nextName = ""
     @State private var currentPin = ""
     @State private var nextPin = ""
+    @State private var confirmNextPin = ""
     @State private var deletePin = ""
     @State private var devices: [CloudAccount.Device] = []
     @State private var busy = false
@@ -52,9 +53,11 @@ struct AccountView: View {
                 Section("Change PIN") {
                     SecureField("Current PIN", text: $currentPin).keyboardType(.numberPad)
                     SecureField("New 4- or 6-digit PIN", text: $nextPin).keyboardType(.numberPad)
+                    SecureField("Confirm new PIN", text: $confirmNextPin).keyboardType(.numberPad)
                     Button("Change PIN") {
-                        run { try await account.changePin(current: currentPin, new: nextPin); currentPin = ""; nextPin = "" }
-                    }.disabled(currentPin.isEmpty || nextPin.isEmpty)
+                        guard nextPin == confirmNextPin else { message = "The new PINs do not match."; return }
+                        run { try await account.changePin(current: currentPin, new: nextPin); currentPin = ""; nextPin = ""; confirmNextPin = "" }
+                    }.disabled(currentPin.isEmpty || nextPin.isEmpty || confirmNextPin.isEmpty)
                 }
 
                 Section("Signed-In Devices") {
@@ -88,7 +91,7 @@ struct AccountView: View {
                     }.pickerStyle(.segmented)
                     TextField("Username", text: $name)
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
-                    SecureField(creating ? "Choose a 4- or 6-digit PIN" : "PIN", text: $pin)
+                    SecureField(creating || recovering ? "Choose a 4- or 6-digit PIN" : "PIN", text: $pin)
                         .keyboardType(.numberPad)
                     if creating {
                         SecureField("Confirm PIN", text: $confirmPin).keyboardType(.numberPad)
