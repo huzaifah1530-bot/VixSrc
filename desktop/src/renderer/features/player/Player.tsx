@@ -340,6 +340,7 @@ export function Player() {
 
   // ── Timeline ────────────────────────────────────────────────────────
   const bar = useRef<HTMLDivElement>(null)
+  const [hover, setHover] = useState<number | null>(null)
   const fraction = (clientX: number) => {
     const r = bar.current!.getBoundingClientRect()
     return Math.max(0, Math.min(1, (clientX - r.left) / r.width))
@@ -347,11 +348,18 @@ export function Player() {
   const onBarDown = (e: React.PointerEvent) => {
     if (!duration) return
     e.currentTarget.setPointerCapture(e.pointerId)
-    setScrub(fraction(e.clientX))
+    const at = fraction(e.clientX)
+    setScrub(at)
+    setHover(at)
   }
-  const onBarMove = (e: React.PointerEvent) => { if (scrub !== null) setScrub(fraction(e.clientX)) }
-  const onBarUp = () => {
-    if (scrub !== null) seekTo(scrub * duration)
+  const onBarMove = (e: React.PointerEvent) => {
+    if (!duration) return
+    const at = fraction(e.clientX)
+    setHover(at)
+    if (scrub !== null) setScrub(at)
+  }
+  const onBarUp = (e: React.PointerEvent) => {
+    if (scrub !== null) seekTo(fraction(e.clientX) * duration)
     setScrub(null)
   }
 
@@ -538,7 +546,9 @@ export function Player() {
                 className={cx('timeline', scrub !== null && 'is-scrubbing')}
                 role="slider" aria-label="Seek" aria-valuemin={0} aria-valuemax={Math.round(duration)} aria-valuenow={Math.round(shown)} aria-valuetext={formatTime(shown)} tabIndex={0}
                 onPointerDown={onBarDown} onPointerMove={onBarMove} onPointerUp={onBarUp}
+                onPointerEnter={onBarMove} onPointerLeave={() => setHover(null)} onPointerCancel={() => { setScrub(null); setHover(null) }}
               >
+                {hover !== null && duration > 0 && <div className="timeline-preview" style={{ left: `clamp(25px, ${hover * 100}%, calc(100% - 25px))` }} aria-hidden="true">{formatTime(hover * duration)}</div>}
                 <div className="timeline-track">
                   <div className="timeline-buffer" style={{ width: duration ? `${(buffered / duration) * 100}%` : 0 }} />
                   <div className="timeline-fill" style={{ width: duration ? `${(shown / duration) * 100}%` : 0 }} />

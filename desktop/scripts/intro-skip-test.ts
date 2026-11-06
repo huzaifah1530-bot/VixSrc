@@ -59,14 +59,14 @@ async function main() {
     assert.deepEqual(streamSegments({ intro: { start: 0, end: 0 }, outro: { start: 0, end: 0 } }), [])
     assert.equal(streamSegments({ intro: { start: 345, end: 432 } })[0].end, 432)
   })
-  await test('SkipDB keeps four valid types and rejects sentinels and uncertain matches', () => {
+  await test('SkipDB keeps usable segments independently of match classification', () => {
     const found = skipDbSegments({ segments: {
       recap: { start_ms: 0, end_ms: 30000, match: 'exact' },
       intro: { start_ms: 30000, end_ms: 120000, match: 'shifted' },
       outro: { start_ms: 1300000, end_ms: 1350000, match: 'out-of-range' },
       preview: { start_ms: 1400000, end_ms: 1450000, match: 'exact' }
     } })
-    assert.deepEqual(found.map(s => s.kind), ['intro', 'recap', 'preview'])
+    assert.deepEqual(found.map(s => s.kind), ['intro', 'recap', 'outro', 'preview'])
     assert.deepEqual(skipDbSegments({ segments: { intro: { start_ms: 0, end_ms: 0 } } }), [])
     assert.equal(activeSegment(found, 28)?.kind, 'recap')
     assert.equal(activeSegment(found, 30)?.kind, 'intro')
@@ -75,6 +75,12 @@ async function main() {
     } }), 2700)
     assert.equal(activeSegment(shifted, 0)?.kind, 'recap')
     assert.equal(shifted[0].start, 0)
+    const differentCut = validSegments(skipDbSegments({ segments: {
+      intro: { start_ms: 265100, end_ms: 298100, match: 'out-of-range' },
+      recap: { start_ms: 0, end_ms: 52900, match: 'out-of-range' },
+      outro: { start_ms: 2612500, end_ms: 2714000, match: 'out-of-range' }
+    } }), 2600)
+    assert.deepEqual(differentCut.map(s => s.kind), ['recap', 'intro'])
   })
   await test('SkipDB wins per type while legacy and stream data fill gaps', () => {
     const primary: SkipSegment[] = [{ kind: 'recap', start: 0, end: 30, source: 'skipdb' }]

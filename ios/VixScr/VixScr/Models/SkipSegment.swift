@@ -92,7 +92,6 @@ enum SkipSegments {
         guard let segments = json["segments"] as? [String: Any] else { return [] }
         return [SkipSegment.Kind.intro, .recap, .outro, .preview].compactMap { kind in
             guard let raw = segments[kind.rawValue] as? [String: Any],
-                  raw["match"] as? String != "out-of-range",
                   let start = number(raw["start_ms"]), let end = number(raw["end_ms"]), end > start else { return nil }
             // A conservative duration shift can put a recap that starts at
             // zero slightly before the stream. The visible portion remains

@@ -46,7 +46,7 @@ export function skipDbSegments(body: unknown): SkipSegment[] {
   const out: SkipSegment[] = []
   for (const kind of ['intro', 'recap', 'outro', 'preview'] as const) {
     const raw = segments[kind] && typeof segments[kind] === 'object' ? segments[kind] as Record<string, unknown> : null
-    if (!raw || raw.match === 'out-of-range') continue
+    if (!raw) continue
     const start = raw.start_ms, end = raw.end_ms
     if (finite(start) && finite(end) && end > start)
       out.push({ kind, start: Math.max(0, start / 1000), end: end / 1000, source: 'skipdb' })
