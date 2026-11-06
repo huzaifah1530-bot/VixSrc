@@ -698,34 +698,28 @@ final class VideoPlayerManager {
         currentCaption = nil
     }
 
-    @available(iOS 18.0, *)
-    func runCaptionTranslation(using session: TranslationSession) async {
-        do {
-            try await session.prepareTranslation()
-            while !Task.isCancelled && translateGeneratedCaptions && generatedCaptionLocale == "ja-JP" {
-                let pending = generatedCues.filter { cue in
-                    cue.start >= currentTime - 20 && cue.start <= currentTime + 8 &&
-                    !translatedCues.contains(where: { abs($0.start - cue.start) < 0.01 && translatedSource[$0.start] == cue.text })
-                }
-                for cue in pending.prefix(4) {
-                    let result = try await session.translate(cue.text)
-                    guard !Task.isCancelled, translateGeneratedCaptions else { return }
-                    translatedCues.removeAll { abs($0.start - cue.start) < 0.01 }
-                    translatedCues.append(SubtitleCue(start: cue.start, end: cue.end, text: result.targetText))
-                    translatedCues.sort { $0.start < $1.start }
-                    translatedSource[cue.start] = cue.text
-                    updateCaption(at: currentTime)
-                }
-                try await Task.sleep(for: .milliseconds(400))
-            }
-        } catch is CancellationError {
-            return
-        } catch {
-            generatedCaptionError = "Japanese translation is unavailable: \(error.localizedDescription)"
+    @ObservationIgnored private var translatedSource: [Double: String] = [:]
+
+    func nextCaptionToTranslate() -> SubtitleCue? {
+        guard translateGeneratedCaptions, generatedCaptionLocale == "ja-JP" else { return nil }
+        return generatedCues.first { cue in
+            cue.start >= currentTime - 20 && cue.start <= currentTime + 8 &&
+            translatedSource[cue.start] != cue.text
         }
     }
 
-    @ObservationIgnored private var translatedSource: [Double: String] = [:]
+    func acceptTranslatedCaption(_ cue: SubtitleCue, text: String) {
+        guard translateGeneratedCaptions else { return }
+        translatedCues.removeAll { abs($0.start - cue.start) < 0.01 }
+        translatedCues.append(SubtitleCue(start: cue.start, end: cue.end, text: text))
+        translatedCues.sort { $0.start < $1.start }
+        translatedSource[cue.start] = cue.text
+        updateCaption(at: currentTime)
+    }
+
+    func setCaptionTranslationError(_ error: Error) {
+        generatedCaptionError = "Japanese translation is unavailable: \(error.localizedDescription)"
+    }
     
     // MARK: - Audio Session
     

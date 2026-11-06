@@ -705,8 +705,29 @@ private struct CaptionTranslationBridge: View {
     var body: some View {
         Color.clear.frame(width: 0, height: 0)
             .translationTask(active ? configuration : nil) { session in
-                await playerManager.runCaptionTranslation(using: session)
+                await CaptionTranslationDriver.run(session: session, manager: playerManager)
             }
+    }
+}
+
+@available(iOS 18.0, *)
+private enum CaptionTranslationDriver {
+    static func run(session: TranslationSession, manager: VideoPlayerManager) async {
+        do {
+            try await session.prepareTranslation()
+            while !Task.isCancelled {
+                if let cue = await manager.nextCaptionToTranslate() {
+                    let result = try await session.translate(cue.text)
+                    await manager.acceptTranslatedCaption(cue, text: result.targetText)
+                } else {
+                    try await Task.sleep(for: .milliseconds(400))
+                }
+            }
+        } catch is CancellationError {
+            return
+        } catch {
+            await manager.setCaptionTranslationError(error)
+        }
     }
 }
 
