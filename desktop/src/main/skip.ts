@@ -120,14 +120,14 @@ export function introDbTv(tmdbId: string, season: number, episode: number, durat
     const o = body as { type?: unknown; season?: unknown; episode?: unknown } | null
     // Must be the episode we asked for, not a show-level or list body.
     if (!o || o.type !== 'tv' || o.season !== season || o.episode !== episode) return { value: [], ttl: MISS_TTL }
-    const segs = theIntroDbSegments(body)
+    const segs = theIntroDbSegments(body, duration)
     return { value: segs, ttl: segs.length ? HIT_TTL : MISS_TTL }
   }, [])
 }
 
 export async function tvSkip(tmdbId: string, imdbId: string, season: number, episode: number, duration: number): Promise<SkipSegment[]> {
   const primary = await skipDb(imdbId, season, episode, duration)
-  if (['intro', 'outro'].every(kind => primary.some(s => s.kind === kind))) return primary
+  if (['intro', 'recap', 'outro', 'preview'].every(kind => primary.some(s => s.kind === kind))) return primary
   const fallback = await introDbTv(tmdbId, season, episode, duration)
   return mergeSegmentSources(duration, primary, fallback)
 }

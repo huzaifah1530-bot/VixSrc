@@ -10,7 +10,7 @@ actor IntroSkipService {
     private struct Entry<T: Sendable>: Sendable { let at: Date; let ttl: TimeInterval; let value: T }
     private var segmentCache: [String: Entry<[SkipSegment]>] = [:]
     private var malCache: [String: Entry<MalMatch?>] = [:]
-    private var skipDbAnimeIdCache: [String: Entry<String?>] = [:]
+    private var skipDbTitleIdCache: [String: Entry<String?>] = [:]
 
     private struct MalMatch: Sendable { let malId: Int; let candidate: KitsuCandidate }
 
@@ -64,33 +64,40 @@ actor IntroSkipService {
         return segments
     }
 
-    private func skipDBAnimeID(identity: AnimeIdentity) async -> String? {
-        guard let title = identity.titles.first, let year = identity.aired.map({ String($0.prefix(4)) }) else { return nil }
-        let key = "skipdb:anime-id:\(identity.cacheKey)"
-        if let entry = skipDbAnimeIdCache[key], Date().timeIntervalSince(entry.at) < entry.ttl { return entry.value }
+    /// Resolve the IMDb ID from SkipDB's own covered-title catalogue. This
+    /// does not call IMDb; a unique exact title/year/type match is required.
+    private func skipDBTitleID(titles: [String], year: String, mediaType: String) async -> String? {
+        guard let title = titles.first, !title.isEmpty, year.count == 4 else { return nil }
+        let key = "skipdb:title-id:\(mediaType):\(year):\(titles.map(AnimeIdentity.normTitle).joined(separator: "|"))"
+        if let entry = skipDbTitleIdCache[key], Date().timeIntervalSince(entry.at) < entry.ttl { return entry.value }
         var components = URLComponents(string: "https://skipdb.tv/api/titles/search")!
         components.queryItems = [URLQueryItem(name: "q", value: title)]
         guard let url = components.url, let response = await getJSON(url), response.0 == 200 else { return nil }
         let local = response.1["local"] as? [[String: Any]] ?? []
-        let names = Set(identity.titles.map(AnimeIdentity.normTitle))
+        let names = Set(titles.map(AnimeIdentity.normTitle))
         let ids = Set(local.compactMap { row -> String? in
             guard let id = row["imdb_id"] as? String,
                   id.range(of: #"^tt\d+$"#, options: .regularExpression) != nil,
                   String(describing: row["year"] ?? "") == year,
-                  row["mediaType"] as? String == (identity.type == "movie" ? "movie" : "series"),
+                  row["mediaType"] as? String == mediaType,
                   let name = row["name"] as? String,
                   names.contains(AnimeIdentity.normTitle(name)) else { return nil }
             return id
         })
         let value = ids.count == 1 ? ids.first : nil
-        skipDbAnimeIdCache[key] = Entry(at: Date(), ttl: value == nil ? Self.missTTL : Self.hitTTL, value: value)
+        skipDbTitleIdCache[key] = Entry(at: Date(), ttl: value == nil ? Self.missTTL : Self.hitTTL, value: value)
         return value
     }
 
-    func movie(tmdbId: String, duration: Double, credential: String) async -> [SkipSegment] {
+    func movie(tmdbId: String, title: String, year: String, duration: Double, credential: String) async -> [SkipSegment] {
         let key = "skipdb:movie:\(tmdbId):\(Self.bucket(duration))"
         if let hit = fresh(segmentCache[key]) { return hit }
-        let imdb = await TMDBClient().imdbID(type: .movie, tmdbId: tmdbId, credential: credential)
+        let imdb: String?
+        if let local = await skipDBTitleID(titles: [title], year: String(year.prefix(4)), mediaType: "movie") {
+            imdb = local
+        } else {
+            imdb = await TMDBClient().imdbID(type: .movie, tmdbId: tmdbId, credential: credential)
+        }
         let segments = await skipDB(imdbID: imdb, season: nil, episode: nil, duration: duration)
         segmentCache[key] = Entry(at: Date(), ttl: segments.isEmpty ? Self.missTTL : Self.hitTTL, value: segments)
         return segments
@@ -101,14 +108,19 @@ actor IntroSkipService {
     /// v4 resolves `tmdb_id` server-side and reads season/episode in TMDB's
     /// numbering for it (verified with One Piece: TMDB S22E1100 = TVDB
     /// S22E15), so TMDB numbers are sent as-is, never guessed into TVDB order.
-    func tv(tmdbId: String, season: Int, episode: Int, duration: Double, credential: String) async -> [SkipSegment] {
+    func tv(tmdbId: String, title: String, year: String, season: Int, episode: Int, duration: Double, credential: String) async -> [SkipSegment] {
         guard !tmdbId.isEmpty, tmdbId.allSatisfy(\.isASCII), Int(tmdbId) != nil, season >= 0, episode >= 0 else { return [] }
         let d = Self.bucket(duration)
         let key = "skipdb:tv:\(tmdbId):\(season):\(episode):\(d)"
         if let hit = fresh(segmentCache[key]) { return hit }
-        let imdb = await TMDBClient().imdbID(type: .tv, tmdbId: tmdbId, credential: credential)
+        let imdb: String?
+        if let local = await skipDBTitleID(titles: [title], year: String(year.prefix(4)), mediaType: "series") {
+            imdb = local
+        } else {
+            imdb = await TMDBClient().imdbID(type: .tv, tmdbId: tmdbId, credential: credential)
+        }
         let primary = await skipDB(imdbID: imdb, season: season, episode: episode, duration: duration)
-        if primary.contains(where: { $0.kind == .intro }) && primary.contains(where: { $0.kind == .outro }) {
+        if [SkipSegment.Kind.intro, .recap, .outro, .preview].allSatisfy({ kind in primary.contains(where: { $0.kind == kind }) }) {
             segmentCache[key] = Entry(at: Date(), ttl: Self.hitTTL, value: primary)
             return primary
         }
@@ -133,7 +145,7 @@ actor IntroSkipService {
               (json["episode"] as? NSNumber)?.intValue == episode else {
             return primary
         }
-        let segments = SkipSegments.merge(duration: duration, sources: [primary, SkipSegments.fromTheIntroDB(json)])
+        let segments = SkipSegments.merge(duration: duration, sources: [primary, SkipSegments.fromTheIntroDB(json, duration: duration)])
         segmentCache[key] = Entry(at: Date(), ttl: segments.isEmpty ? Self.missTTL : Self.hitTTL, value: segments)
         return segments
     }
@@ -143,7 +155,7 @@ actor IntroSkipService {
     func anime(identity: AnimeIdentity, episode: String, duration: Double, credential: String) async -> [SkipSegment] {
         let number = Int(episode)
         let imdb: String?
-        if let local = await skipDBAnimeID(identity: identity) {
+        if let local = await skipDBTitleID(titles: identity.titles, year: identity.aired.map { String($0.prefix(4)) } ?? "", mediaType: identity.type == "movie" ? "movie" : "series") {
             imdb = local
         } else {
             imdb = await TMDBClient().animeIMDbID(identity: identity, credential: credential)

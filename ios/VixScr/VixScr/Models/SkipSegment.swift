@@ -7,7 +7,7 @@ struct SkipSegment: Hashable, Sendable {
     enum Kind: String, Sendable { case intro, recap, outro, preview }
     enum Source: String, Sendable { case stream, skipdb, theintrodb, aniskip, custom }
 
-    /// Only intros are skipped today; outros (credits / ED) are kept for later.
+    /// The player offers a button while playback is inside this segment.
     let kind: Kind
     let start: Double
     let end: Double
@@ -94,7 +94,10 @@ enum SkipSegments {
             guard let raw = segments[kind.rawValue] as? [String: Any],
                   raw["match"] as? String != "out-of-range",
                   let start = number(raw["start_ms"]), let end = number(raw["end_ms"]), end > start else { return nil }
-            return SkipSegment(kind: kind, start: start / 1000, end: end / 1000, source: .skipdb)
+            // A conservative duration shift can put a recap that starts at
+            // zero slightly before the stream. The visible portion remains
+            // skippable (Prison Break S1E2 at a 2700-second stream length).
+            return SkipSegment(kind: kind, start: max(0, start / 1000), end: end / 1000, source: .skipdb)
         }
     }
 
@@ -112,12 +115,13 @@ enum SkipSegments {
     }
 
     /// TheIntroDB v4 GET /media body (ms; null start = 0, null end = to the end).
-    static func fromTheIntroDB(_ json: [String: Any]) -> [SkipSegment] {
+    static func fromTheIntroDB(_ json: [String: Any], duration: Double = 0) -> [SkipSegment] {
         var out: [SkipSegment] = []
-        for (field, kind) in [("intro", SkipSegment.Kind.intro), ("credits", SkipSegment.Kind.outro)] {
+        for (field, kind) in [("intro", SkipSegment.Kind.intro), ("recap", .recap),
+                              ("credits", .outro), ("preview", .preview)] {
             for r in json[field] as? [[String: Any]] ?? [] {
-                // An intro without a known end isn't skippable.
-                guard let endMs = number(r["end_ms"]) else { continue }
+                let endMs = number(r["end_ms"]) ?? ((kind == .outro || kind == .preview) && duration > 0 ? duration * 1000 : 0)
+                guard endMs > 0 else { continue }
                 let startMs = number(r["start_ms"]) ?? 0
                 out.append(SkipSegment(kind: kind, start: startMs / 1000, end: endMs / 1000, source: .theintrodb))
             }

@@ -31,6 +31,7 @@ export function IntroTimes({ item, episodeLabel, lookup }: {
   const saved = useSettings(s => s.introOverrides?.[key])
   const set = useSettings(s => s.set)
   const [found, setFound] = useState<SkipSegment | null>(null)
+  const [showSource, setShowSource] = useState(false)
   const custom = !!saved && saved.start != null && saved.end != null
 
   useEffect(() => {
@@ -73,11 +74,22 @@ export function IntroTimes({ item, episodeLabel, lookup }: {
       : found ? `Found for ${episodeLabel ?? 'this episode'} (can differ per episode). Edit to set your own for all episodes.`
         : `No intro found${episodeLabel ? ` for ${episodeLabel}` : ''}. Enter times to set one for all episodes.`
 
+  const sourceName = custom ? 'Custom times' : found?.source === 'skipdb' ? 'SkipDB'
+    : found?.source === 'theintrodb' ? 'TheIntroDB' : found?.source === 'aniskip' ? 'AniSkip'
+      : found?.source === 'stream' ? 'Stream metadata' : 'No source'
+  const sourceDetail = custom ? 'These times were set by you for this show. Reset to use the found episode timing.'
+    : found?.source === 'skipdb' ? 'SkipDB may adjust its submitted timestamps to match the length of your video stream.'
+      : found ? `This episode’s intro comes from ${sourceName}.` : 'No intro timing was found for this episode.'
+
   return (
     <section className="intro-times" aria-label="Intro times">
       <table>
         <thead>
-          <tr><th scope="col">Intro start</th><th scope="col">Intro end</th><th aria-hidden="true" /></tr>
+          <tr><th scope="col">Intro start</th><th scope="col">Intro end</th><th>
+            <button className="tb-btn intro-source" aria-label={`Intro timing source: ${sourceName}`} title={`Source: ${sourceName}`} aria-expanded={showSource} onClick={() => setShowSource(v => !v)}>
+              <Icon name="info" size={14} />
+            </button>
+          </th></tr>
         </thead>
         <tbody>
           <tr>
@@ -93,6 +105,7 @@ export function IntroTimes({ item, episodeLabel, lookup }: {
           </tr>
         </tbody>
       </table>
+      {showSource && <p className="form-hint" role="status"><strong>{sourceName}.</strong> {sourceDetail}</p>}
       <p className="form-hint" role={invalid ? 'alert' : undefined}>{hint}</p>
     </section>
   )

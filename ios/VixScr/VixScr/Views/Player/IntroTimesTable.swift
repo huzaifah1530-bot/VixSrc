@@ -17,6 +17,7 @@ struct IntroTimesTable: View {
     @Environment(AppStore.self) private var store
     @State private var start = "00:00"
     @State private var end = "00:00"
+    @State private var showingSourceInfo = false
     @FocusState private var focused: Field?
 
     private enum Field { case start, end }
@@ -61,13 +62,40 @@ struct IntroTimesTable: View {
         return "No intro found for this episode. Enter times to set one for all episodes."
     }
 
+    private var sourceName: String {
+        if custom != nil { return "Custom times" }
+        guard let source = found?.source else { return "No source" }
+        switch source {
+        case .skipdb: return "SkipDB"
+        case .theintrodb: return "TheIntroDB"
+        case .aniskip: return "AniSkip"
+        case .stream: return "Stream metadata"
+        case .custom: return "Custom times"
+        }
+    }
+
+    private var sourceDetail: String {
+        if custom != nil { return "These times were set by you for this show. Reset them to use the found episode timing." }
+        if found?.source == .skipdb {
+            return "This episode's intro comes from SkipDB. SkipDB may adjust its submitted timestamps to match the length of your video stream."
+        }
+        if found != nil { return "This episode's intro comes from \(sourceName)." }
+        return "No intro timing was found for this episode."
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
                 GridRow {
                     Text("Intro start").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                     Text("Intro end").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                    Color.clear.frame(width: 28, height: 1)
+                    Button { showingSourceInfo = true } label: {
+                        Image(systemName: "info.circle")
+                            .font(.footnote.weight(.semibold))
+                            .frame(width: 28, height: 28)
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("Intro timing source: \(sourceName)")
                 }
                 GridRow {
                     timeField("Intro start", text: $start, field: .start)
@@ -93,6 +121,11 @@ struct IntroTimesTable: View {
         .onChange(of: showKey) { _, _ in showCurrent() }
         .onChange(of: found) { _, _ in if focused == nil { showCurrent() } }
         .onChange(of: focused) { old, new in if old != nil && new == nil { commit() } }
+        .alert("Intro timing source: \(sourceName)", isPresented: $showingSourceInfo) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(sourceDetail)
+        }
     }
 
     private func timeField(_ label: String, text: Binding<String>, field: Field) -> some View {

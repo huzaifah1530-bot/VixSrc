@@ -49,7 +49,7 @@ export function skipDbSegments(body: unknown): SkipSegment[] {
     if (!raw || raw.match === 'out-of-range') continue
     const start = raw.start_ms, end = raw.end_ms
     if (finite(start) && finite(end) && end > start)
-      out.push({ kind, start: start / 1000, end: end / 1000, source: 'skipdb' })
+      out.push({ kind, start: Math.max(0, start / 1000), end: end / 1000, source: 'skipdb' })
   }
   return out
 }
@@ -82,24 +82,25 @@ export function streamSegments(json: unknown): SkipSegment[] {
 
 /**
  * TheIntroDB v4 GET /media body. Times are ms; `start_ms: null` means the
- * start of the video, `end_ms: null` the end. Only intros (skippable) and
- * credits (kept for a future "skip credits") are taken; an intro without
- * an end isn't an intro.
+ * start of the video, `end_ms: null` the end. An intro or recap without
+ * a known end is not skippable; credits and previews can end with the video.
  */
-export function theIntroDbSegments(body: unknown): SkipSegment[] {
+export function theIntroDbSegments(body: unknown, duration = 0): SkipSegment[] {
   const o = body && typeof body === 'object' ? body as Record<string, unknown> : {}
   const out: SkipSegment[] = []
   const take = (field: string, kind: SkipSegment['kind']) => {
     const list = Array.isArray(o[field]) ? o[field] as { start_ms?: unknown; end_ms?: unknown }[] : []
     for (const r of list) {
       const start = r?.start_ms == null ? 0 : Number(r.start_ms)
-      if (r?.end_ms == null) continue
-      const end = Number(r.end_ms)
+      if (r?.end_ms == null && !(duration > 0 && (kind === 'outro' || kind === 'preview'))) continue
+      const end = r?.end_ms == null ? duration * 1000 : Number(r.end_ms)
       if (finite(start) && finite(end)) out.push({ kind, start: start / 1000, end: end / 1000, source: 'theintrodb' })
     }
   }
   take('intro', 'intro')
+  take('recap', 'recap')
   take('credits', 'outro')
+  take('preview', 'preview')
   return out
 }
 

@@ -41,6 +41,15 @@ async function main() {
     assert.deepEqual(theIntroDbSegments(null), [])
     assert.deepEqual(theIntroDbSegments({ intro: 'x' }), [])
   })
+  await test('TheIntroDB: recap and preview are available; end-of-media outro uses duration', () => {
+    const s = theIntroDbSegments({
+      recap: [{ start_ms: 0, end_ms: 52900 }],
+      credits: [{ start_ms: 2600000, end_ms: null }],
+      preview: [{ start_ms: 2500000, end_ms: 2560000 }]
+    }, 2700)
+    assert.deepEqual(s.map(x => x.kind), ['recap', 'outro', 'preview'])
+    assert.equal(s.find(x => x.kind === 'outro')?.end, 2700)
+  })
   await test('AniSkip: op → intro, ed → outro, found:false → none', () => {
     const s = aniSkipSegments({ found: true, results: [{ skipType: 'op', interval: { startTime: 344.7, endTime: 435 } }, { skipType: 'ed', interval: { startTime: 1334, endTime: 1424 } }, { skipType: 'recap', interval: { startTime: 0, endTime: 30 } }] })
     assert.deepEqual(s.map(x => x.kind), ['intro', 'outro'])
@@ -61,6 +70,11 @@ async function main() {
     assert.deepEqual(skipDbSegments({ segments: { intro: { start_ms: 0, end_ms: 0 } } }), [])
     assert.equal(activeSegment(found, 28)?.kind, 'recap')
     assert.equal(activeSegment(found, 30)?.kind, 'intro')
+    const shifted = validSegments(skipDbSegments({ segments: {
+      recap: { start_ms: -14000, end_ms: 38900, match: 'shifted' }
+    } }), 2700)
+    assert.equal(activeSegment(shifted, 0)?.kind, 'recap')
+    assert.equal(shifted[0].start, 0)
   })
   await test('SkipDB wins per type while legacy and stream data fill gaps', () => {
     const primary: SkipSegment[] = [{ kind: 'recap', start: 0, end: 30, source: 'skipdb' }]
@@ -150,6 +164,11 @@ async function main() {
   await test('SkipDB: Breaking Bad S1E1 has approved segments', async () => {
     const segments = await skipDb('tt0903747', 1, 1, 3500)
     assert.ok(segments.some(s => s.kind === 'intro' && s.source === 'skipdb'))
+  })
+  await test('SkipDB: Prison Break S1E2 preserves the shifted recap and outro', async () => {
+    const segments = await skipDb('tt0455275', 1, 2, 2700)
+    assert.ok(segments.some(s => s.kind === 'recap' && s.start === 0), JSON.stringify(segments))
+    assert.ok(segments.some(s => s.kind === 'outro' && s.end === 2700), JSON.stringify(segments))
   })
   await test('SkipDB: exact anime title and year resolve to covered IMDb series', async () => {
     const id = await skipDbAnimeId({ titles: ['Jujutsu Kaisen'], type: 'tv', aired: '2020-10-03', episodes: 24 })

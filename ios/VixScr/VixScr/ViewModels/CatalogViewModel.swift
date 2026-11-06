@@ -733,16 +733,20 @@ final class CatalogViewModel {
         if let item = selected, item.type == .tv, let season = selectedSeason?.seasonNumber,
            let episode = selectedEpisode?.episodeNumber {
             let tmdbId = item.tmdbId
+            let title = item.title
+            let year = item.year
             let credential = store.credential
             showKey = "\(item.type.rawValue):\(item.tmdbId)"
             fetch = { duration in
-                await IntroSkipService.shared.tv(tmdbId: tmdbId, season: season, episode: episode, duration: duration, credential: credential)
+                await IntroSkipService.shared.tv(tmdbId: tmdbId, title: title, year: year, season: season, episode: episode, duration: duration, credential: credential)
             }
         } else if let item = selected, item.type == .movie {
             let tmdbId = item.tmdbId
+            let title = item.title
+            let year = item.year
             let credential = store.credential
             fetch = { duration in
-                await IntroSkipService.shared.movie(tmdbId: tmdbId, duration: duration, credential: credential)
+                await IntroSkipService.shared.movie(tmdbId: tmdbId, title: title, year: year, duration: duration, credential: credential)
             }
         }
         playerManager.configureIntroSkip(episodeKey: progressID, showKey: showKey, showTitle: selected?.title ?? "",

@@ -150,19 +150,6 @@ private struct PlayerSurface: View {
             }
             .frame(width: geo.size.width, height: geo.size.height)
             .clipped()
-            .simultaneousGesture(
-                MagnifyGesture()
-                    .onChanged { value in
-                        if value.magnification > 1.03 { zoomToFill = true }
-                        pinchScale = zoomToFill ? max(1, value.magnification) : 1
-                    }
-                    .onEnded { value in
-                        withAnimation(.spring(response: 0.38, dampingFraction: 0.84)) {
-                            if value.magnification < 0.92 { zoomToFill = false }
-                            pinchScale = 1
-                        }
-                    }
-            )
         }
         // Tap / double-tap / hold zones sit behind everything and extend
         // into the safe areas, so the letterbox bars beside the notch or
@@ -173,6 +160,21 @@ private struct PlayerSurface: View {
             }
             .ignoresSafeArea()
         }
+        // The touch zones are a background sibling of the video. Attach the
+        // pinch to their common parent so it receives the same touches.
+        .simultaneousGesture(
+            MagnifyGesture()
+                .onChanged { value in
+                    if value.magnification > 1.03 { zoomToFill = true }
+                    pinchScale = zoomToFill ? max(1, value.magnification) : 1
+                }
+                .onEnded { value in
+                    withAnimation(.spring(response: 0.38, dampingFraction: 0.84)) {
+                        if value.magnification < 0.92 { zoomToFill = false }
+                        pinchScale = 1
+                    }
+                }
+        )
         .overlay {
             GeometryReader { full in seekFeedbackView(size: full.size) }
                 .ignoresSafeArea()
