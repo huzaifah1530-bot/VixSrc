@@ -105,6 +105,7 @@ function AccountPane() {
     invalid_pin: 'Choose a 4- or 6-digit PIN that is not a simple sequence.',
     temporarily_locked: 'Too many attempts. Try again later.', rate_limited: 'Too many attempts. Try again later.',
     conflict: 'Cloud data changed on another device. Download it before saving again.',
+    not_found: 'No cloud backup is saved for this platform yet.',
     unauthorized: 'Your session expired. Sign in again.', unavailable: 'Vela Cloud is unavailable.'
   }[code] ?? `Cloud request failed (${code}).`)
   const run = async (action: string, body?: Record<string, unknown>) => {
@@ -130,6 +131,17 @@ function AccountPane() {
           if (result) {
             setRecoveryCode(result.recoveryCode ?? null); setPin(''); setConfirmPin('')
             if (creating) { const { accountKey } = await accountApi.status(); if (accountKey) localStorage.setItem(revisionKey(accountKey), '0') }
+            else if (!useLibrary.getState().favorites.length && !useLibrary.getState().recents.length && !useLibrary.getState().watchProgress.length) {
+              const saved = await accountApi.call('download')
+              if (saved.status === 200 && saved.data.payload) {
+                applyBackup(JSON.stringify(saved.data.payload))
+                const { accountKey } = await accountApi.status()
+                if (accountKey) {
+                  localStorage.setItem(revisionKey(accountKey), String(saved.data.revision))
+                  localStorage.setItem(hashKey(accountKey), await backupHash(saved.data.payload))
+                }
+              }
+            }
           }
         }}>{creating ? 'Confirm New Account' : 'Sign In'}</button></Field>
       </Group>

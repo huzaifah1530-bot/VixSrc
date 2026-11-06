@@ -98,6 +98,7 @@ final class CloudAccount {
             case "temporarily_locked", "rate_limited": text = "Too many attempts. Try again later."
             case "invalid_pin": text = "Choose a 4- or 6-digit PIN that isn't a simple sequence."
             case "conflict": text = "Cloud data changed on another device. Download it before saving again."
+            case "not_found": text = "No cloud backup is saved for this platform yet."
             default: text = "Vela Cloud is unavailable (\(code))."
             }
             throw CloudError.message(text)

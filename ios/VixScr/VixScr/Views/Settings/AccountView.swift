@@ -99,7 +99,12 @@ struct AccountView: View {
                         if creating && pin != confirmPin { message = "The PINs do not match."; return }
                         run {
                             if creating { recoveryCode = try await account.create(username: name, pin: pin) }
-                            else { try await account.signIn(username: name, pin: pin) }
+                            else {
+                                try await account.signIn(username: name, pin: pin)
+                                if store.favorites.isEmpty && store.recents.isEmpty && store.watchProgress.isEmpty {
+                                    try? await account.download(into: store)
+                                }
+                            }
                             pin = ""; confirmPin = ""
                         }
                     }
