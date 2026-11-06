@@ -160,22 +160,24 @@ private struct PlayerSurface: View {
             }
             .ignoresSafeArea()
         }
-        .contentShape(Rectangle())
-        // The touch zones are a background sibling of the video. Attach the
-        // pinch to their common parent so it receives the same touches.
-        .simultaneousGesture(
-            MagnifyGesture()
-                .onChanged { value in
-                    if value.magnification > 1.03 { zoomToFill = true }
-                    pinchScale = zoomToFill ? max(1, value.magnification) : 1
-                }
-                .onEnded { value in
+        .background {
+            // A window recognizer sees both fingers even when one lands on a
+            // tap/hold zone and the other lands on a visible control.
+            PlayerPinchCapture(isActive: isFullscreen || !playerManager.wantsFullscreen) { scale, state in
+                switch state {
+                case .changed:
+                    if scale > 1.03 { zoomToFill = true }
+                    pinchScale = zoomToFill ? max(1, scale) : 1
+                case .ended, .cancelled, .failed:
                     withAnimation(.spring(response: 0.38, dampingFraction: 0.84)) {
-                        if value.magnification < 0.92 { zoomToFill = false }
+                        if scale < 0.92 { zoomToFill = false }
                         pinchScale = 1
                     }
+                default: break
                 }
-        )
+            }
+            .allowsHitTesting(false)
+        }
         .overlay {
             GeometryReader { full in seekFeedbackView(size: full.size) }
                 .ignoresSafeArea()
@@ -836,6 +838,72 @@ private struct PlayerScrubber: View {
         let s = Int(seconds)
         return s >= 3600 ? String(format: "%d:%02d:%02d", s / 3600, (s % 3600) / 60, s % 60)
                          : String(format: "%d:%02d", s / 60, s % 60)
+    }
+}
+
+/// Pinch recognition belongs to the window, so the player's separate tap and
+/// hold zones cannot swallow one of the two fingers. It only begins when both
+/// touches are inside this player surface.
+private struct PlayerPinchCapture: UIViewRepresentable {
+    let isActive: Bool
+    let onPinch: (CGFloat, UIGestureRecognizer.State) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeUIView(context: Context) -> AttachmentView {
+        let view = AttachmentView()
+        view.coordinator = context.coordinator
+        context.coordinator.view = view
+        return view
+    }
+
+    func updateUIView(_ view: AttachmentView, context: Context) {
+        context.coordinator.isActive = isActive
+        context.coordinator.onPinch = onPinch
+        context.coordinator.attach(to: view.window)
+    }
+
+    static func dismantleUIView(_ view: AttachmentView, coordinator: Coordinator) {
+        coordinator.attach(to: nil)
+        view.coordinator = nil
+    }
+
+    final class AttachmentView: UIView {
+        weak var coordinator: Coordinator?
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            coordinator?.attach(to: window)
+        }
+    }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        weak var view: UIView?
+        private weak var attachedWindow: UIWindow?
+        var isActive = true
+        var onPinch: ((CGFloat, UIGestureRecognizer.State) -> Void)?
+        private lazy var recognizer: UIPinchGestureRecognizer = {
+            let gesture = UIPinchGestureRecognizer(target: self, action: #selector(handle(_:)))
+            gesture.cancelsTouchesInView = false
+            gesture.delegate = self
+            return gesture
+        }()
+
+        func attach(to window: UIWindow?) {
+            guard attachedWindow !== window else { return }
+            attachedWindow?.removeGestureRecognizer(recognizer)
+            attachedWindow = window
+            window?.addGestureRecognizer(recognizer)
+        }
+
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            guard isActive, let view, view.window != nil, gestureRecognizer.numberOfTouches >= 2 else { return false }
+            return view.bounds.contains(gestureRecognizer.location(ofTouch: 0, in: view)) &&
+                view.bounds.contains(gestureRecognizer.location(ofTouch: 1, in: view))
+        }
+
+        @objc private func handle(_ gesture: UIPinchGestureRecognizer) {
+            onPinch?(gesture.scale, gesture.state)
+        }
     }
 }
 
