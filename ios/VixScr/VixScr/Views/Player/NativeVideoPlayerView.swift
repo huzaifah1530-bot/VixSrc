@@ -705,19 +705,23 @@ private struct CaptionTranslationBridge: View {
     var body: some View {
         Color.clear.frame(width: 0, height: 0)
             .translationTask(active ? configuration : nil) { session in
-                await CaptionTranslationDriver.run(session: session, manager: playerManager)
+                await CaptionTranslationDriver.run(session: .init(value: session), manager: playerManager)
             }
     }
 }
 
 @available(iOS 18.0, *)
 private enum CaptionTranslationDriver {
-    static func run(session: TranslationSession, manager: VideoPlayerManager) async {
+    // SwiftUI owns this non-Sendable session for the lifetime of its task.
+    // The driver uses it serially and stops when SwiftUI cancels that task.
+    struct Session: @unchecked Sendable { let value: TranslationSession }
+
+    static func run(session: Session, manager: VideoPlayerManager) async {
         do {
-            try await session.prepareTranslation()
+            try await session.value.prepareTranslation()
             while !Task.isCancelled {
                 if let cue = await manager.nextCaptionToTranslate() {
-                    let result = try await session.translate(cue.text)
+                    let result = try await session.value.translate(cue.text)
                     await manager.acceptTranslatedCaption(cue, text: result.targetText)
                 } else {
                     try await Task.sleep(for: .milliseconds(400))
