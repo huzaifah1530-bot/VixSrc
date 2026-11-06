@@ -91,10 +91,12 @@ final class DeviceLink {
     @ObservationIgnored private var pendingReplaceUntil: Date?
     @ObservationIgnored private var pendingPlay: (command: [String: Any], until: Date)?
     @ObservationIgnored private var keepAliveTask: Task<Void, Never>?
+    @ObservationIgnored private var connectTimeoutTask: Task<Void, Never>?
     @ObservationIgnored private var lastReceived = Date()
     @ObservationIgnored private var suppressReconnect = false
     @ObservationIgnored private var toastTask: Task<Void, Never>?
     @ObservationIgnored private var hostIndex = 0
+    @ObservationIgnored private var bonjourEndpoint: NWEndpoint?
     @ObservationIgnored private var lastPlayRequest = Date.distantPast
 
     /// Whether the phone should adopt the computer's episode. False for a
@@ -274,14 +276,17 @@ final class DeviceLink {
             }
             guard let self, case .connecting(let id) = self.phase, id == deskId else { return }
             self.hostIndex = 0
+            self.bonjourEndpoint = self.discovered.first(where: { $0.deskId == deskId })?.endpoint
             self.open(desk: desk, auto: auto, code: nil)
         }
     }
 
     private func endpoint(for desk: PairedDesktop) -> NWEndpoint? {
-        if let found = discovered.first(where: { $0.deskId == desk.deskId }) { return found.endpoint }
-        guard hostIndex < desk.hosts.count, let port = NWEndpoint.Port(rawValue: UInt16(clamping: desk.port)) else { return nil }
-        return .hostPort(host: NWEndpoint.Host(desk.hosts[hostIndex]), port: port)
+        if hostIndex == 0, let bonjourEndpoint { return bonjourEndpoint }
+        let addressIndex = hostIndex - (bonjourEndpoint == nil ? 0 : 1)
+        guard desk.hosts.indices.contains(addressIndex),
+              let port = NWEndpoint.Port(rawValue: UInt16(clamping: desk.port)) else { return nil }
+        return .hostPort(host: NWEndpoint.Host(desk.hosts[addressIndex]), port: port)
     }
 
     private func open(desk: PairedDesktop, auto: Bool, code: Data?) {
@@ -300,6 +305,7 @@ final class DeviceLink {
         qrShownBy = nil
         suppressReconnect = false
         hostIndex = 0
+        bonjourEndpoint = discovered.first(where: { $0.deskId == invite.deskId })?.endpoint
         phase = .connecting(invite.deskId)
         open(desk: desk, auto: false, code: invite.code)
     }
@@ -328,6 +334,14 @@ final class DeviceLink {
         connection = conn
         conn.start(queue: .main)
         receive(on: conn, generation: gen)
+        // Network.framework can remain in .preparing while resolving Bonjour,
+        // despite TCP's connectionTimeout. Continue to the QR's IP addresses.
+        connectTimeoutTask?.cancel()
+        connectTimeoutTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 10_000_000_000)
+            guard let self, !Task.isCancelled, self.generation == gen, !self.isConnected else { return }
+            self.closed(reason: "Connection timed out. Guest Wi-Fi may block devices from reaching each other.")
+        }
     }
 
     private func connectionState(_ state: NWConnection.State, generation gen: Int) {
@@ -890,6 +904,7 @@ final class DeviceLink {
         pendingCount = 0
         generation += 1
         keepAliveTask?.cancel()
+        connectTimeoutTask?.cancel()
         connection?.cancel()
         connection = nil
         cipher = nil
@@ -913,11 +928,15 @@ final class DeviceLink {
             }
             return
         }
-        // Not connected yet: try the next remembered address, then give up.
+        // Not connected yet: try QR addresses after Bonjour, then give up.
         if case .hello(let desk, let auto, let code)? = attempt, !suppressReconnect,
-           !discovered.contains(where: { $0.deskId == desk.deskId }), hostIndex + 1 < desk.hosts.count {
+           hostIndex + 1 < desk.hosts.count + (bonjourEndpoint == nil ? 0 : 1) {
             hostIndex += 1
             open(desk: desk, auto: auto, code: code)
+            return
+        }
+        if case .pairRequest? = attempt {
+            fail(reason.map { "Couldn't reach the computer: \($0)" } ?? "Couldn't reach the computer")
             return
         }
         if case .connecting = phase {
