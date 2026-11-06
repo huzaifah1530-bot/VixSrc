@@ -4,6 +4,7 @@ import MediaPlayer
 import Observation
 import UIKit
 import Speech
+import Translation
 
 /// Manages native video playback with AVPlayer, tracking progress,
 /// handling resume positions, and providing playback controls.
@@ -50,6 +51,7 @@ final class VideoPlayerManager {
     private(set) var selectedExternalSubtitleIndex: Int?
     private(set) var currentCaption: String?
     private(set) var generatedCaptionLocale: String?
+    private(set) var translateGeneratedCaptions = false
     private(set) var generatedCaptionError: String?
     private enum CaptionPreference: Codable, Equatable { case off, external(String), embedded(String), generated(String) }
     private static let captionPreferenceKey = "vela_caption_preference"
@@ -64,6 +66,17 @@ final class VideoPlayerManager {
         return false
     }
     var hasAnySubtitles: Bool { canGenerateCaptions || !subtitleOptions.isEmpty || !externalSubtitles.isEmpty }
+    /// HLS audio tracks usually identify their spoken language. When a host
+    /// omits it, the menu offers both languages instead of guessing.
+    var spokenAudioLanguage: String? {
+        guard let item = player?.currentItem,
+              let group = item.asset.mediaSelectionGroup(forMediaCharacteristic: .audible),
+              let selected = item.currentMediaSelection.selectedMediaOption(in: group),
+              let code = selected.locale?.language.languageCode?.identifier.lowercased() else { return nil }
+        if code == "ja" { return "ja" }
+        if code == "en" { return "en" }
+        return nil
+    }
     
     init() {
         if let saved = UserDefaults.standard.data(forKey: Self.captionPreferenceKey) {
@@ -185,7 +198,8 @@ final class VideoPlayerManager {
     }
 
     private func updateCaption(at time: Double) {
-        let cues = generatedCaptionLocale == nil ? externalCues : generatedCues
+        let cues = generatedCaptionLocale == nil ? externalCues :
+            (translateGeneratedCaptions ? translatedCues : generatedCues)
         guard !cues.isEmpty else {
             if currentCaption != nil { currentCaption = nil }
             return
@@ -260,7 +274,9 @@ final class VideoPlayerManager {
                         self.observeDuration(for: item)
                         self.updateSubtitleOptions(for: item)
                         if case .generated(let locale) = self.captionPreference {
-                            Task { await self.selectGeneratedCaptions(locale: locale, remember: false) }
+                            let translated = locale == "ja-JP->en"
+                            Task { await self.selectGeneratedCaptions(locale: translated ? "ja-JP" : locale,
+                                                                      translated: translated, remember: false) }
                         }
                         self.publishNowPlayingInfo()
                     }
@@ -637,8 +653,9 @@ final class VideoPlayerManager {
     }
 
     @ObservationIgnored private var generatedCues: [SubtitleCue] = []
+    @ObservationIgnored private var translatedCues: [SubtitleCue] = []
 
-    func selectGeneratedCaptions(locale: String, remember: Bool = true) async {
+    func selectGeneratedCaptions(locale: String, translated: Bool = false, remember: Bool = true) async {
         guard #available(iOS 27.0, *), let item = player?.currentItem else { return }
         generatedCaptionError = nil
         guard await AutoCaptionEngine.authorize() else {
@@ -660,7 +677,8 @@ final class VideoPlayerManager {
             })
             autoCaptionEngine = engine
             generatedCaptionLocale = locale
-            if remember { rememberCaption(.generated(locale)) }
+            translateGeneratedCaptions = translated
+            if remember { rememberCaption(.generated(translated ? "ja-JP->en" : locale)) }
         } catch {
             generatedCaptionError = error.localizedDescription
             engine.stop()
@@ -673,9 +691,41 @@ final class VideoPlayerManager {
         }
         autoCaptionEngine = nil
         generatedCaptionLocale = nil
+        translateGeneratedCaptions = false
         generatedCues = []
+        translatedCues = []
+        translatedSource = [:]
         currentCaption = nil
     }
+
+    @available(iOS 18.0, *)
+    func runCaptionTranslation(using session: TranslationSession) async {
+        do {
+            try await session.prepareTranslation()
+            while !Task.isCancelled && translateGeneratedCaptions && generatedCaptionLocale == "ja-JP" {
+                let pending = generatedCues.filter { cue in
+                    cue.start >= currentTime - 20 && cue.start <= currentTime + 8 &&
+                    !translatedCues.contains(where: { abs($0.start - cue.start) < 0.01 && translatedSource[$0.start] == cue.text })
+                }
+                for cue in pending.prefix(4) {
+                    let result = try await session.translate(cue.text)
+                    guard !Task.isCancelled, translateGeneratedCaptions else { return }
+                    translatedCues.removeAll { abs($0.start - cue.start) < 0.01 }
+                    translatedCues.append(SubtitleCue(start: cue.start, end: cue.end, text: result.targetText))
+                    translatedCues.sort { $0.start < $1.start }
+                    translatedSource[cue.start] = cue.text
+                    updateCaption(at: currentTime)
+                }
+                try await Task.sleep(for: .milliseconds(400))
+            }
+        } catch is CancellationError {
+            return
+        } catch {
+            generatedCaptionError = "Japanese translation is unavailable: \(error.localizedDescription)"
+        }
+    }
+
+    @ObservationIgnored private var translatedSource: [Double: String] = [:]
     
     // MARK: - Audio Session
     

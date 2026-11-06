@@ -1,6 +1,7 @@
 import SwiftUI
 import AVKit
 import UIKit
+import Translation
 
 /// Native video player: AVPlayerLayer plus Vela's own controls, used both
 /// inline and in fullscreen (no system AVPlayerViewController).
@@ -179,6 +180,12 @@ private struct PlayerSurface: View {
             }
             .allowsHitTesting(false)
         }
+        .background {
+            if #available(iOS 18.0, *) {
+                CaptionTranslationBridge(playerManager: playerManager,
+                                         active: (isFullscreen || !playerManager.wantsFullscreen) && playerManager.translateGeneratedCaptions)
+            }
+        }
         .overlay {
             GeometryReader { full in seekFeedbackView(size: full.size) }
                 .ignoresSafeArea()
@@ -190,6 +197,9 @@ private struct PlayerSurface: View {
             Button("OK", role: .cancel) { }
         } message: {
             Text(playerManager.generatedCaptionError ?? "Could not generate captions for this video.")
+        }
+        .onChange(of: playerManager.generatedCaptionError) { _, error in
+            if error != nil { showGeneratedCaptionError = true }
         }
         .onAppear { scheduleHide() }
         .onDisappear {
@@ -494,6 +504,7 @@ private struct PlayerSurface: View {
                 }
                 if playerManager.canGenerateCaptions {
                     Section("Auto-generated") {
+                        if playerManager.spokenAudioLanguage != "ja" {
                         Button {
                             Task {
                                 await playerManager.selectGeneratedCaptions(locale: "en-US")
@@ -504,15 +515,28 @@ private struct PlayerSurface: View {
                                 Label("English", systemImage: "checkmark")
                             } else { Text("English") }
                         }
+                        }
+                        if playerManager.spokenAudioLanguage != "en" {
                         Button {
                             Task {
                                 await playerManager.selectGeneratedCaptions(locale: "ja-JP")
                                 showGeneratedCaptionError = playerManager.generatedCaptionError != nil
                             }
                         } label: {
-                            if playerManager.generatedCaptionLocale == "ja-JP" {
+                            if playerManager.generatedCaptionLocale == "ja-JP" && !playerManager.translateGeneratedCaptions {
                                 Label("Japanese", systemImage: "checkmark")
                             } else { Text("Japanese") }
+                        }
+                        Button {
+                            Task {
+                                await playerManager.selectGeneratedCaptions(locale: "ja-JP", translated: true)
+                                showGeneratedCaptionError = playerManager.generatedCaptionError != nil
+                            }
+                        } label: {
+                            if playerManager.generatedCaptionLocale == "ja-JP" && playerManager.translateGeneratedCaptions {
+                                Label("Japanese → English", systemImage: "checkmark")
+                            } else { Text("Japanese → English") }
+                        }
                         }
                     }
                 }
@@ -666,6 +690,23 @@ private struct PlayerSurface: View {
             guard !Task.isCancelled, playerManager.isPlaying else { return }
             showControls = false
         }
+    }
+}
+
+@available(iOS 18.0, *)
+private struct CaptionTranslationBridge: View {
+    @Bindable var playerManager: VideoPlayerManager
+    let active: Bool
+    @State private var configuration = TranslationSession.Configuration(
+        source: Locale.Language(identifier: "ja"),
+        target: Locale.Language(identifier: "en")
+    )
+
+    var body: some View {
+        Color.clear.frame(width: 0, height: 0)
+            .translationTask(active ? configuration : nil) { session in
+                await playerManager.runCaptionTranslation(using: session)
+            }
     }
 }
 
