@@ -481,6 +481,10 @@ final class AppStore {
         var cardSize: String
         var performanceMode: Bool
         var ultraPerformanceMode: Bool
+        var autoSkipIntro: Bool?
+        var introOverrides: [String: IntroOverride]?
+        var captionScale: Double?
+        var partyPasteBanner: Bool?
     }
 
     func exportBackup() throws -> Data {
@@ -498,7 +502,11 @@ final class AppStore {
             contentFilter: contentFilter.rawValue,
             cardSize: cardSize.rawValue,
             performanceMode: performanceMode,
-            ultraPerformanceMode: ultraPerformanceMode
+            ultraPerformanceMode: ultraPerformanceMode,
+            autoSkipIntro: autoSkipIntro,
+            introOverrides: introOverrides,
+            captionScale: defaults.object(forKey: CaptionSize.storageKey) as? Double ?? CaptionSize.medium.rawValue,
+            partyPasteBanner: defaults.object(forKey: "vela_party_paste_banner") as? Bool ?? true
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -526,5 +534,13 @@ final class AppStore {
         cardSize = CardSize(rawValue: backup.cardSize) ?? .large
         performanceMode = backup.performanceMode
         ultraPerformanceMode = backup.ultraPerformanceMode
+        if let enabled = backup.autoSkipIntro { autoSkipIntro = enabled }
+        if let overrides = backup.introOverrides { introOverrides = overrides }
+        if let scale = backup.captionScale, CaptionSize(rawValue: scale) != nil {
+            defaults.set(scale, forKey: CaptionSize.storageKey)
+        }
+        if let pasteBanner = backup.partyPasteBanner {
+            defaults.set(pasteBanner, forKey: "vela_party_paste_banner")
+        }
     }
 }

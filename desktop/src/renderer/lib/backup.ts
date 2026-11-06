@@ -1,7 +1,7 @@
 // Backup document shared with the iOS app (AppStore.Backup, version 1).
 import type { MediaItem, WatchProgress } from '@shared/types'
 import { useLibrary } from '@/stores/library'
-import { DEFAULT_SERVERS, SEEK_OPTIONS, useSettings } from '@/stores/settings'
+import { CAPTION_SIZES, DEFAULT_SERVERS, SEEK_OPTIONS, useSettings } from '@/stores/settings'
 import { toast } from '@/stores/ui'
 import { uuid } from './format'
 
@@ -28,7 +28,13 @@ export function buildBackup(): string {
     contentFilter: s.contentFilter,
     cardSize: s.cardSize,
     performanceMode: s.performanceMode,
-    ultraPerformanceMode: s.ultraPerformanceMode
+    ultraPerformanceMode: s.ultraPerformanceMode,
+    autoSkipIntro: s.autoSkipIntro,
+    introOverrides: s.introOverrides,
+    captionScale: s.captionScale,
+    volume: s.volume,
+    muted: s.muted,
+    sidebarCollapsed: s.sidebarCollapsed
   }
   return JSON.stringify(doc, null, 2)
 }
@@ -54,7 +60,13 @@ export function applyBackup(text: string) {
     contentFilter: ['all', 'movie', 'tv'].includes(b.contentFilter) ? b.contentFilter : 'all',
     cardSize: b.cardSize === 'compact' ? 'compact' : 'large',
     performanceMode: !!b.performanceMode,
-    ultraPerformanceMode: !!b.ultraPerformanceMode
+    ultraPerformanceMode: !!b.ultraPerformanceMode,
+    ...(typeof b.autoSkipIntro === 'boolean' ? { autoSkipIntro: b.autoSkipIntro } : {}),
+    ...(b.introOverrides && typeof b.introOverrides === 'object' && !Array.isArray(b.introOverrides) ? { introOverrides: b.introOverrides } : {}),
+    ...(CAPTION_SIZES.some(x => x.v === b.captionScale) ? { captionScale: b.captionScale } : {}),
+    ...(typeof b.volume === 'number' && b.volume >= 0 && b.volume <= 1 ? { volume: b.volume } : {}),
+    ...(typeof b.muted === 'boolean' ? { muted: b.muted } : {}),
+    ...(typeof b.sidebarCollapsed === 'boolean' ? { sidebarCollapsed: b.sidebarCollapsed } : {})
   })
 }
 
