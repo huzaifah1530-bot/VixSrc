@@ -7,6 +7,10 @@ import { uuid } from './format'
 
 // Swift's .iso8601 strategy rejects fractional seconds.
 const iso = (d?: string | null) => (d ? new Date(d).toISOString().replace(/\.\d{3}Z$/, 'Z') : undefined)
+const savedCaptionPreference = () => {
+  try { return JSON.parse(localStorage.getItem('vela_caption_preference') ?? 'null') }
+  catch { return null }
+}
 
 export function buildBackup(): string {
   const s = useSettings.getState(), l = useLibrary.getState()
@@ -32,6 +36,7 @@ export function buildBackup(): string {
     autoSkipIntro: s.autoSkipIntro,
     introOverrides: s.introOverrides,
     captionScale: s.captionScale,
+    captionPreference: savedCaptionPreference(),
     volume: s.volume,
     muted: s.muted,
     sidebarCollapsed: s.sidebarCollapsed
@@ -68,6 +73,9 @@ export function applyBackup(text: string) {
     ...(typeof b.muted === 'boolean' ? { muted: b.muted } : {}),
     ...(typeof b.sidebarCollapsed === 'boolean' ? { sidebarCollapsed: b.sidebarCollapsed } : {})
   })
+  if (b.captionPreference && ['off', 'external', 'hls'].includes(b.captionPreference.kind)) {
+    localStorage.setItem('vela_caption_preference', JSON.stringify(b.captionPreference))
+  }
 }
 
 export async function exportBackup() {

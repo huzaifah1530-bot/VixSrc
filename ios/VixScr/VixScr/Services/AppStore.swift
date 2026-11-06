@@ -484,6 +484,7 @@ final class AppStore {
         var autoSkipIntro: Bool?
         var introOverrides: [String: IntroOverride]?
         var captionScale: Double?
+        var captionPreferenceData: Data?
         var partyPasteBanner: Bool?
     }
 
@@ -506,6 +507,7 @@ final class AppStore {
             autoSkipIntro: autoSkipIntro,
             introOverrides: introOverrides,
             captionScale: defaults.object(forKey: CaptionSize.storageKey) as? Double ?? CaptionSize.medium.rawValue,
+            captionPreferenceData: defaults.data(forKey: "vela_caption_preference"),
             partyPasteBanner: defaults.object(forKey: "vela_party_paste_banner") as? Bool ?? true
         )
         let encoder = JSONEncoder()
@@ -538,6 +540,9 @@ final class AppStore {
         if let overrides = backup.introOverrides { introOverrides = overrides }
         if let scale = backup.captionScale, CaptionSize(rawValue: scale) != nil {
             defaults.set(scale, forKey: CaptionSize.storageKey)
+        }
+        if let preference = backup.captionPreferenceData {
+            defaults.set(preference, forKey: "vela_caption_preference")
         }
         if let pasteBanner = backup.partyPasteBanner {
             defaults.set(pasteBanner, forKey: "vela_party_paste_banner")
