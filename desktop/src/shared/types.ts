@@ -53,11 +53,10 @@ export interface ExternalSubtitle {
 
 /** A skippable part of an episode, in seconds. See shared/introSkip.ts. */
 export interface SkipSegment {
-  /** Only intros are skipped today; outros (credits / ED) are kept for later. */
-  kind: 'intro' | 'outro'
+  kind: 'intro' | 'recap' | 'outro' | 'preview'
   start: number
   end: number
-  source: 'stream' | 'theintrodb' | 'aniskip' | 'custom'
+  source: 'stream' | 'skipdb' | 'theintrodb' | 'aniskip' | 'custom'
 }
 
 /** Intro times the user set for a whole show (overrides found ones). */
@@ -144,10 +143,9 @@ export interface VelaApi {
     streams(base: string, episodeIds: string): Promise<ResolvedStream[]>
   }
   skip: {
-    /** TheIntroDB, by TMDB show id and TMDB season/episode. */
-    tv(tmdbId: string, season: number, episode: number, duration: number): Promise<SkipSegment[]>
-    /** AniSkip, by the MAL id verified from the catalogue identity. */
-    anime(identity: import('./introSkip').AnimeIdentity, episode: string, duration: number): Promise<SkipSegment[]>
+    tv(tmdbId: string, imdbId: string, season: number, episode: number, duration: number): Promise<SkipSegment[]>
+    movie(imdbId: string, duration: number): Promise<SkipSegment[]>
+    anime(identity: import('./introSkip').AnimeIdentity, episode: string, duration: number, credential?: string): Promise<SkipSegment[]>
   }
   fetchText(url: string, headers: Record<string, string>): Promise<string>
   checkServer(url: string): Promise<boolean>

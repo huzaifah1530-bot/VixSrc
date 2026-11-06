@@ -1,5 +1,5 @@
 // Intro start / end for a show. With no custom times the boxes show the
-// intro found for `episodeLabel`'s episode (TheIntroDB / AniSkip), which can
+// intro found for `episodeLabel`'s episode (SkipDB / TheIntroDB / AniSkip), which can
 // differ per episode; 00:00 → 00:00 when nothing is found. Typing new times
 // saves a custom intro used for every episode; Reset goes back to found.
 import { useEffect, useState } from 'react'

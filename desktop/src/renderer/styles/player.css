@@ -42,8 +42,14 @@
 .player-bottom { left: 0; right: 0; bottom: 0; padding: 0 22px 18px; }
 .next-ep { position: absolute; right: 22px; bottom: 64px; animation: pop-in .3s var(--spring); }
 /* Stays up while the controls auto-hide, like the platform players. */
-.skip-intro { position: absolute; z-index: 6; right: 22px; bottom: 82px; animation: pop-in .3s var(--spring); transition: bottom .3s var(--ease); }
+.skip-intro { position: absolute; z-index: 6; right: 22px; bottom: 116px; animation: pop-in .3s var(--spring); transition: bottom .3s var(--ease); }
 .player.is-idle .skip-intro { bottom: 28px; }
+.skip-intro.is-secondary { opacity: .68; filter: saturate(.72); transition: opacity .22s ease, filter .22s ease, bottom .3s var(--ease); }
+.player.is-idle .skip-intro.is-secondary { opacity: 0; pointer-events: none; }
+.skip-intro.is-secondary:hover { opacity: 1; filter: none; }
+.skip-action-label { display: inline-flex; align-items: center; gap: 7px; animation: skip-action-change .42s cubic-bezier(.2,.8,.2,1) both; }
+@keyframes skip-action-change { from { opacity: .3; transform: translateY(7px) scale(.94); filter: blur(3px); } 60% { opacity: 1; filter: blur(0); } to { transform: translateY(0) scale(1); } }
+@media (prefers-reduced-motion: reduce) { .skip-action-label { animation: none; } }
 
 /* Custom intro times table on show / anime pages */
 .intro-times { margin-top: 14px; max-width: 320px; }

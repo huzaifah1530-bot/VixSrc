@@ -2,11 +2,11 @@
 // state machine, and live TheIntroDB / Kitsu / AniSkip / AniKoto lookups.
 import assert from 'node:assert/strict'
 import {
-  AutoSkipTracker, activeIntro, aniSkipEpisode, aniSkipSegments, matchMalId, parseAired, streamSegments,
+  AutoSkipTracker, activeIntro, activeSegment, aniSkipEpisode, aniSkipSegments, matchMalId, mergeSegmentSources, parseAired, skipDbSegments, skipTarget, streamSegments,
   theIntroDbSegments, validSegment, validSegments, type AnimeIdentity, type KitsuCandidate
 } from '../src/shared/introSkip'
 import type { SkipSegment } from '../src/shared/types'
-import { aniSkip, introDbTv } from '../src/main/skip'
+import { aniSkip, introDbTv, skipDb, skipDbAnimeId, tvSkip } from '../src/main/skip'
 import * as anime from '../src/main/resolvers/animekai'
 
 let passed = 0
@@ -49,6 +49,32 @@ async function main() {
   await test('stream (MegaPlay): 0/0 is no data', () => {
     assert.deepEqual(streamSegments({ intro: { start: 0, end: 0 }, outro: { start: 0, end: 0 } }), [])
     assert.equal(streamSegments({ intro: { start: 345, end: 432 } })[0].end, 432)
+  })
+  await test('SkipDB keeps four valid types and rejects sentinels and uncertain matches', () => {
+    const found = skipDbSegments({ segments: {
+      recap: { start_ms: 0, end_ms: 30000, match: 'exact' },
+      intro: { start_ms: 30000, end_ms: 120000, match: 'shifted' },
+      outro: { start_ms: 1300000, end_ms: 1350000, match: 'out-of-range' },
+      preview: { start_ms: 1400000, end_ms: 1450000, match: 'exact' }
+    } })
+    assert.deepEqual(found.map(s => s.kind), ['intro', 'recap', 'preview'])
+    assert.deepEqual(skipDbSegments({ segments: { intro: { start_ms: 0, end_ms: 0 } } }), [])
+    assert.equal(activeSegment(found, 28)?.kind, 'recap')
+    assert.equal(activeSegment(found, 30)?.kind, 'intro')
+  })
+  await test('SkipDB wins per type while legacy and stream data fill gaps', () => {
+    const primary: SkipSegment[] = [{ kind: 'recap', start: 0, end: 30, source: 'skipdb' }]
+    const legacy: SkipSegment[] = [intro(35, 100)]
+    const stream: SkipSegment[] = [intro(40, 110), { kind: 'outro', start: 1200, end: 1300, source: 'stream' }]
+    const merged = mergeSegmentSources(1300, primary, legacy, stream)
+    assert.deepEqual(merged.map(s => s.source), ['skipdb', 'theintrodb', 'stream'])
+  })
+  await test('adjacent recap and intro share one button; overlap stops at next action', () => {
+    const recap: SkipSegment = { kind: 'recap', start: 0, end: 35, source: 'skipdb' }
+    const opening: SkipSegment = { kind: 'intro', start: 30, end: 90, source: 'skipdb' }
+    assert.equal(activeSegment([recap, opening], 29.9)?.kind, 'recap')
+    assert.equal(skipTarget(recap, [recap, opening], 20), 30)
+    assert.equal(activeSegment([recap, opening], 30)?.kind, 'intro')
   })
 
   console.log('Identity')
@@ -121,6 +147,19 @@ async function main() {
   })
 
   console.log('Live lookups')
+  await test('SkipDB: Breaking Bad S1E1 has approved segments', async () => {
+    const segments = await skipDb('tt0903747', 1, 1, 3500)
+    assert.ok(segments.some(s => s.kind === 'intro' && s.source === 'skipdb'))
+  })
+  await test('SkipDB: exact anime title and year resolve to covered IMDb series', async () => {
+    const id = await skipDbAnimeId({ titles: ['Jujutsu Kaisen'], type: 'tv', aired: '2020-10-03', episodes: 24 })
+    assert.equal(id, 'tt12343534')
+    assert.ok((await skipDb(id!, 1, 2, 1450)).some(s => s.kind === 'intro'))
+  })
+  await test('TV lookup falls back to TheIntroDB when SkipDB has no usable ID', async () => {
+    const segments = await tvSkip('1396', '', 1, 1, 3500)
+    assert.ok(segments.some(s => s.kind === 'intro' && s.source === 'theintrodb'))
+  })
   await test('TheIntroDB: Breaking Bad S1E1 has an intro', async () => {
     const s = validSegments(await introDbTv('1396', 1, 1, 3480), 3480)
     assert.ok(s.some(x => x.kind === 'intro' && x.start > 200 && x.end < 260), JSON.stringify(s))

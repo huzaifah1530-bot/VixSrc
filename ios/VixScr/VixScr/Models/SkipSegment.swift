@@ -4,8 +4,8 @@ import Foundation
 /// the helpers in desktop/src/shared/introSkip.ts; keep the two in step
 /// (desktop's `npm run test:intro` covers the shared rules).
 struct SkipSegment: Hashable, Sendable {
-    enum Kind: String, Sendable { case intro, outro }
-    enum Source: String, Sendable { case stream, theintrodb, aniskip, custom }
+    enum Kind: String, Sendable { case intro, recap, outro, preview }
+    enum Source: String, Sendable { case stream, skipdb, theintrodb, aniskip, custom }
 
     /// Only intros are skipped today; outros (credits / ED) are kept for later.
     let kind: Kind
@@ -64,6 +64,38 @@ enum SkipSegments {
     /// The intro the playhead is in (and not in its last second), if any.
     static func activeIntro(_ segments: [SkipSegment], at t: Double) -> SkipSegment? {
         segments.first { $0.kind == .intro && t >= $0.start && t < $0.end - 1 }
+    }
+
+    static func activeSegment(_ segments: [SkipSegment], at t: Double) -> SkipSegment? {
+        segments.filter { t >= $0.start && t < $0.end }
+            .max { $0.start < $1.start }
+    }
+
+    static func skipTarget(_ segment: SkipSegment, in segments: [SkipSegment], at t: Double) -> Double {
+        segments.filter { $0 != segment && $0.start > t + 0.1 && $0.start < segment.end }
+            .map(\.start).min() ?? segment.end
+    }
+
+    static func merge(duration: Double, sources: [[SkipSegment]]) -> [SkipSegment] {
+        var seen = Set<SkipSegment.Kind>()
+        var result: [SkipSegment] = []
+        for source in sources {
+            for segment in valid(source, duration: duration) where !seen.contains(segment.kind) {
+                seen.insert(segment.kind)
+                result.append(segment)
+            }
+        }
+        return result.sorted { $0.start < $1.start }
+    }
+
+    static func fromSkipDB(_ json: [String: Any]) -> [SkipSegment] {
+        guard let segments = json["segments"] as? [String: Any] else { return [] }
+        return [SkipSegment.Kind.intro, .recap, .outro, .preview].compactMap { kind in
+            guard let raw = segments[kind.rawValue] as? [String: Any],
+                  raw["match"] as? String != "out-of-range",
+                  let start = number(raw["start_ms"]), let end = number(raw["end_ms"]), end > start else { return nil }
+            return SkipSegment(kind: kind, start: start / 1000, end: end / 1000, source: .skipdb)
+        }
     }
 
     // MARK: Parsers

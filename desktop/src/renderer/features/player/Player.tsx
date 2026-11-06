@@ -1,7 +1,7 @@
 // Native player: <video> + hls.js with custom Vela controls. Mirrors the
 // iOS player redesign: Quality / Server / Captions menus top-right, skip +
 // play/pause centre, thickening timeline, hold for 2×, Next Episode in the
-// last 90 seconds. Falls back to the server's web player in a sandboxed
+// last five minutes. Falls back to the server's web player in a sandboxed
 // <webview> when no direct stream can be resolved.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Hls from 'hls.js'
@@ -18,6 +18,7 @@ import { PartyButton, PartyPanel } from '../party/PartyPanel'
 import { useIntroSkip } from './useIntroSkip'
 
 type Caption = { kind: 'off' } | { kind: 'external'; index: number } | { kind: 'hls'; index: number }
+let captionPreference: { kind: Caption['kind']; label?: string; index?: number } | null = null
 
 export function Player() {
   const p = usePlayer()
@@ -65,6 +66,14 @@ export function Player() {
 
   const source = p.sources[p.sourceIndex]
   const native = !!source
+  const chooseCaption = (choice: Caption) => {
+    captionPreference = choice.kind === 'external'
+      ? { kind: 'external', label: source?.subtitles[choice.index]?.label, index: choice.index }
+      : choice.kind === 'hls'
+        ? { kind: 'hls', label: hlsTracks[choice.index], index: choice.index }
+        : { kind: 'off' }
+    setCaption(choice)
+  }
 
   // ── Load source ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -82,7 +91,15 @@ export function Player() {
     if (isHls && Hls.isSupported()) {
       const h = new Hls({ enableWorker: true, maxBufferLength: 45, startFragPrefetch: true })
       hls.current = h
-      h.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, (_e, d) => setHlsTracks(d.subtitleTracks.map(t => t.name || t.lang || 'Subtitles')))
+      h.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, (_e, d) => {
+        const names = d.subtitleTracks.map(t => t.name || t.lang || 'Subtitles')
+        setHlsTracks(names)
+        if (captionPreference?.kind === 'hls') {
+          const selected = names.findIndex(n => n === captionPreference?.label)
+          const index = selected >= 0 ? selected : captionPreference.index ?? -1
+          if (index >= 0 && index < names.length) { setCaption({ kind: 'hls', index }); h.subtitleTrack = index }
+        }
+      })
       h.on(Hls.Events.ERROR, (_e, d) => {
         if (!d.fatal) return
         if (started.current && d.type === Hls.ErrorTypes.NETWORK_ERROR) { h.startLoad(); return }
@@ -100,7 +117,17 @@ export function Player() {
 
     // Soft subs switch on automatically for the subtitled track only.
     const english = source.subtitles.findIndex(t => /english/i.test(t.label))
-    setCaption(source.audio === 'Sub' && source.subtitles.length ? { kind: 'external', index: Math.max(0, english) } : { kind: 'off' })
+    if (captionPreference?.kind === 'external') {
+      const match = source.subtitles.findIndex(t => t.label === captionPreference?.label)
+      const index = match >= 0 ? match : captionPreference.index ?? -1
+      setCaption(index >= 0 && index < source.subtitles.length ? { kind: 'external', index } : { kind: 'off' })
+    } else if (captionPreference?.kind === 'hls') {
+      setCaption({ kind: 'hls', index: captionPreference.index ?? 0 })
+    } else if (captionPreference?.kind === 'off') {
+      setCaption({ kind: 'off' })
+    } else {
+      setCaption(source.audio === 'Sub' && source.subtitles.length ? { kind: 'external', index: Math.max(0, english) } : { kind: 'off' })
+    }
 
     return () => { h_destroy() }
     function h_destroy() { hls.current?.destroy(); hls.current = null; v!.removeAttribute('src'); v!.load() }
@@ -173,7 +200,7 @@ export function Player() {
   const introSkip = useIntroSkip({ native, time, duration, seekTo })
   // Keyboard handler reads the latest intro without re-subscribing.
   const introSkipRef = useRef<(() => void) | null>(null)
-  introSkipRef.current = introSkip.intro && !partyLocked ? introSkip.skip : null
+  introSkipRef.current = introSkip.segment && !partyLocked ? introSkip.skip : null
 
   const skip = useCallback((dir: -1 | 1) => {
     const v = video.current
@@ -216,7 +243,7 @@ export function Player() {
     index: caption.kind === 'off' ? -1 : caption.kind === 'external' ? caption.index : (source?.subtitles.length ?? 0) + caption.index,
     set: (i: number) => {
       const ext = source?.subtitles.length ?? 0
-      setCaption(i < 0 ? { kind: 'off' } : i < ext ? { kind: 'external', index: i } : { kind: 'hls', index: i - ext })
+      chooseCaption(i < 0 ? { kind: 'off' } : i < ext ? { kind: 'external', index: i } : { kind: 'hls', index: i - ext })
     }
   }
 
@@ -264,7 +291,7 @@ export function Player() {
         case 'n': case 'N': if (usePlayer.getState().hasNext()) usePlayer.getState().next(); break
         case 's': case 'S': if (introSkipRef.current) { e.preventDefault(); introSkipRef.current() } break
         case 'c': case 'C':
-          if (source?.subtitles.length) setCaption(c => (c.kind === 'off' ? { kind: 'external', index: 0 } : { kind: 'off' }))
+          if (source?.subtitles.length) chooseCaption(caption.kind === 'off' ? { kind: 'external', index: 0 } : { kind: 'off' })
           break
         case 'Escape': if (!document.fullscreenElement) close(); break
         default: if (/^[0-9]$/.test(e.key) && v?.duration) seekTo((Number(e.key) / 10) * v.duration)
@@ -273,7 +300,7 @@ export function Player() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [native, toggle, skip, seekTo, toggleFullscreen, close, poke, setSettings, volume, muted, source])
+  }, [native, toggle, skip, seekTo, toggleFullscreen, close, poke, setSettings, volume, muted, source, caption])
 
   // ── Click / double-click / hold-for-2× on the video surface ─────────
   const holdTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
@@ -330,7 +357,7 @@ export function Player() {
 
   const shown = scrub !== null ? scrub * duration : time
   const caption_text = caption.kind === 'external' ? captionAt(cues, time) : caption.kind === 'hls' ? hlsCaption : null
-  const showNext = native && duration > 0 && duration - time <= 90 && usePlayer.getState().hasNext()
+  const showNext = native && Number.isFinite(duration) && duration > 0 && duration - time <= 300 && usePlayer.getState().hasNext()
 
   const grouped = useMemo(() => {
     const sub = p.sources.map((s, i) => ({ s, i })).filter(x => x.s.audio === 'Sub')
@@ -456,9 +483,9 @@ export function Player() {
             <MenuButton label={caption.kind === 'off' ? 'Captions off' : caption.kind === 'external' ? source.subtitles[caption.index]?.label ?? 'Captions' : hlsTracks[caption.index]} icon="captions">
               {close => (
                 <>
-                  <MenuItem selected={caption.kind === 'off'} onSelect={() => { setCaption({ kind: 'off' }); close() }}>Off</MenuItem>
-                  {source.subtitles.map((t, i) => <MenuItem key={t.url} selected={caption.kind === 'external' && caption.index === i} onSelect={() => { setCaption({ kind: 'external', index: i }); close() }}>{t.label}</MenuItem>)}
-                  {hlsTracks.map((t, i) => <MenuItem key={'h' + i} selected={caption.kind === 'hls' && caption.index === i} onSelect={() => { setCaption({ kind: 'hls', index: i }); close() }}>{t}</MenuItem>)}
+                  <MenuItem selected={caption.kind === 'off'} onSelect={() => { chooseCaption({ kind: 'off' }); close() }}>Off</MenuItem>
+                  {source.subtitles.map((t, i) => <MenuItem key={t.url} selected={caption.kind === 'external' && caption.index === i} onSelect={() => { chooseCaption({ kind: 'external', index: i }); close() }}>{t.label}</MenuItem>)}
+                  {hlsTracks.map((t, i) => <MenuItem key={'h' + i} selected={caption.kind === 'hls' && caption.index === i} onSelect={() => { chooseCaption({ kind: 'hls', index: i }); close() }}>{t}</MenuItem>)}
                 </>
               )}
             </MenuButton>
@@ -476,9 +503,9 @@ export function Player() {
         </div>
       </div>
 
-      {introSkip.intro && !partyLocked && !p.error && (
-        <button className="btn btn-primary skip-intro" onClick={() => { introSkip.skip(); poke() }}>
-          <Icon name="next" size={13} fill />Skip Intro
+      {introSkip.segment && !partyLocked && !p.error && (
+        <button className={cx('btn btn-primary skip-intro', (introSkip.segment.kind === 'outro' || introSkip.segment.kind === 'preview') && 'is-secondary')} onClick={() => { introSkip.skip(); poke() }}>
+          <span key={introSkip.segment.kind} className="skip-action-label"><Icon name="next" size={13} fill />Skip {introSkip.segment.kind[0].toUpperCase() + introSkip.segment.kind.slice(1)}</span>
         </button>
       )}
 

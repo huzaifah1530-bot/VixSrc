@@ -96,6 +96,33 @@ actor TMDBClient {
         return decoded
     }
 
+    func imdbID(type: MediaItem.MediaType, tmdbId: String, credential: String) async -> String? {
+        guard let data = try? await request("/\(type.rawValue)/\(tmdbId)/external_ids", credential: credential),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let id = json["imdb_id"] as? String, id.range(of: #"^tt\d+$"#, options: .regularExpression) != nil else { return nil }
+        return id
+    }
+
+    /// Anime sites use their own IDs. Match a TMDB series only on title and full air date.
+    func animeIMDbID(identity: AnimeIdentity, credential: String) async -> String? {
+        guard let aired = identity.aired, let title = identity.titles.first else { return nil }
+        let media = identity.type == "movie" ? "movie" : "tv"
+        let query = ["query": title]
+        guard let data = try? await request("/search/\(media)", credential: credential, query: query),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let results = json["results"] as? [[String: Any]] else { return nil }
+        let names = Set(identity.titles.map(AnimeIdentity.normTitle))
+        let matches = results.filter { row in
+            guard (row["first_air_date"] ?? row["release_date"]) as? String == aired else { return false }
+            return [row["name"] as? String, row["original_name"] as? String,
+                    row["title"] as? String, row["original_title"] as? String]
+                .compactMap { $0 }.contains { names.contains(AnimeIdentity.normTitle($0)) }
+        }
+        guard matches.count == 1, let id = matches[0]["id"] as? NSNumber else { return nil }
+        return await imdbID(type: identity.type == "movie" ? .movie : .tv,
+                            tmdbId: id.stringValue, credential: credential)
+    }
+
     /// Fetches `/movie/{id}` or `/tv/{id}` directly, used for deep links
     /// where the media type isn't known yet (mirrors `openContentByTmdbId`,
     /// which tries movie first then falls back to tv).

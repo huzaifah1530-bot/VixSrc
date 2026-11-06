@@ -48,6 +48,8 @@ final class VideoPlayerManager {
     private(set) var externalSubtitles: [ExternalSubtitle] = []
     private(set) var selectedExternalSubtitleIndex: Int?
     private(set) var currentCaption: String?
+    private enum CaptionPreference: Equatable { case off, external(String), embedded(String) }
+    @ObservationIgnored private var captionPreference: CaptionPreference?
     @ObservationIgnored private var externalCues: [SubtitleCue] = []
     @ObservationIgnored private var subtitleTask: Task<Void, Never>?
     @ObservationIgnored private var lifecycleObservers: [NSObjectProtocol] = []
@@ -127,24 +129,29 @@ final class VideoPlayerManager {
         externalCues = []
         currentCaption = nil
         subtitleTask?.cancel()
-        if autoSelect, !tracks.isEmpty {
+        if case .external(let label) = captionPreference,
+           let index = tracks.firstIndex(where: { $0.label == label }) {
+            selectExternalSubtitle(at: index, remember: false)
+        } else if captionPreference == nil, autoSelect, !tracks.isEmpty {
             let english = tracks.firstIndex { $0.label.lowercased().contains("english") } ?? 0
-            selectExternalSubtitle(at: english)
+            selectExternalSubtitle(at: english, remember: false)
         }
     }
 
-    func selectExternalSubtitle(at index: Int?) {
+    func selectExternalSubtitle(at index: Int?, remember: Bool = true) {
         subtitleTask?.cancel()
         externalCues = []
         currentCaption = nil
         guard let index, externalSubtitles.indices.contains(index) else {
             selectedExternalSubtitleIndex = nil
+            if remember { captionPreference = .off }
             return
         }
         // Only one caption source at a time.
-        if selectedSubtitleIndex != nil { selectSubtitle(at: nil) }
+        if selectedSubtitleIndex != nil { selectSubtitle(at: nil, remember: false) }
         selectedExternalSubtitleIndex = index
         let track = externalSubtitles[index]
+        if remember { captionPreference = .external(track.label) }
         subtitleTask = Task { [weak self] in
             var request = URLRequest(url: track.url)
             request.setValue(StreamURLExtractor.userAgent, forHTTPHeaderField: "User-Agent")
@@ -266,23 +273,23 @@ final class VideoPlayerManager {
     // MARK: - Intro skipping
     //
     // Timestamps come from the stream itself (anime hosts) or a background
-    // lookup (TheIntroDB / AniSkip) that starts once the duration is known,
+    // lookup (SkipDB then TheIntroDB / AniSkip) that starts once the duration is known,
     // so playback never waits for it. Validated against the real duration.
 
     /// Valid segments for the current item.
     private(set) var skipSegments: [SkipSegment] = []
-    /// The intro the playhead is in; drives the Skip Intro button.
+    /// The intro the playhead is in; drives automatic intro skipping.
     var activeIntro: SkipSegment? { SkipSegments.activeIntro(skipSegments, at: currentTime) }
+    var activeSkipSegment: SkipSegment? { SkipSegments.activeSegment(skipSegments, at: currentTime) }
     /// Read on every tick so turning the setting on/off applies immediately.
     @ObservationIgnored var autoSkipEnabled: () -> Bool = { false }
     @ObservationIgnored private var introKey = ""
     @ObservationIgnored private var introRaw: [SkipSegment]?
+    @ObservationIgnored private var streamSkipSegments: [SkipSegment] = []
     @ObservationIgnored private var introFetch: (@Sendable (Double) async -> [SkipSegment])?
     @ObservationIgnored private var introFetchStarted = false
     @ObservationIgnored private var introLoadedAt = Date()
     @ObservationIgnored private var introTask: Task<Void, Never>?
-    /// Successful lookups this session, by episode key (survive source switches).
-    @ObservationIgnored private var fetchedIntros: [String: [SkipSegment]] = [:]
     @ObservationIgnored private var autoSkipTracker = AutoSkipTracker()
     @ObservationIgnored private var autoSkipTrackerKey = ""
 
@@ -307,6 +314,7 @@ final class VideoPlayerManager {
         introFetchStarted = false
         introFetch = nil
         introRaw = nil
+        streamSkipSegments = streamSegments
         skipSegments = []
         foundIntro = nil
         introShowKey = showKey
@@ -318,14 +326,8 @@ final class VideoPlayerManager {
         } else {
             autoSkipTracker.restart()
         }
-        if streamSegments.contains(where: { $0.kind == .intro }) {
-            applyIntro(streamSegments)
-        } else if let cached = fetchedIntros[episodeKey] {
-            applyIntro(cached)
-        } else {
-            introFetch = fetch
-            recomputeSegments()
-        }
+        introFetch = fetch
+        recomputeSegments()
     }
 
     /// The show's custom intro was edited (IntroTimesTable): apply it now.
@@ -337,14 +339,14 @@ final class VideoPlayerManager {
     }
 
     private func recomputeSegments() {
-        let found = SkipSegments.valid(introRaw ?? [], duration: duration)
+        let found = SkipSegments.merge(duration: duration, sources: [introRaw ?? [], streamSkipSegments])
         foundIntro = found.first { $0.kind == .intro }
-        skipSegments = SkipSegments.valid(SkipSegments.withOverride(introRaw ?? [], introOverride), duration: duration)
+        skipSegments = SkipSegments.valid(SkipSegments.withOverride(found, introOverride), duration: duration)
     }
 
     func skipIntro() {
-        guard let intro = activeIntro else { return }
-        seek(to: intro.end)
+        guard let segment = activeSkipSegment else { return }
+        seek(to: SkipSegments.skipTarget(segment, in: skipSegments, at: currentTime))
     }
 
     private func applyIntro(_ raw: [SkipSegment]) {
@@ -363,7 +365,6 @@ final class VideoPlayerManager {
                 let list = await fetch(length)
                 // A newer episode may have loaded meanwhile: drop stale answers.
                 guard let self, !Task.isCancelled, self.introKey == key else { return }
-                self.fetchedIntros[key] = list
                 self.applyIntro(list)
             }
         }
@@ -557,7 +558,7 @@ final class VideoPlayerManager {
         let seconds = item.duration.seconds
         guard seconds.isFinite, seconds > 0 else { return }
         duration = seconds
-        if introRaw != nil || introOverride != nil { recomputeSegments() }
+        if introRaw != nil || !streamSkipSegments.isEmpty || introOverride != nil { recomputeSegments() }
         publishNowPlayingInfo()
         if pendingResumePosition > 0 {
             let resume = min(pendingResumePosition, seconds)
@@ -574,6 +575,17 @@ final class VideoPlayerManager {
             return
         }
         subtitleOptions = group.options
+        if case .embedded(let name) = captionPreference,
+           let index = subtitleOptions.firstIndex(where: { $0.displayName == name }) {
+            item.select(subtitleOptions[index], in: group)
+            selectedSubtitleIndex = index
+            return
+        }
+        if captionPreference != nil {
+            item.select(nil, in: group)
+            selectedSubtitleIndex = nil
+            return
+        }
         if let selected = item.currentMediaSelection.selectedMediaOption(in: group) {
             selectedSubtitleIndex = subtitleOptions.firstIndex { $0 === selected }
         } else {
@@ -581,13 +593,15 @@ final class VideoPlayerManager {
         }
     }
 
-    func selectSubtitle(at index: Int?) {
+    func selectSubtitle(at index: Int?, remember: Bool = true) {
+        if index == nil, remember { captionPreference = .off }
         guard let item = player?.currentItem,
               let group = item.asset.mediaSelectionGroup(forMediaCharacteristic: .legible) else { return }
         if let index, subtitleOptions.indices.contains(index) {
-            if selectedExternalSubtitleIndex != nil { selectExternalSubtitle(at: nil) }
+            if selectedExternalSubtitleIndex != nil { selectExternalSubtitle(at: nil, remember: false) }
             item.select(subtitleOptions[index], in: group)
             selectedSubtitleIndex = index
+            if remember { captionPreference = .embedded(subtitleOptions[index].displayName) }
         } else {
             item.select(nil, in: group)
             selectedSubtitleIndex = nil
@@ -797,6 +811,7 @@ final class VideoPlayerManager {
         introTask = nil
         introKey = ""
         introRaw = nil
+        streamSkipSegments = []
         introFetch = nil
         introFetchStarted = false
         skipSegments = []

@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Intro start / end for a show, under Reload and Save. With no custom
 /// times the boxes show the intro found for the playing episode
-/// (TheIntroDB / AniSkip), which can differ per episode; 00:00 → 00:00
+/// (SkipDB, TheIntroDB, or AniSkip), which can differ per episode; 00:00 → 00:00
 /// when nothing is found. Typing new times saves a custom intro used for
 /// every episode; the reset button goes back to the found times.
 /// Same rules as desktop components/IntroTimes.tsx.

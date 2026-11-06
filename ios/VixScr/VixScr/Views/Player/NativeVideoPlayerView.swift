@@ -85,6 +85,8 @@ private struct PlayerSurface: View {
     @State private var lastHoldEnded = Date.distantPast
     @State private var showSpeedBadge = false
     @State private var speedBadgeTask: Task<Void, Never>?
+    @State private var zoomToFill = false
+    @State private var pinchScale: CGFloat = 1
 
     enum Side { case left, right }
 
@@ -96,17 +98,22 @@ private struct PlayerSurface: View {
 
     private let spring = Animation.spring(response: 0.2, dampingFraction: 0.9)
 
+    private var hasNextEpisodeVisible: Bool {
+        options.nextEpisodeLabel != nil && options.onNextEpisode != nil &&
+        playerManager.duration.isFinite && playerManager.duration > 0 &&
+        playerManager.duration - playerManager.currentTime <= 300
+    }
+
     var body: some View {
         GeometryReader { geo in
             ZStack {
-                VideoPlayerLayer(player: playerManager.player, isFullscreen: isFullscreen, manager: playerManager)
+                VideoPlayerLayer(player: playerManager.player, isFullscreen: isFullscreen, fillsFrame: zoomToFill, manager: playerManager)
                     .background(Color.black)
+                    .scaleEffect(pinchScale)
                     .allowsHitTesting(false)
 
                 CaptionOverlay(playerManager: playerManager, bottomInset: showControls ? (isFullscreen ? 110 : 76) : 16)
                     .animation(spring, value: showControls)
-
-                seekFeedbackView(size: geo.size)
 
                 if playerManager.isLoading {
                     ProgressView()
@@ -143,6 +150,19 @@ private struct PlayerSurface: View {
             }
             .frame(width: geo.size.width, height: geo.size.height)
             .clipped()
+            .simultaneousGesture(
+                MagnifyGesture()
+                    .onChanged { value in
+                        if value.magnification > 1.03 { zoomToFill = true }
+                        pinchScale = zoomToFill ? max(1, value.magnification) : 1
+                    }
+                    .onEnded { value in
+                        withAnimation(.spring(response: 0.38, dampingFraction: 0.84)) {
+                            if value.magnification < 0.92 { zoomToFill = false }
+                            pinchScale = 1
+                        }
+                    }
+            )
         }
         // Tap / double-tap / hold zones sit behind everything and extend
         // into the safe areas, so the letterbox bars beside the notch or
@@ -153,11 +173,28 @@ private struct PlayerSurface: View {
             }
             .ignoresSafeArea()
         }
+        .overlay {
+            GeometryReader { full in seekFeedbackView(size: full.size) }
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
+        }
         .animation(spring, value: showControls)
         .animation(spring, value: playerManager.isLoading)
         .onAppear { scheduleHide() }
+        .onDisappear {
+            speedBadgeTask?.cancel()
+            feedbackTask?.cancel()
+            playerManager.endSpeedBoost()
+            boostSide = nil
+            showSpeedBadge = false
+            pinchScale = 1
+            zoomToFill = false
+        }
         .onChange(of: playerManager.isPlaying) { _, playing in
             if playing { scheduleHide() } else { reveal(autoHide: false) }
+        }
+        .onChange(of: playerManager.isSpeedBoosted) { _, boosted in
+            if boosted { showSpeedBadge = true }
         }
         .onChange(of: holdingSide) { _, side in
             if let side {
@@ -335,6 +372,7 @@ private struct PlayerSurface: View {
                 topBar
                 Spacer(minLength: 0)
                 transport
+                    .offset(x: !isFullscreen && hasNextEpisodeVisible && playerManager.activeSkipSegment != nil ? -60 : 0)
                 Spacer(minLength: 0)
                 nextEpisodePill
                 PlayerScrubber(playerManager: playerManager, isFullscreen: isFullscreen) {
@@ -349,12 +387,14 @@ private struct PlayerSurface: View {
         }
     }
 
-    /// Shown only while the playhead is inside a known intro. Stays up when
+    /// One action at a time, including adjacent recap → intro transitions.
     /// the controls auto-hide; hidden for watch-party viewers who can't
     /// control playback (the host's skip moves them anyway).
     @ViewBuilder private var skipIntroButton: some View {
         let party = PartySession.shared
-        if playerManager.activeIntro != nil, !playerManager.isLoading, playerManager.error == nil,
+        if let segment = playerManager.activeSkipSegment,
+           (segment.kind == .intro || segment.kind == .recap || showControls),
+           !playerManager.isLoading, playerManager.error == nil,
            !(party.active && !party.canControl) {
             VStack {
                 Spacer()
@@ -366,32 +406,38 @@ private struct PlayerSurface: View {
                     } label: {
                         HStack(spacing: 8) {
                             Image(systemName: "forward.fill")
-                            Text("Skip Intro").lineLimit(1)
+                            Text("Skip \(segment.kind.rawValue.capitalized)").lineLimit(1)
                         }
+                        .id(segment.kind)
+                        .transition(.asymmetric(
+                            insertion: .offset(y: 10).combined(with: .opacity).combined(with: .scale(scale: 0.94)),
+                            removal: .offset(y: -9).combined(with: .opacity)
+                        ))
                         .font((isFullscreen ? Font.subheadline : Font.footnote).weight(.semibold))
                         .foregroundStyle(.black)
                         .padding(.horizontal, isFullscreen ? 18 : 14)
                         .padding(.vertical, isFullscreen ? 11 : 8)
-                        .background(.white, in: Capsule())
+                        .background(segment.kind == .intro || segment.kind == .recap ? Color.white : Color.white.opacity(0.68), in: Capsule())
                         .shadow(color: .black.opacity(0.3), radius: 8, y: 3)
                     }
                     .buttonStyle(PlayerButtonStyle())
-                    .accessibilityLabel("Skip intro")
+                    .accessibilityLabel("Skip \(segment.kind.rawValue)")
                 }
             }
             .padding(.horizontal, isFullscreen ? 44 : 14)
-            .padding(.bottom, showControls ? (isFullscreen ? 84 : 56) : (isFullscreen ? 24 : 12))
+            .padding(.bottom, showControls ? (isFullscreen ? 142 : (hasNextEpisodeVisible ? 95 : 56)) : (isFullscreen ? 24 : 12))
             .animation(spring, value: showControls)
+            .animation(.spring(response: 0.42, dampingFraction: 0.78), value: segment.kind)
             .transition(.move(edge: .trailing).combined(with: .opacity))
         }
     }
 
-    /// In the last 90 seconds of an episode, a Next Episode button sits above
+    /// In the last five minutes of an episode, a Next Episode button sits above
     /// the timeline whenever the controls are visible.
     @ViewBuilder private var nextEpisodePill: some View {
         let remaining = playerManager.duration - playerManager.currentTime
         if let label = options.nextEpisodeLabel, let action = options.onNextEpisode,
-           playerManager.duration > 0, remaining <= 90 {
+           hasNextEpisodeVisible, remaining <= 300 {
             HStack {
                 Spacer()
                 Button(action: action) {
@@ -783,10 +829,11 @@ private struct PlayerScrubber: View {
 struct VideoPlayerLayer: UIViewRepresentable {
     let player: AVPlayer?
     let isFullscreen: Bool
+    var fillsFrame: Bool = false
     var manager: VideoPlayerManager? = nil
     
     func makeUIView(context: Context) -> PlayerUIView {
-        let view = PlayerUIView(player: player, isFullscreen: isFullscreen)
+        let view = PlayerUIView(player: player, isFullscreen: isFullscreen, fillsFrame: fillsFrame)
         view.manager = manager
         view.attachPictureInPicture()
         return view
@@ -795,6 +842,7 @@ struct VideoPlayerLayer: UIViewRepresentable {
     func updateUIView(_ uiView: PlayerUIView, context: Context) {
         uiView.manager = manager
         uiView.isFullscreen = isFullscreen
+        uiView.fillsFrame = fillsFrame
         uiView.player = player
     }
 
@@ -807,6 +855,9 @@ struct VideoPlayerLayer: UIViewRepresentable {
         private var pictureInPictureController: AVPictureInPictureController?
         private var backgroundObserver: NSObjectProtocol?
         var isFullscreen: Bool
+        var fillsFrame: Bool {
+            didSet { playerLayer?.videoGravity = fillsFrame ? .resizeAspectFill : .resizeAspect }
+        }
         
         var player: AVPlayer? {
             didSet {
@@ -816,9 +867,10 @@ struct VideoPlayerLayer: UIViewRepresentable {
             }
         }
         
-        init(player: AVPlayer?, isFullscreen: Bool) {
+        init(player: AVPlayer?, isFullscreen: Bool, fillsFrame: Bool) {
             self.player = player
             self.isFullscreen = isFullscreen
+            self.fillsFrame = fillsFrame
             super.init(frame: .zero)
             setupPlayerLayer()
         }
@@ -839,7 +891,7 @@ struct VideoPlayerLayer: UIViewRepresentable {
             guard let player else { return }
             
             let layer = AVPlayerLayer(player: player)
-            layer.videoGravity = .resizeAspect
+            layer.videoGravity = fillsFrame ? .resizeAspectFill : .resizeAspect
             layer.frame = bounds
             self.layer.addSublayer(layer)
             self.playerLayer = layer

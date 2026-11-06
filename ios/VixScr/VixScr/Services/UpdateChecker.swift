@@ -21,7 +21,7 @@ final class UpdateChecker {
     static let repo = "huzaifah1530-bot/Vela"
     static let releasesPage = URL(string: "https://github.com/\(repo)/releases/latest")!
 
-    /// Set when a newer release exists; drives the launch alert.
+    /// Set when a newer release exists; drives the launch sheet.
     var available: Release?
     @ObservationIgnored private var checked = false
 
@@ -94,24 +94,38 @@ final class UpdateChecker {
     }
 }
 
-/// The launch-time "update available" alert.
+/// The launch-time native, swipe-dismissible update sheet.
 struct UpdatePrompt: ViewModifier {
     @State private var updater = UpdateChecker.shared
 
     func body(content: Content) -> some View {
         content
             .task { await updater.checkOnLaunch() }
-            .alert(
-                "Vela \(updater.available?.version ?? "") Is Available",
-                isPresented: Binding(get: { updater.available != nil }, set: { if !$0 { updater.available = nil } }),
-                presenting: updater.available
-            ) { release in
-                Button("Install") { updater.install(release) }
-                Button("View Release") { updater.available = nil; UIApplication.shared.open(release.pageURL) }
-                Button("Later", role: .cancel) { updater.available = nil }
-            } message: { release in
-                Text("You're on \(UpdateChecker.currentVersion). Install opens the new version in AltStore or SideStore; if neither is available, the download page opens instead."
-                     + (release.notes.isEmpty ? "" : "\n\n\(release.notes)"))
+            .sheet(item: Binding(get: { updater.available }, set: { updater.available = $0 })) { release in
+                VStack(alignment: .leading, spacing: 18) {
+                    Image(systemName: "arrow.down.app.fill")
+                        .font(.system(size: 38))
+                        .foregroundStyle(.tint)
+                    Text("Vela \(release.version) is available")
+                        .font(.title2.bold())
+                    Text("You're on \(UpdateChecker.currentVersion).")
+                        .foregroundStyle(.secondary)
+                    if !release.notes.isEmpty {
+                        ScrollView { Text(release.notes).frame(maxWidth: .infinity, alignment: .leading) }
+                    }
+                    Spacer(minLength: 0)
+                    Button("Install update") { updater.install(release) }
+                        .buttonStyle(.borderedProminent)
+                        .frame(maxWidth: .infinity)
+                    HStack {
+                        Button("View release") { updater.available = nil; UIApplication.shared.open(release.pageURL) }
+                        Spacer()
+                        Button("Later") { updater.available = nil }
+                    }
+                }
+                .padding(24)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
             }
     }
 }

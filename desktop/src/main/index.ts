@@ -11,7 +11,8 @@ import { LinkServer } from './link/server'
 import { embedControl, embedState } from './link/embedBridge'
 import type { LinkEvent } from '@shared/link'
 import type { AnimeIdentity } from '@shared/introSkip'
-import { aniSkip, introDbTv } from './skip'
+import { aniSkip, skipDb, skipDbAnimeId, tmdbAnimeId, tvSkip } from './skip'
+import { mergeSegmentSources } from '@shared/introSkip'
 
 const DEFAULT_TMDB_CREDENTIAL = 'ce5e1892fe2fdf9006a6b4dfabe1fea4'
 const PROTOCOLS = ['vela', 'vixscr'] // vixscr:// kept so old links still open
@@ -173,9 +174,11 @@ function registerIpc() {
   ipcMain.handle('anime:details', (_e, base: string, slug: string) => anime.details(base, slug))
   ipcMain.handle('anime:find-slug', (_e, base: string, title: string) => anime.findSlug(base, title))
   ipcMain.handle('anime:streams', (_e, base: string, ids: string) => anime.streams(base, ids))
-  ipcMain.handle('skip:tv', (_e, tmdbId: unknown, season: unknown, episode: unknown, duration: unknown) =>
-    introDbTv(String(tmdbId), Number(season), Number(episode), Number(duration) || 0))
-  ipcMain.handle('skip:anime', (_e, identity: unknown, episode: unknown, duration: unknown) => {
+  ipcMain.handle('skip:tv', (_e, tmdbId: unknown, imdbId: unknown, season: unknown, episode: unknown, duration: unknown) =>
+    tvSkip(String(tmdbId), String(imdbId), Number(season), Number(episode), Number(duration) || 0))
+  ipcMain.handle('skip:movie', (_e, imdbId: unknown, duration: unknown) =>
+    skipDb(String(imdbId), null, null, Number(duration) || 0))
+  ipcMain.handle('skip:anime', async (_e, identity: unknown, episode: unknown, duration: unknown, credential: unknown) => {
     const i = identity as AnimeIdentity | null
     if (!i || !Array.isArray(i.titles) || typeof i.type !== 'string') return []
     const clean: AnimeIdentity = {
@@ -183,7 +186,15 @@ function registerIpc() {
       type: i.type.slice(0, 20), aired: typeof i.aired === 'string' ? i.aired.slice(0, 10) : null,
       episodes: Number.isInteger(i.episodes) ? i.episodes : null
     }
-    return aniSkip(clean, String(episode).slice(0, 10), Number(duration) || 0)
+    const length = Number(duration) || 0
+    const ep = Number(episode)
+    const verifiedId = await skipDbAnimeId(clean) ?? await tmdbAnimeId(clean, typeof credential === 'string' && credential ? credential : DEFAULT_TMDB_CREDENTIAL) ?? ''
+    const primary = clean.type === 'movie'
+      ? await skipDb(verifiedId, null, null, length)
+      : Number.isInteger(ep) && ep > 0 ? await skipDb(verifiedId, 1, ep, length) : []
+    if (primary.some(s => s.kind === 'intro') && primary.some(s => s.kind === 'outro')) return primary
+    const fallback = await aniSkip(clean, String(episode).slice(0, 10), length)
+    return mergeSegmentSources(length, primary, fallback)
   })
   ipcMain.handle('fetch-text', (_e, url: string, headers: Record<string, string>) => getText(url, { 'User-Agent': DESKTOP_UA, ...headers }))
   ipcMain.handle('check-server', async (_e, url: string) => {

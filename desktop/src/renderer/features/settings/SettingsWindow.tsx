@@ -98,14 +98,14 @@ function General() {
         <Field label="Skip interval" hint="Arrow keys, J / L and the skip buttons">
           <div className="segmented small">{SEEK_OPTIONS.map(v => <button key={v} className={cx('seg', s.seekInterval === v && 'is-active')} onClick={() => s.set({ seekInterval: v })}>{v}s</button>)}</div>
         </Field>
-        <Field label="Automatically skip intros" hint="When the intro’s timestamps are known (TheIntroDB, AniSkip). Skip Intro (S) is always offered. In a watch party only the host skips.">
+        <Field label="Automatically skip intros" hint="When intro times are known from SkipDB, TheIntroDB, or AniSkip. Manual Skip Intro is always offered. In a watch party only the host skips.">
           <Toggle label="Automatically skip intros" checked={!!s.autoSkipIntro} onChange={v => s.set({ autoSkipIntro: v })} />
         </Field>
         <Field label="Caption size" hint="Subtitles drawn by Vela’s player">
           <div className="segmented small">{CAPTION_SIZES.map(c => <button key={c.v} className={cx('seg', (s.captionScale ?? 1) === c.v && 'is-active')} onClick={() => s.set({ captionScale: c.v })}>{c.label}</button>)}</div>
         </Field>
       </Group>
-      <Group title="Custom intro times" footer="Set these in the Intro start / end boxes on a show’s or anime’s page (00:00 and 00:00 = off). They apply to every episode and replace TheIntroDB / AniSkip times.">
+      <Group title="Custom intro times" footer="Set these in the Intro start / end boxes on a show’s or anime’s page (00:00 and 00:00 = off). They apply to every episode and replace found intro times. Skip data: SkipDB (ODbL 1.0), with TheIntroDB / AniSkip fallback.">
         {Object.keys(s.introOverrides ?? {}).length === 0 && <div className="form-row"><span className="muted">None yet.</span></div>}
         {Object.entries(s.introOverrides ?? {}).map(([key, o]) => (
           <Field key={key} label={o.title || key} hint={`${o.start == null ? '–' : formatTime(o.start)} – ${o.end == null ? '–' : formatTime(o.end)}${o.start == null || o.end == null ? ' (incomplete, not used)' : ''}`}>

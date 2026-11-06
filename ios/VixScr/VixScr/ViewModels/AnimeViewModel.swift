@@ -356,8 +356,9 @@ final class AnimeViewModel {
         playerManager.loadIntroOverride = { store.introOverrides[$0] }
         var fetch: (@Sendable (Double) async -> [SkipSegment])?
         if let identity = details?.identity, let episode = selectedEpisode?.number {
+            let credential = store.credential
             fetch = { duration in
-                await IntroSkipService.shared.anime(identity: identity, episode: episode, duration: duration)
+                await IntroSkipService.shared.anime(identity: identity, episode: episode, duration: duration, credential: credential)
             }
         }
         let showKey = selected.map { "\($0.type.rawValue):\($0.tmdbId)" }

@@ -14,8 +14,9 @@ const api: VelaApi = {
     streams: (base, ids) => ipcRenderer.invoke('anime:streams', base, ids)
   },
   skip: {
-    tv: (tmdbId, season, episode, duration) => ipcRenderer.invoke('skip:tv', tmdbId, season, episode, duration),
-    anime: (identity, episode, duration) => ipcRenderer.invoke('skip:anime', identity, episode, duration)
+    tv: (tmdbId, imdbId, season, episode, duration) => ipcRenderer.invoke('skip:tv', tmdbId, imdbId, season, episode, duration),
+    movie: (imdbId, duration) => ipcRenderer.invoke('skip:movie', imdbId, duration),
+    anime: (identity, episode, duration, credential) => ipcRenderer.invoke('skip:anime', identity, episode, duration, credential)
   },
   fetchText: (url, headers) => ipcRenderer.invoke('fetch-text', url, headers),
   checkServer: url => ipcRenderer.invoke('check-server', url),

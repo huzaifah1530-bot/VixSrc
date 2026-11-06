@@ -3,10 +3,8 @@
 // and the auto-skip state machine. Pure code, shared by main (fetching) and
 // the renderer (player); iOS mirrors it in Models/SkipSegment.swift.
 //
-// Sources, in priority order:
-//   stream     - timestamps the anime host ships with the stream (MegaPlay `intro`/`outro`)
-//   aniskip    - api.aniskip.com v2, by verified MAL id + episode number
-//   theintrodb - api.theintrodb.org v4, by TMDB id + TMDB season/episode
+// Sources, in priority order: SkipDB, TheIntroDB/AniSkip, then stream metadata.
+// A complete custom intro replaces the selected provider intro.
 import type { SkipSegment } from './types'
 
 /** Longest plausible intro; anything longer is treated as bad data. */
@@ -37,6 +35,33 @@ export function validSegments(list: SkipSegment[], duration: number): SkipSegmen
   for (const s of list) {
     const v = validSegment(s, duration)
     if (v && !out.some(o => o.kind === v.kind && Math.abs(o.start - v.start) < 1)) out.push(v)
+  }
+  return out.sort((a, b) => a.start - b.start)
+}
+
+/** SkipDB returns one approved segment per type, in milliseconds. */
+export function skipDbSegments(body: unknown): SkipSegment[] {
+  const root = body && typeof body === 'object' ? body as Record<string, unknown> : {}
+  const segments = root.segments && typeof root.segments === 'object' ? root.segments as Record<string, unknown> : {}
+  const out: SkipSegment[] = []
+  for (const kind of ['intro', 'recap', 'outro', 'preview'] as const) {
+    const raw = segments[kind] && typeof segments[kind] === 'object' ? segments[kind] as Record<string, unknown> : null
+    if (!raw || raw.match === 'out-of-range') continue
+    const start = raw.start_ms, end = raw.end_ms
+    if (finite(start) && finite(end) && end > start)
+      out.push({ kind, start: start / 1000, end: end / 1000, source: 'skipdb' })
+  }
+  return out
+}
+
+/** First provider with a valid segment wins independently for each type. */
+export function mergeSegmentSources(duration: number, ...sources: SkipSegment[][]): SkipSegment[] {
+  const selected = new Set<SkipSegment['kind']>()
+  const out: SkipSegment[] = []
+  for (const source of sources) {
+    for (const segment of validSegments(source, duration)) {
+      if (!selected.has(segment.kind)) { selected.add(segment.kind); out.push(segment) }
+    }
   }
   return out.sort((a, b) => a.start - b.start)
 }
@@ -215,6 +240,19 @@ export function withOverride(found: SkipSegment[], o: { start: number | null; en
 /** The intro the playhead is in (and not in its last second), if any. */
 export function activeIntro(segments: SkipSegment[], t: number): SkipSegment | null {
   return segments.find(s => s.kind === 'intro' && t >= s.start && t < s.end - 1) ?? null
+}
+
+/** One visible skip action at a time; the latest-started segment owns overlap. */
+export function activeSegment(segments: SkipSegment[], t: number): SkipSegment | null {
+  return segments.filter(s => t >= s.start && t < s.end)
+    .sort((a, b) => b.start - a.start)[0] ?? null
+}
+
+/** Stop at the next segment when two skip ranges touch or overlap. */
+export function skipTarget(segment: SkipSegment, segments: SkipSegment[], t: number): number {
+  const next = segments.filter(s => s !== segment && s.start > t + 0.1 && s.start < segment.end)
+    .sort((a, b) => a.start - b.start)[0]
+  return next?.start ?? segment.end
 }
 
 export const segmentKey = (episodeKey: string, s: SkipSegment) => `${episodeKey}|${Math.round(s.start)}`
