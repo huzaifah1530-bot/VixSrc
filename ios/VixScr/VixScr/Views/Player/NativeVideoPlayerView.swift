@@ -292,6 +292,18 @@ private struct PlayerSurface: View {
                     .accessibilityHidden(!showControls)
             }
 
+            // While the controls are hidden, the spot where play / pause sits
+            // still plays and pauses. Just that spot, not the whole middle.
+            if !showControls && !showSettings && !playerManager.isLoading && playerManager.error == nil {
+                let size: CGFloat = isFullscreen ? 76 : 60
+                Circle()
+                    .fill(Color.clear)
+                    .frame(width: size + 16, height: size + 16)
+                    .contentShape(Circle())
+                    .onTapGesture { centerTap() }
+                    .accessibilityHidden(true)
+            }
+
             topBadges
 
             skipIntroButton
@@ -320,7 +332,7 @@ private struct PlayerSurface: View {
             zone(.left).frame(width: width * 0.35)
             Color.clear
                 .contentShape(Rectangle())
-                .onTapGesture { centerTap() }
+                .onTapGesture { toggleControls() }
             zone(.right).frame(width: width * 0.35)
         }
     }

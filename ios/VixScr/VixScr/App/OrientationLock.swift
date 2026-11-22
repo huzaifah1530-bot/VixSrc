@@ -23,7 +23,9 @@ enum OrientationLock {
         return orientation == .unknown || orientation.isPortrait
     }
 
-    /// Restricts the interface to `mask` and asks the scene to rotate there.
+    /// Turns the interface to mask now, then lets the phone rotate freely
+    /// again. With rotation lock on the picture stays where the button put
+    /// it; with it off, turning the phone still rotates the app.
     static func rotate(to mask: UIInterfaceOrientationMask) {
         generation += 1
         self.mask = mask
@@ -32,6 +34,18 @@ enum OrientationLock {
         // and UIKit gives no guarantee about the thread it reports errors on.
         scene.requestGeometryUpdate(.iOS(interfaceOrientations: mask), errorHandler: nil)
         updateSupportedOrientations(in: scene)
+        releaseAfterRotation()
+    }
+
+    /// Lifts the restriction once the rotation has run. UIKit isn't told to
+    /// re-check, so the app stays put until the phone itself is turned.
+    private static func releaseAfterRotation() {
+        let request = generation
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 700_000_000)
+            guard OrientationLock.generation == request else { return }
+            OrientationLock.mask = .all
+        }
     }
 
     /// Turns the interface one quarter further in the same direction on every
@@ -60,17 +74,9 @@ enum OrientationLock {
         }
     }
 
-    /// Returns to portrait, then lifts the restriction once the rotation has
-    /// had time to run, so the rest of the app rotates freely again.
+    /// Back to portrait (leaving fullscreen); the phone rotates freely after.
     static func rotateToPortraitThenUnlock() {
         rotate(to: .portrait)
-        let request = generation
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 700_000_000)
-            guard OrientationLock.generation == request else { return }
-            OrientationLock.mask = .all
-            if let scene = OrientationLock.activeScene { OrientationLock.updateSupportedOrientations(in: scene) }
-        }
     }
 
     /// The fullscreen player is presented modally, so every controller in the

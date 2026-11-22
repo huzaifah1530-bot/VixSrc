@@ -233,7 +233,41 @@ final class VideoPlayerManager {
         }
     }
 
+    // Stream (embedded) subtitles. AVPlayerLayer would draw them inside the
+    // picture, so they'd scale and move with the zoom; Vela reads them and
+    // draws them itself, pinned to the bottom of the screen.
+    @ObservationIgnored private var legibleOutput: AVPlayerItemLegibleOutput?
+    @ObservationIgnored private var legibleRelay: LegibleRelay?
+    @ObservationIgnored private var embeddedCaption: String?
+
+    private func attachLegibleOutput(to item: AVPlayerItem) {
+        let relay = LegibleRelay { [weak self] text in
+            guard let self else { return }
+            self.embeddedCaption = text
+            self.updateCaption(at: self.currentTime)
+        }
+        let output = AVPlayerItemLegibleOutput()
+        output.suppressesPlayerRendering = true
+        output.setDelegate(relay, queue: .main)
+        item.add(output)
+        legibleOutput = output
+        legibleRelay = relay
+        embeddedCaption = nil
+    }
+
+    private func detachLegibleOutput() {
+        if let output = legibleOutput { player?.currentItem?.remove(output) }
+        legibleOutput?.setDelegate(nil, queue: nil)
+        legibleOutput = nil
+        legibleRelay = nil
+        embeddedCaption = nil
+    }
+
     private func updateCaption(at time: Double) {
+        if generatedCaptionLocale == nil, selectedSubtitleIndex != nil {
+            if embeddedCaption != currentCaption { currentCaption = embeddedCaption }
+            return
+        }
         let cues = generatedCaptionLocale == nil ? externalCues :
             (translateGeneratedCaptions ? translatedCues : generatedCues)
         guard !cues.isEmpty else {
@@ -284,7 +318,9 @@ final class VideoPlayerManager {
         let extraHeaders = requestHeaders.filter { $0.key != "User-Agent" }
         if !extraHeaders.isEmpty { options["AVURLAssetHTTPHeaderFieldsKey"] = extraHeaders }
         let asset = AVURLAsset(url: url, options: options)
-        let player = AVPlayer(playerItem: AVPlayerItem(asset: asset))
+        let item = AVPlayerItem(asset: asset)
+        attachLegibleOutput(to: item)
+        let player = AVPlayer(playerItem: item)
         self.player = player
         installRemoteCommands()
         publishNowPlayingInfo()
@@ -682,10 +718,14 @@ final class VideoPlayerManager {
             if selectedExternalSubtitleIndex != nil { selectExternalSubtitle(at: nil, remember: false) }
             item.select(subtitleOptions[index], in: group)
             selectedSubtitleIndex = index
+            embeddedCaption = nil
+            updateCaption(at: currentTime)
             if remember { rememberCaption(.embedded(subtitleOptions[index].displayName)) }
         } else {
             item.select(nil, in: group)
             selectedSubtitleIndex = nil
+            embeddedCaption = nil
+            updateCaption(at: currentTime)
         }
     }
 
@@ -932,6 +972,7 @@ final class VideoPlayerManager {
     
     func cleanup() {
         stopGeneratedCaptions()
+        detachLegibleOutput()
         saveProgress()
         artworkTask?.cancel()
         artworkTask = nil
@@ -1026,5 +1067,25 @@ extension VideoPlayerManager {
         } else {
             return String(format: "%d:%02d", minutes, secs)
         }
+    }
+}
+
+/// Receives stream subtitle text from AVFoundation on the main queue and
+/// hands it to the player manager.
+private final class LegibleRelay: NSObject, AVPlayerItemLegibleOutputPushDelegate {
+    private let deliver: @MainActor (String?) -> Void
+
+    init(deliver: @escaping @MainActor (String?) -> Void) {
+        self.deliver = deliver
+    }
+
+    nonisolated func legibleOutput(_ output: AVPlayerItemLegibleOutput,
+                                   didOutputAttributedStrings strings: [NSAttributedString],
+                                   nativeSampleBuffers nativeSamples: [Any],
+                                   forItemTime itemTime: CMTime) {
+        let lines = strings.map { .string.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !.isEmpty }
+        let text = lines.isEmpty ? nil : lines.joined(separator: "\n")
+        // The delegate queue is .main.
+        MainActor.assumeIsolated { deliver(text) }
     }
 }
