@@ -1083,7 +1083,9 @@ private final class LegibleRelay: NSObject, AVPlayerItemLegibleOutputPushDelegat
                                    didOutputAttributedStrings strings: [NSAttributedString],
                                    nativeSampleBuffers nativeSamples: [Any],
                                    forItemTime itemTime: CMTime) {
-        let lines = strings.map { .string.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !.isEmpty }
+        let lines = strings
+            .map { line in line.string.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { line in !line.isEmpty }
         let text = lines.isEmpty ? nil : lines.joined(separator: "\n")
         // The delegate queue is .main.
         MainActor.assumeIsolated { deliver(text) }
