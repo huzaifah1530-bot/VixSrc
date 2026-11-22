@@ -295,3 +295,39 @@ body.window-inactive .traffic:not(:hover) .tl { background: rgba(255,255,255,.18
 .device-status { display: inline-flex; align-items: center; gap: 6px; }
 .device-badge { font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 4px; border: 1px solid var(--hairline-strong); color: var(--text-2); }
 .tb-btn.is-linked { color: #30d158; }
+
+/* Settings window: categories in a sidebar, one pane at a time. */
+.prefs.has-sidebar .prefs-bar { padding: 14px 16px 12px; }
+.prefs-split { flex: 1; min-height: 0; display: flex; }
+.prefs-nav { flex: none; width: 188px; padding: 12px 10px; overflow-y: auto; border-right: 1px solid var(--hairline); display: flex; flex-direction: column; gap: 14px; }
+.prefs-nav-group { display: flex; flex-direction: column; gap: 2px; }
+.prefs-nav-item { display: flex; align-items: center; gap: 9px; padding: 6px 8px; border: 0; border-radius: var(--r-sm); background: transparent; color: var(--text-2); font: inherit; font-weight: 500; text-align: left; transition: background-color .15s, color .15s; }
+.prefs-nav-item:hover { background: var(--fill); color: var(--text); }
+.prefs-nav-item.is-active { background: var(--fill-active); color: var(--text); font-weight: 600; }
+.prefs-nav-icon { width: 24px; height: 24px; flex: none; display: grid; place-items: center; border-radius: 7px; background: rgba(255,255,255,.12); color: var(--text); }
+.prefs-nav-item.is-active .prefs-nav-icon { background: #fff; color: #000; }
+.prefs-pane { max-width: 620px; animation: prefs-pane-in .22s var(--ease); }
+@keyframes prefs-pane-in { from { opacity: 0; transform: translateY(6px); } }
+.prefs-pane-title { margin: 0; font-size: var(--fs-title3); font-weight: 800; }
+.prefs-pane-hint { margin: 2px 0 14px; color: var(--text-3); font-size: 12px; }
+
+/* Account summary card */
+.account-card { display: flex; align-items: center; gap: 14px; padding: 14px 16px; margin-bottom: 18px; border-radius: var(--r-lg); }
+.account-avatar { width: 44px; height: 44px; flex: none; display: grid; place-items: center; border-radius: 50%; background: linear-gradient(145deg, #fff, rgba(255,255,255,.55)); color: #000; font-size: 20px; font-weight: 800; }
+.account-name { font-size: 15px; font-weight: 700; }
+.account-sync { display: flex; align-items: center; gap: 6px; margin-top: 2px; color: var(--text-2); font-size: 12px; }
+.account-sync .server-dot { background: var(--text-3); }
+.account-sync.is-synced .server-dot { background: #30d158; }
+.account-sync.is-syncing .server-dot { background: #ffd60a; animation: pulse-dot 1s ease-in-out infinite; }
+.account-sync.is-offline .server-dot, .account-sync.is-error .server-dot { background: var(--danger); }
+@keyframes pulse-dot { 50% { opacity: .35; } }
+
+/* Status pop-up that drops in from the top (same scale as the player's 2× badge). */
+.status-pill { position: fixed; z-index: 450; top: 14px; left: 50%; display: flex; align-items: center; gap: 8px; padding: 7px 14px 7px 11px; border-radius: 999px; font-size: 12px; font-weight: 700; pointer-events: none; transform: translateX(-50%); animation: status-drop .34s var(--spring); transition: opacity .24s ease, transform .24s var(--ease); }
+.status-pill.is-leaving { opacity: 0; transform: translate(-50%, -14px) scale(.94); }
+.status-pill.is-error { color: #ffb4ae; }
+@keyframes status-drop { from { opacity: 0; transform: translate(-50%, -22px) scale(.9); } }
+.status-pill-spinner { width: 12px; height: 12px; border-radius: 50%; border: 2px solid rgba(255,255,255,.25); border-top-color: #fff; animation: spin .7s linear infinite; }
+.status-pill-icon { display: grid; place-items: center; animation: icon-swap .2s var(--spring); }
+.status-pill-text { animation: fade-in .2s ease; }
+@media (prefers-reduced-motion: reduce) { .status-pill, .prefs-pane, .status-pill-spinner { animation: none; } }

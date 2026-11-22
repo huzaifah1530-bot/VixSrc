@@ -20,21 +20,26 @@ import { create } from 'zustand'
 import { joinParty } from './lib/party'
 import { FollowPrompt, JoinPartyDialog, PartyDock, StartPartyDialog } from './features/party/PartyPanel'
 import { UpdateDialog, useUpdate } from './features/update/UpdateDialog'
+import { ConfirmDialog } from './features/party/ConfirmDialog'
+import { StatusPill } from './components/StatusPill'
+import { requestSync } from './lib/syncStatus'
 
 const useJoinDialog = create<{ open: boolean }>(() => ({ open: false }))
 
 function runCommand(cmd: MenuCommand) {
   const nav = useNav.getState()
-  const playerOpen = usePlayer.getState().open
+  const player = usePlayer.getState()
+  // Browsing while a video is open shrinks it into the mini-player.
+  const playerOpen = player.open && !player.minimized
   switch (cmd) {
     case 'home': case 'anime': case 'favorites':
       if (cmd === 'anime' && !useSettings.getState().animeEnabled) return
-      if (playerOpen) usePlayer.getState().close()
+      if (playerOpen) player.minimize()
       useSearch.getState().setQuery(''); nav.root({ name: cmd }); break
     case 'search': if (!playerOpen) useSearch.getState().focus(); break
-    case 'refresh': useRefresh.getState().bump(); break
+    case 'refresh': useRefresh.getState().bump(); requestSync(); break
     case 'toggle-sidebar': useSettings.getState().set({ sidebarCollapsed: !useSettings.getState().sidebarCollapsed }); break
-    case 'back': if (playerOpen) usePlayer.getState().close(); else nav.back(); break
+    case 'back': if (playerOpen) player.minimize(); else nav.back(); break
     case 'forward': nav.forward(); break
     case 'settings': window.vela.window.openSettings(); break
     case 'export': exportBackup(); break
@@ -64,7 +69,9 @@ export function App() {
   const perf = useSettings(s => s.performanceMode)
   const ultra = useSettings(s => s.ultraPerformanceMode)
   const animeEnabled = useSettings(s => s.animeEnabled)
-  const playerOpen = usePlayer(s => s.open)
+  const playerOpen = usePlayer(s => s.open && !s.minimized)
+  const miniPlayer = usePlayer(s => s.open && s.minimized)
+  const playerMounted = usePlayer(s => s.open)
   const joinOpen = useJoinDialog(s => s.open)
   useWindowFocusClass()
 
@@ -122,7 +129,7 @@ export function App() {
   }, [])
 
   return (
-    <div className={cx('app', collapsed && 'sidebar-collapsed')}>
+    <div className={cx('app', collapsed && 'sidebar-collapsed', miniPlayer && 'has-mini-player')}>
       <Sidebar />
       <div className="main" inert={playerOpen}>
         <Toolbar />
@@ -134,8 +141,10 @@ export function App() {
           {route.name === 'anime-details' && <AnimeDetailsPage item={route.item} />}
         </div>
       </div>
-      {playerOpen ? <Player /> : <PartyDock />}
+      {playerMounted && <Player />}
+      {!playerOpen && <PartyDock />}
       <FollowPrompt />
+      <ConfirmDialog />
       <StartPartyDialog />
       <ConnectDialog />
       <OfferDialog />
@@ -143,6 +152,7 @@ export function App() {
       {joinOpen && <JoinPartyDialog onClose={() => useJoinDialog.setState({ open: false })} />}
       <ContextMenuHost />
       <Toast />
+      <StatusPill />
     </div>
   )
 }

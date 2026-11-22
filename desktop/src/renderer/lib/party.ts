@@ -327,6 +327,8 @@ export function leaveParty(silent = false) {
 }
 
 export const partyActive = () => !!core
+/** In a party but not leading it: picking something else, or closing the player, leaves. */
+export const isPartyViewer = () => !!core && !core.isLeader
 
 partyHooks.start = () => startParty()
 partyHooks.join = link => joinParty(link)

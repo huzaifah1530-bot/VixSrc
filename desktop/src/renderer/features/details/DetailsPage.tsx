@@ -9,6 +9,7 @@ import { toast } from '@/stores/ui'
 import { seasonsOf } from './actions'
 import { cx } from '@/lib/format'
 import { IntroTimes } from '@/components/IntroTimes'
+import { guardPartyLeave } from '../party/ConfirmDialog'
 
 export function DetailsPage({ item }: { item: MediaItem }) {
   const [tv, setTv] = useState<TvDetails | null>(null)
@@ -21,7 +22,8 @@ export function DetailsPage({ item }: { item: MediaItem }) {
   const toggle = useLibrary(s => s.toggleFavorite)
   const progress = useLibrary(s => s.watchProgress)
   const recent = useLibrary(s => s.recents.find(r => r.tmdbId === item.tmdbId && r.type === item.type))
-  const playTmdb = usePlayer(s => s.playTmdb)
+  const startTmdb = usePlayer(s => s.playTmdb)
+  const playTmdb: typeof startTmdb = (...args) => guardPartyLeave(`Playing ${item.title}`, () => startTmdb(...args))
 
   useEffect(() => {
     let live = true

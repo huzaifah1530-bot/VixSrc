@@ -130,6 +130,20 @@ export type MenuCommand =
   | 'export' | 'import' | 'check-updates' | 'about' | 'join-party'
 
 /** API exposed on `window.vela` by the preload script. */
+export interface SystemCaptionStyle {
+  textColor: string | null
+  textOpacity: number | null
+  /** Relative to Vela's normal caption size. */
+  scale: number | null
+  fontFamily: string | null
+  smallCaps: boolean
+  edge: 'none' | 'raised' | 'depressed' | 'uniform' | 'shadow' | null
+  backgroundColor: string | null
+  backgroundOpacity: number | null
+  windowColor: string | null
+  windowOpacity: number | null
+}
+
 export interface VelaApi {
   platform: string
   version: string
@@ -150,6 +164,11 @@ export interface VelaApi {
   fetchText(url: string, headers: Record<string, string>): Promise<string>
   checkServer(url: string): Promise<boolean>
   setPlaybackHeaders(headers: Record<string, string> | null): Promise<void>
+  captions: {
+    /** Windows caption style preferences; null fields mean "use Vela's default". */
+    systemStyle(): Promise<SystemCaptionStyle>
+    openSettings(): void
+  }
   window: {
     minimize(): void
     toggleMaximize(): void

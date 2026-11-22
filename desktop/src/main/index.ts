@@ -14,6 +14,7 @@ import type { AnimeIdentity } from '@shared/introSkip'
 import { aniSkip, movieSkip, skipDb, skipDbAnimeId, tmdbAnimeId, tvSkip } from './skip'
 import { mergeSegmentSources } from '@shared/introSkip'
 import { accountCall, accountStatus } from './account'
+import { openSystemCaptionSettings, systemCaptionStyle } from './captionStyle'
 
 const DEFAULT_TMDB_CREDENTIAL = 'ce5e1892fe2fdf9006a6b4dfabe1fea4'
 const PROTOCOLS = ['vela', 'vixscr'] // vixscr:// kept so old links still open
@@ -204,6 +205,8 @@ function registerIpc() {
     try { const r = await getResponse(url, { 'User-Agent': DESKTOP_UA }, 8000); r.body?.cancel().catch(() => {}); return true } catch { return false }
   })
   ipcMain.handle('playback-headers', (_e, h: Record<string, string> | null) => setPlaybackHeaders(h))
+  ipcMain.handle('captions:system-style', () => systemCaptionStyle())
+  ipcMain.on('captions:open-settings', () => openSystemCaptionSettings())
 
   ipcMain.on('win:minimize', e => BrowserWindow.fromWebContents(e.sender)?.minimize())
   ipcMain.on('win:toggle-maximize', e => { const w = BrowserWindow.fromWebContents(e.sender); if (w) w.isMaximized() ? w.unmaximize() : w.maximize() })

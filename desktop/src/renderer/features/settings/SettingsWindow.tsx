@@ -1,7 +1,9 @@
 // Preferences window (auxiliary window per the macOS HIG): toolbar-style
 // pane switcher, grouped form rows, changes apply immediately.
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { StreamServer } from '@shared/types'
+import { StatusPill, showStatus } from '@/components/StatusPill'
+import { describeSync, onSyncStatus, readSyncStatus, requestSync, type SyncStatus } from '@/lib/syncStatus'
 import { Icon, type IconName } from '@/components/Icon'
 import { Toast } from '@/components/Media'
 import { TrafficLights, useWindowFocusClass } from '@/components/Chrome'
@@ -15,15 +17,25 @@ import { cx, formatTime, uuid } from '@/lib/format'
 import type { UpdateCheckResult } from '@shared/types'
 import { startLinkStatus, useLink } from '@/stores/link'
 
-type Pane = 'account' | 'general' | 'servers' | 'anime' | 'devices' | 'data'
-const panes: { id: Pane; label: string; icon: IconName }[] = [
-  { id: 'account', label: 'Account', icon: 'people' },
-  { id: 'general', label: 'General', icon: 'gear' },
-  { id: 'servers', label: 'Servers', icon: 'server' },
-  { id: 'anime', label: 'Anime', icon: 'sparkles' },
-  { id: 'devices', label: 'Devices', icon: 'phone' },
-  { id: 'data', label: 'Data', icon: 'clock' }
+type Pane = 'account' | 'general' | 'playback' | 'appearance' | 'servers' | 'anime' | 'devices' | 'data'
+/** Categories in the sidebar, grouped like System Settings. */
+const paneGroups: { id: Pane; label: string; icon: IconName; hint: string }[][] = [
+  [{ id: 'account', label: 'Account', icon: 'people', hint: 'Vela Cloud sign-in and sync' }],
+  [
+    { id: 'general', label: 'General', icon: 'gear', hint: 'TMDB key and updates' },
+    { id: 'playback', label: 'Playback', icon: 'play', hint: 'Skipping, captions and rotation' },
+    { id: 'appearance', label: 'Appearance', icon: 'sparkles', hint: 'Poster size and performance' }
+  ],
+  [
+    { id: 'servers', label: 'Servers', icon: 'server', hint: 'Where movies and shows play from' },
+    { id: 'anime', label: 'Anime', icon: 'tv', hint: 'Anime section and its servers' }
+  ],
+  [
+    { id: 'devices', label: 'Devices', icon: 'phone', hint: 'iPhone pairing and sync' },
+    { id: 'data', label: 'Data', icon: 'clock', hint: 'Backups and history' }
+  ]
 ]
+const panes = paneGroups.flat()
 
 export function SettingsWindow() {
   const [pane, setPane] = useState<Pane>('account')
@@ -38,28 +50,42 @@ export function SettingsWindow() {
     return () => window.removeEventListener('keydown', k)
   }, [])
 
+  const current = panes.find(p => p.id === pane)
   return (
-    <div className="prefs">
+    <div className="prefs has-sidebar">
       <header className="prefs-bar">
         <TrafficLights />
-        <div className="prefs-title">{panes.find(p => p.id === pane)?.label}</div>
-        <div className="prefs-tabs" role="tablist">
-          {panes.map(p => (
-            <button key={p.id} role="tab" aria-selected={pane === p.id} className={cx('prefs-tab', pane === p.id && 'is-active')} onClick={() => setPane(p.id)}>
-              <Icon name={p.icon} size={18} />{p.label}
-            </button>
-          ))}
-        </div>
+        <div className="prefs-title">Settings</div>
       </header>
-      <main className="prefs-body" role="tabpanel">
-        {pane === 'account' && <AccountPane />}
-        {pane === 'general' && <General />}
-        {pane === 'servers' && <Servers kind="regular" />}
-        {pane === 'anime' && <AnimePane />}
-        {pane === 'devices' && <DevicesPane />}
-        {pane === 'data' && <DataPane />}
-      </main>
+      <div className="prefs-split">
+        <nav className="prefs-nav" role="tablist" aria-orientation="vertical" aria-label="Settings categories">
+          {paneGroups.map((group, i) => (
+            <div key={i} className="prefs-nav-group">
+              {group.map(p => (
+                <button key={p.id} role="tab" aria-selected={pane === p.id} className={cx('prefs-nav-item', pane === p.id && 'is-active')} onClick={() => setPane(p.id)}>
+                  <span className="prefs-nav-icon"><Icon name={p.icon} size={14} /></span>{p.label}
+                </button>
+              ))}
+            </div>
+          ))}
+        </nav>
+        <main className="prefs-body" role="tabpanel" aria-label={current?.label}>
+          <div key={pane} className="prefs-pane">
+            <h2 className="prefs-pane-title">{current?.label}</h2>
+            <p className="prefs-pane-hint">{current?.hint}</p>
+            {pane === 'account' && <AccountPane />}
+            {pane === 'general' && <General />}
+            {pane === 'playback' && <Playback />}
+            {pane === 'appearance' && <Appearance />}
+            {pane === 'servers' && <Servers kind="regular" />}
+            {pane === 'anime' && <AnimePane />}
+            {pane === 'devices' && <DevicesPane />}
+            {pane === 'data' && <DataPane />}
+          </div>
+        </main>
+      </div>
       <Toast />
+      <StatusPill />
     </div>
   )
 }
@@ -82,6 +108,37 @@ function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: 
 
 const accountApi = (window.vela as typeof window.vela & { account: AccountApi }).account
 
+/** Who you are, whether this PC is in sync, and a Sync Now button. */
+function AccountSummary({ username }: { username: string }) {
+  const [status, setStatus] = useState<SyncStatus>(readSyncStatus)
+  const [, tick] = useState(0)
+  const finish = useRef<ReturnType<typeof showStatus> | null>(null)
+  useEffect(() => onSyncStatus(s => {
+    setStatus(s)
+    if (s.state === 'syncing' || !finish.current) return
+    finish.current({ ok: s.state === 'synced', text: s.state === 'synced' ? 'Up to date' : describeSync(s) })
+    finish.current = null
+  }), [])
+  // Keep "Synced 3 min ago" current.
+  useEffect(() => { const t = setInterval(() => tick(n => n + 1), 30_000); return () => clearInterval(t) }, [])
+  const syncing = status.state === 'syncing'
+  return (
+    <section className="account-card glass">
+      <div className="account-avatar" aria-hidden="true">{username.slice(0, 1).toUpperCase()}</div>
+      <div className="grow">
+        <div className="account-name">{username}</div>
+        <div className={cx('account-sync', `is-${status.state}`)}>
+          <span className="server-dot" aria-hidden="true" />{describeSync(status)}
+        </div>
+      </div>
+      <button className="btn small" disabled={syncing} onClick={() => {
+        finish.current = showStatus('Syncing with Vela Cloud…')
+        requestSync()
+      }}><Icon name="sync" size={12} />{syncing ? 'Syncing…' : 'Sync Now'}</button>
+    </section>
+  )
+}
+
 function AccountPane() {
   const [username, setUsername] = useState<string | null>(null)
   const [name, setName] = useState('')
@@ -95,6 +152,7 @@ function AccountPane() {
   const [newPin, setNewPin] = useState('')
   const [confirmNewPin, setConfirmNewPin] = useState('')
   const [devices, setDevices] = useState<{ device_id: string; device_name: string; created_at: number; current: boolean }[]>([])
+  const [editing, setEditing] = useState<'name' | 'pin' | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState(false)
   const [downloadConfirm, setDownloadConfirm] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -157,7 +215,7 @@ function AccountPane() {
         </>}
       </Group>
     </> : <>
-      <Group title="Vela Account"><Field label={username} hint="Signed in on this PC"><Icon name="check" size={20} /></Field></Group>
+      <AccountSummary username={username} />
       <Group title="Cloud Data" footer="Download replaces this PC's local data. Signing out keeps your local data; deleting the account removes its cloud data.">
         <Field label="Back up this PC"><button className="btn small" disabled={busy} onClick={async () => {
           const current = await accountApi.call('download')
@@ -176,11 +234,34 @@ function AccountPane() {
         }}>Back Up Now</button></Field>
         <Field label="Download from cloud">{downloadConfirm ? <><button className="btn small danger" onClick={async () => { const result = await run('download'); if (result?.payload) { applyBackup(JSON.stringify(result.payload)); const { accountKey } = await accountApi.status(); if (accountKey) { localStorage.setItem(revisionKey(accountKey), String(result.revision)); localStorage.setItem(hashKey(accountKey), await backupHash(result.payload)) } toast('Cloud data downloaded') } setDownloadConfirm(false) }}>Replace local data</button><button className="btn small" onClick={() => setDownloadConfirm(false)}>Cancel</button></> : <button className="btn small" onClick={() => setDownloadConfirm(true)}>Download…</button>}</Field>
       </Group>
-      <Group title="Change Username"><Field label="New username"><input className="text-input" value={newName} onChange={e => setNewName(e.target.value)} /></Field><Field label=""><button className="btn small" disabled={busy || !newName} onClick={async () => { if (await run('rename', { next: newName })) setNewName('') }}>Change Username</button></Field></Group>
-      <Group title="Change PIN"><Field label="Current PIN"><input className="text-input" type="password" inputMode="numeric" value={pin} onChange={e => setPin(e.target.value)} /></Field><Field label="New 4- or 6-digit PIN"><input className="text-input" type="password" inputMode="numeric" value={newPin} onChange={e => setNewPin(e.target.value)} /></Field><Field label="Confirm new PIN"><input className="text-input" type="password" inputMode="numeric" value={confirmNewPin} onChange={e => setConfirmNewPin(e.target.value)} /></Field><Field label=""><button className="btn small" disabled={busy || !pin || !newPin || !confirmNewPin} onClick={async () => { if (newPin !== confirmNewPin) { setError('The new PINs do not match.'); return } if (await run('changePin', { currentPin: pin, newPin })) { setPin(''); setNewPin(''); setConfirmNewPin(''); toast('PIN changed') } }}>Change PIN</button></Field></Group>
-      <Group title="Signed-In Devices">
-        {devices.map(d => <Field key={d.device_id} label={`${d.device_name}${d.current ? ' (this PC)' : ''}`} hint={new Date(d.created_at).toLocaleDateString()}><button className="btn small danger" onClick={async () => { if (await run(`revoke:${d.device_id}`)) { const list = await run('devices'); setDevices(list?.devices ?? []) } }}>Sign Out</button></Field>)}
-        <Field label=""><button className="btn small" onClick={async () => { const list = await run('devices'); setDevices(list?.devices ?? []) }}>Refresh</button></Field>
+      <Group title="Profile">
+        <Field label="Username" hint={username}>
+          {editing === 'name' ? null : <button className="btn small" onClick={() => setEditing('name')}>Change…</button>}
+        </Field>
+        {editing === 'name' && <>
+          <Field label="New username"><input className="text-input" autoFocus value={newName} onChange={e => setNewName(e.target.value)} /></Field>
+          <Field label=""><button className="btn small" onClick={() => { setEditing(null); setNewName('') }}>Cancel</button><button className="btn btn-primary small" disabled={busy || !newName} onClick={async () => { if (await run('rename', { next: newName })) { setNewName(''); setEditing(null); toast('Username changed') } }}>Save</button></Field>
+        </>}
+        <Field label="PIN" hint="4 or 6 digits">
+          {editing === 'pin' ? null : <button className="btn small" onClick={() => setEditing('pin')}>Change…</button>}
+        </Field>
+        {editing === 'pin' && <>
+          <Field label="Current PIN"><input className="text-input" autoFocus type="password" inputMode="numeric" value={pin} onChange={e => setPin(e.target.value)} /></Field>
+          <Field label="New PIN"><input className="text-input" type="password" inputMode="numeric" value={newPin} onChange={e => setNewPin(e.target.value)} /></Field>
+          <Field label="Confirm new PIN"><input className="text-input" type="password" inputMode="numeric" value={confirmNewPin} onChange={e => setConfirmNewPin(e.target.value)} /></Field>
+          <Field label=""><button className="btn small" onClick={() => { setEditing(null); setPin(''); setNewPin(''); setConfirmNewPin('') }}>Cancel</button><button className="btn btn-primary small" disabled={busy || !pin || !newPin || !confirmNewPin} onClick={async () => { if (newPin !== confirmNewPin) { setError('The new PINs do not match.'); return } if (await run('changePin', { currentPin: pin, newPin })) { setPin(''); setNewPin(''); setConfirmNewPin(''); setEditing(null); toast('PIN changed') } }}>Save</button></Field>
+        </>}
+      </Group>
+      <Group title="Signed-In Devices" footer="Signing a device out ends its session. Its local data stays on that device.">
+        {devices.map(d => <Field key={d.device_id} label={`${d.device_name}${d.current ? ' (this PC)' : ''}`} hint={`Signed in ${new Date(d.created_at).toLocaleDateString()}`}><button className="btn small danger" onClick={async () => { if (await run(`revoke:${d.device_id}`)) { const list = await run('devices'); setDevices(list?.devices ?? []) } }}>Sign Out</button></Field>)}
+        <Field label="">
+          <button className="btn small" disabled={busy} onClick={async () => {
+            const finish = showStatus('Refreshing devices…')
+            const list = await run('devices')
+            if (list) { setDevices(list.devices ?? []); finish({ ok: true, text: `${(list.devices ?? []).length} signed in` }) }
+            else finish({ ok: false, text: 'Couldn’t refresh devices' })
+          }}><Icon name="refresh" size={12} />Refresh</button>
+        </Field>
       </Group>
       <Group title="Account Actions">
         <Field label="This PC"><button className="btn small" onClick={() => run('logout')}>Sign Out</button></Field>
@@ -210,15 +291,47 @@ function General() {
             onBlur={() => key !== s.credential && (s.set({ credential: key.trim() }), toast('TMDB key saved'))} spellCheck={false} />
         </Field>
       </Group>
-      <Group title="Playback">
-        <Field label="Skip interval" hint="Arrow keys, J / L and the skip buttons">
+      <Group title="Updates">
+        <Field label={`Vela ${window.vela.version}`} hint={update?.error ?? (update ? (update.updateAvailable ? `Version ${update.latestVersion} is available.${update.notes ? ' ' + update.notes : ''}` : 'You’re up to date.') : undefined)}>
+          {update?.updateAvailable
+            ? <button className="btn btn-primary small" disabled={progress !== null} onClick={async () => { setProgress(0); const r = await window.vela.updater.apply(update.downloadUrl, update.releaseUrl); if (!r.ok) { setProgress(null); toast(r.error ?? 'Update failed') } }}>
+                {progress !== null ? `Downloading ${Math.round(progress * 100)}%` : 'Install Update'}
+              </button>
+            : <button className="btn small" disabled={checking} onClick={check}>{checking ? 'Checking…' : 'Check for Updates'}</button>}
+        </Field>
+      </Group>
+    </>
+  )
+}
+
+function Playback() {
+  const s = useSettings()
+  return (
+    <>
+      <Group title="Skipping">
+        <Field label="Skip interval" hint="Arrow keys, J / L, double-click and the skip buttons">
           <div className="segmented small">{SEEK_OPTIONS.map(v => <button key={v} className={cx('seg', s.seekInterval === v && 'is-active')} onClick={() => s.set({ seekInterval: v })}>{v}s</button>)}</div>
         </Field>
         <Field label="Automatically skip intros" hint="When intro times are known from SkipDB, TheIntroDB, or AniSkip. Manual Skip Intro is always offered. In a watch party only the host skips.">
           <Toggle label="Automatically skip intros" checked={!!s.autoSkipIntro} onChange={v => s.set({ autoSkipIntro: v })} />
         </Field>
-        <Field label="Caption size" hint="Subtitles drawn by Vela’s player">
+      </Group>
+      <Group title="Captions" footer="Text colour, font, background and edge follow Windows caption style. Changes there apply as soon as you return to Vela.">
+        <Field label="Caption size" hint="On top of the Windows caption size">
           <div className="segmented small">{CAPTION_SIZES.map(c => <button key={c.v} className={cx('seg', (s.captionScale ?? 1) === c.v && 'is-active')} onClick={() => s.set({ captionScale: c.v })}>{c.label}</button>)}</div>
+        </Field>
+        {window.vela.platform === 'win32' && (
+          <Field label="Caption style" hint="Settings › Accessibility › Captions">
+            <button className="btn small" onClick={() => window.vela.captions.openSettings()}>Open Windows Settings<Icon name="external" size={12} /></button>
+          </Field>
+        )}
+      </Group>
+      <Group title="Rotation" footer="The Rotate button in the player (or R) turns the picture a quarter turn each press.">
+        <Field label="Rotate direction">
+          <div className="segmented small">
+            <button className={cx('seg', s.rotateClockwise !== false && 'is-active')} onClick={() => s.set({ rotateClockwise: true })}>Clockwise</button>
+            <button className={cx('seg', s.rotateClockwise === false && 'is-active')} onClick={() => s.set({ rotateClockwise: false })}>Counterclockwise</button>
+          </div>
         </Field>
       </Group>
       <Group title="Custom intro times" footer="Set these in the Intro start / end boxes on a show’s or anime’s page (00:00 and 00:00 = off). They apply to every episode and replace found intro times. Skip data: SkipDB (ODbL 1.0), with TheIntroDB / AniSkip fallback.">
@@ -231,23 +344,20 @@ function General() {
           </Field>
         ))}
       </Group>
-      <Group title="Appearance" footer="Performance modes turn off the glass blur on slower PCs. Ultra also removes translucency.">
-        <Field label="Poster size">
-          <div className="segmented small">{(['compact', 'large'] as const).map(v => <button key={v} className={cx('seg', s.cardSize === v && 'is-active')} onClick={() => s.set({ cardSize: v })}>{v === 'compact' ? 'Compact' : 'Large'}</button>)}</div>
-        </Field>
-        <Field label="Performance mode"><Toggle label="Performance mode" checked={s.performanceMode} onChange={v => s.set({ performanceMode: v, ultraPerformanceMode: v ? s.ultraPerformanceMode : false })} /></Field>
-        <Field label="Ultra performance mode"><Toggle label="Ultra performance mode" checked={s.ultraPerformanceMode} onChange={v => s.set({ ultraPerformanceMode: v, performanceMode: v || s.performanceMode })} /></Field>
-      </Group>
-      <Group title="Updates">
-        <Field label={`Vela ${window.vela.version}`} hint={update?.error ?? (update ? (update.updateAvailable ? `Version ${update.latestVersion} is available.${update.notes ? ' ' + update.notes : ''}` : 'You’re up to date.') : undefined)}>
-          {update?.updateAvailable
-            ? <button className="btn btn-primary small" disabled={progress !== null} onClick={async () => { setProgress(0); const r = await window.vela.updater.apply(update.downloadUrl, update.releaseUrl); if (!r.ok) { setProgress(null); toast(r.error ?? 'Update failed') } }}>
-                {progress !== null ? `Downloading ${Math.round(progress * 100)}%` : 'Install Update'}
-              </button>
-            : <button className="btn small" disabled={checking} onClick={check}>{checking ? 'Checking…' : 'Check for Updates'}</button>}
-        </Field>
-      </Group>
     </>
+  )
+}
+
+function Appearance() {
+  const s = useSettings()
+  return (
+    <Group title="Display" footer="Performance modes turn off the glass blur on slower PCs. Ultra also removes translucency.">
+      <Field label="Poster size">
+        <div className="segmented small">{(['compact', 'large'] as const).map(v => <button key={v} className={cx('seg', s.cardSize === v && 'is-active')} onClick={() => s.set({ cardSize: v })}>{v === 'compact' ? 'Compact' : 'Large'}</button>)}</div>
+      </Field>
+      <Field label="Performance mode"><Toggle label="Performance mode" checked={s.performanceMode} onChange={v => s.set({ performanceMode: v, ultraPerformanceMode: v ? s.ultraPerformanceMode : false })} /></Field>
+      <Field label="Ultra performance mode"><Toggle label="Ultra performance mode" checked={s.ultraPerformanceMode} onChange={v => s.set({ ultraPerformanceMode: v, performanceMode: v || s.performanceMode })} /></Field>
+    </Group>
   )
 }
 

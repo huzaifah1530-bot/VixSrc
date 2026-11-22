@@ -8,6 +8,12 @@ export const seasonsOf = (d: TvDetails) =>
 
 /** Play straight from a card or the hero: movies start, shows resume. */
 export async function quickPlay(item: MediaItem) {
+  // Loaded lazily: lib/party imports this module, and the dialog imports lib/party.
+  const { guardPartyLeave } = await import('../party/ConfirmDialog')
+  return guardPartyLeave(`Playing ${item.title}`, () => { void startQuickPlay(item) })
+}
+
+async function startQuickPlay(item: MediaItem) {
   if (item.type === 'movie') { usePlayer.getState().playTmdb(item); return }
   try {
     const d = await tmdb<TvDetails>(`/tv/${item.tmdbId}`)

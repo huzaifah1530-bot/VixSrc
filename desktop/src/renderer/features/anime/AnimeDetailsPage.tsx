@@ -9,6 +9,7 @@ import { useSettings } from '@/stores/settings'
 import { toast } from '@/stores/ui'
 import { cx } from '@/lib/format'
 import { IntroTimes } from '@/components/IntroTimes'
+import { guardPartyLeave } from '../party/ConfirmDialog'
 
 export function AnimeDetailsPage({ item }: { item: MediaItem }) {
   const [details, setDetails] = useState<AnimeDetails | null>(null)
@@ -48,7 +49,7 @@ export function AnimeDetailsPage({ item }: { item: MediaItem }) {
       (!q || e.number === q || e.title.toLowerCase().includes(q)))
   }, [details, query, audio])
 
-  const play = (ep: AnimeEpisode) => details && playAnime(full, details, ep, 0)
+  const play = (ep: AnimeEpisode) => details && guardPartyLeave(`Playing ${item.title} episode ${ep.number}`, () => playAnime(full, details, ep, 0))
   const resumeEp = details?.episodes.find(e => Math.floor(Number(e.number)) === recent?.resumeEpisode) ?? details?.episodes[0]
 
   return (

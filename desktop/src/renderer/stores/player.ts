@@ -24,6 +24,8 @@ export interface AnimeContext {
 
 interface PlayerState {
   open: boolean
+  /** Playing in the corner while the user browses (the player stays mounted). */
+  minimized: boolean
   kind: 'tmdb' | 'anime'
   item: MediaItem | null
   subtitle: string | null
@@ -51,6 +53,9 @@ interface PlayerState {
   reload: () => void
   next: () => void
   hasNext: () => boolean
+  /** Leave the full player but keep watching in the mini-player. */
+  minimize: () => void
+  expand: () => void
   close: () => void
 }
 
@@ -126,7 +131,7 @@ export const usePlayer = create<PlayerState>((set, get) => {
   }
 
   return {
-    open: false, kind: 'tmdb', item: null, subtitle: null, tv: null, anime: null,
+    open: false, minimized: false, kind: 'tmdb', item: null, subtitle: null, tv: null, anime: null,
     serverIndex: 0, sources: [], sourceIndex: 0, embedUrl: null, resolving: false,
     status: null, error: null, progressId: '', resumeAt: 0, rejected: [], loadToken: 0,
 
@@ -135,7 +140,7 @@ export const usePlayer = create<PlayerState>((set, get) => {
       const subtitle = tv ? `S${tv.season} · E${tv.episode}${tv.episodeTitle ? ' — ' + tv.episodeTitle : ''}` : item.year || null
       useLibrary.getState().addRecent(item, tv?.season, tv?.episode, tv?.episodeTitle)
       set({
-        ...resetPlayback(), open: true, kind: 'tmdb', item, tv, anime: null, subtitle,
+        ...resetPlayback(), open: true, minimized: false, kind: 'tmdb', item, tv, anime: null, subtitle,
         serverIndex: serverIndex ?? (get().kind === 'tmdb' ? get().serverIndex : 0),
         progressId, resumeAt: resumeFor(progressId)
       })
@@ -149,7 +154,7 @@ export const usePlayer = create<PlayerState>((set, get) => {
       const generic = episode.title === `Episode ${episode.number}`
       useLibrary.getState().addRecent(item, 1, n, generic ? null : episode.title)
       set({
-        ...resetPlayback(), open: true, kind: 'anime', item, tv: null,
+        ...resetPlayback(), open: true, minimized: false, kind: 'anime', item, tv: null,
         anime: { details, episode, serverIndex, slugs: slugs ?? { [serverIndex]: animeSlug(item) ?? details.show.slug } },
         serverIndex,
         subtitle: generic ? `Episode ${episode.number}` : `E${episode.number} — ${episode.title}`,
@@ -255,7 +260,9 @@ export const usePlayer = create<PlayerState>((set, get) => {
       get().playTmdb(item, nextTv, serverIndex)
     },
 
-    close: () => set({ ...resetPlayback(), open: false })
+    minimize: () => { if (get().open) set({ minimized: true }) },
+    expand: () => { if (get().open) set({ minimized: false }) },
+    close: () => set({ ...resetPlayback(), open: false, minimized: false })
   }
 })
 

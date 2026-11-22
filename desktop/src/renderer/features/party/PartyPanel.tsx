@@ -5,13 +5,14 @@ import { Icon } from '@/components/Icon'
 import { answerFollow, party, startParty, leaveParty, joinParty, useParty } from '@/lib/party'
 import { toast } from '@/stores/ui'
 import { cx } from '@/lib/format'
+import { confirmAction } from './ConfirmDialog'
 
 /**
  * Where modal dialogs go. While the player is full screen only that element
  * is drawn, so a dialog placed anywhere else (like "the host moved on —
  * follow?") would be invisible and the viewer would just sit there.
  */
-function useModalHost(): Element {
+export function useModalHost(): Element {
   const [host, setHost] = useState<Element>(() => document.fullscreenElement ?? document.body)
   useEffect(() => {
     const update = () => setHost(document.fullscreenElement ?? document.body)
@@ -142,16 +143,24 @@ export function StartPartyDialog() {
 /** Dialog to paste an invite link (also opened by vela://party links). */
 export function JoinPartyDialog({ onClose }: { onClose: () => void }) {
   const [text, setText] = useState('')
+  const inParty = useParty(s => s.active)
+  const join = () => {
+    // Joining replaces the current room, for the host as much as a viewer.
+    if (!inParty) { if (joinParty(text)) onClose(); return }
+    onClose()
+    confirmAction('Leave the watch party?', 'Joining another party will make you leave the party you’re in. Continue?')
+      .then(ok => { if (ok) joinParty(text) })
+  }
   return (
     <div className="sheet-backdrop" onMouseDown={onClose}>
       <div className="sheet glass-strong" role="dialog" aria-modal="true" aria-labelledby="join-title" onMouseDown={e => e.stopPropagation()}>
         <h2 id="join-title" className="sheet-title">Join a watch party</h2>
         <p className="muted sheet-sub">Paste the invite link someone sent you.</p>
         <input className="text-input" style={{ width: '100%' }} autoFocus placeholder="https://…/p/…" value={text}
-          onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && joinParty(text)) onClose() }} />
+          onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') join() }} />
         <div className="sheet-actions">
           <button className="btn" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" onClick={() => { if (joinParty(text)) onClose() }}>Join</button>
+          <button className="btn btn-primary" onClick={join}>Join</button>
         </div>
       </div>
     </div>

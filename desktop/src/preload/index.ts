@@ -26,6 +26,10 @@ const api: VelaApi & { account: AccountApi } = {
   fetchText: (url, headers) => ipcRenderer.invoke('fetch-text', url, headers),
   checkServer: url => ipcRenderer.invoke('check-server', url),
   setPlaybackHeaders: h => ipcRenderer.invoke('playback-headers', h),
+  captions: {
+    systemStyle: () => ipcRenderer.invoke('captions:system-style'),
+    openSettings: () => ipcRenderer.send('captions:open-settings')
+  },
   window: {
     minimize: () => ipcRenderer.send('win:minimize'),
     toggleMaximize: () => ipcRenderer.send('win:toggle-maximize'),

@@ -48,6 +48,8 @@ export interface SettingsState {
   autoSkipIntro: boolean
   /** Per-show custom intro times, keyed `tv:<tmdbId>` or `tv:kai:<slug>`. */
   introOverrides: Record<string, IntroOverride>
+  /** Direction of the player's Rotate button. */
+  rotateClockwise: boolean
   set: (patch: Partial<Omit<SettingsState, 'set'>>) => void
 }
 
@@ -72,6 +74,7 @@ export const useSettings = create<SettingsState>()(
       captionScale: 1,
       autoSkipIntro: false,
       introOverrides: {},
+      rotateClockwise: true,
       ...(fresh ? legacySettings() : {}),
       set: patch => set(patch)
     }),
