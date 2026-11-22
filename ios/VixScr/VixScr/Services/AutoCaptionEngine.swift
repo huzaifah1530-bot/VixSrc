@@ -36,6 +36,20 @@ final class AutoCaptionEngine {
     private var pendingSeek: Double?
     private var retainedCues: [SubtitleCue] = []
     private var onCues: ([SubtitleCue]) -> Void = { _ in }
+    private var onStatus: (String) -> Void = { _ in }
+    private var watchdog: Task<Void, Never>?
+
+    // Diagnostics, surfaced in the player so a silent failure is visible.
+    private var bufferCount = 0
+    private var resultCount = 0
+    private var lastRecognitionError: String?
+    private var formatSummary = ""
+    /// HLS audio timestamps can sit on a different timeline than
+    /// `AVPlayer.currentTime` (e.g. MPEG-TS starting at 10 s). Without this
+    /// correction the "don't run ahead of playback" wait never ends and no
+    /// audio ever reaches the recognizer.
+    private var timelineOffset = 0.0
+    private var calibrated = false
 
     /// Nonisolated on purpose: Speech calls this handler on a background queue.
     /// A closure formed inside this @MainActor class would inherit main-actor
@@ -56,22 +70,33 @@ final class AutoCaptionEngine {
         recognizer: SFSpeechRecognizer,
         request: SFSpeechAudioBufferRecognitionRequest,
         offset: Double,
-        deliver: @escaping @Sendable ([Word], Double) -> Void
+        deliver: @escaping @Sendable ([Word], Double, String?) -> Void
     ) -> SFSpeechRecognitionTask {
         recognizer.recognitionTask(with: request) { @Sendable result, error in
-            guard let result, error == nil else { return }
+            if let error {
+                let ns = error as NSError
+                // 216/301 are our own cancellations, 1110 is "no speech yet".
+                if ![216, 301, 1110].contains(ns.code) {
+                    deliver([], offset, "\(ns.domain) \(ns.code): \(ns.localizedDescription)")
+                }
+                return
+            }
+            guard let result else { return }
             let words = result.bestTranscription.segments.map {
                 Word(start: offset + $0.timestamp,
                      end: offset + $0.timestamp + $0.duration,
                      text: $0.substring)
             }
-            deliver(words, offset)
+            deliver(words, offset, nil)
         }
     }
 
     func start(item: AVPlayerItem, locale: Locale, playbackTime: @escaping () -> Double,
+               onStatus: @escaping (String) -> Void = { _ in },
                onCues: @escaping ([SubtitleCue]) -> Void) throws {
         stop()
+        self.onStatus = onStatus
+        onStatus("Starting on-device captions…")
         guard let recognizer = SFSpeechRecognizer(locale: locale),
               recognizer.isAvailable, recognizer.supportsOnDeviceRecognition else {
             throw Failure.unavailable
@@ -94,13 +119,51 @@ final class AutoCaptionEngine {
         self.output = output
         self.onCues = onCues
 
+        bufferCount = 0
+        resultCount = 0
+        lastRecognitionError = nil
+        calibrated = false
+        timelineOffset = 0
+        watchdog = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(8))
+            guard let self, !Task.isCancelled else { return }
+            if self.bufferCount == 0 {
+                self.onStatus("No audio received from this stream (iOS returned no decoded audio).")
+                return
+            }
+            try? await Task.sleep(for: .seconds(17))
+            guard !Task.isCancelled, self.resultCount == 0 else { return }
+            self.onStatus(self.lastRecognitionError.map { "Speech recognition error: \($0)" }
+                          ?? "Receiving audio (\(self.bufferCount) buffers, \(self.formatSummary)) but no speech recognized yet.")
+        }
+
         pullTask = Task { @MainActor [weak self] in
             guard let self else { return }
             while !Task.isCancelled, let next = await output.nextSampleBuffer() {
                 let sample = next.sampleBuffer
                 guard sample.sampleCount > 0 else { continue }
-                let timestamp = sample.presentationTimeStamp.seconds
-                guard timestamp.isFinite else { continue }
+                let rawTimestamp = sample.presentationTimeStamp.seconds
+                guard rawTimestamp.isFinite else { continue }
+
+                self.bufferCount += 1
+                if self.bufferCount == 1 {
+                    if let description = sample.formatDescription,
+                       let format = CMAudioFormatDescriptionGetStreamBasicDescription(description)?.pointee {
+                        self.formatSummary = "\(Int(format.mSampleRate)) Hz, \(format.mChannelsPerFrame) ch, \(format.mBitsPerChannel)-bit"
+                    }
+                    self.onStatus("Audio received (\(self.formatSummary)). Listening…")
+                }
+
+                if next.sequenceWasRestarted || self.pendingSeek != nil { self.calibrated = false }
+                if !self.calibrated {
+                    // Align the stream's timeline with the player's. A small
+                    // difference is just read-ahead; a larger one is an
+                    // offset such as MPEG-TS starting at 10 s.
+                    let delta = playbackTime() - rawTimestamp
+                    self.timelineOffset = abs(delta) > 2 ? delta : 0
+                    self.calibrated = true
+                }
+                let timestamp = rawTimestamp + self.timelineOffset
 
                 // A seek (or a restart of the underlying sequence) invalidates
                 // the recognizer's timeline, so start a fresh request anchored
@@ -139,6 +202,9 @@ final class AutoCaptionEngine {
                     self.request?.appendAudioSampleBuffer(unsafe)
                 }
             }
+            if !Task.isCancelled, self.bufferCount == 0 {
+                self.onStatus("This stream's decoded-audio output ended without delivering any audio.")
+            }
             self.request?.endAudio()
         }
     }
@@ -165,13 +231,25 @@ final class AutoCaptionEngine {
         request.addsPunctuation = true
         self.request = request
         let offset = timestamp
-        recognitionTask = Self.makeRecognitionTask(recognizer: recognizer, request: request, offset: offset) { [weak self] words, offset in
-            Task { @MainActor in self?.accept(words, from: offset) }
+        recognitionTask = Self.makeRecognitionTask(recognizer: recognizer, request: request, offset: offset) { [weak self] words, offset, failure in
+            Task { @MainActor in
+                if let failure { self?.recognitionFailed(failure, from: offset) }
+                else { self?.accept(words, from: offset) }
+            }
         }
+    }
+
+    private func recognitionFailed(_ message: String, from offset: Double) {
+        guard offset == baseTime else { return }
+        lastRecognitionError = message
+        if resultCount == 0 { onStatus("Speech recognition error: \(message)") }
     }
 
     private func accept(_ words: [Word], from offset: Double) {
         guard offset == baseTime else { return }
+        guard !words.isEmpty else { return }
+        if resultCount == 0 { onStatus("") }
+        resultCount += 1
         var fresh: [SubtitleCue] = []
         var group: [Word] = []
         func finishGroup() {
@@ -195,6 +273,8 @@ final class AutoCaptionEngine {
     }
 
     func stop() {
+        watchdog?.cancel()
+        watchdog = nil
         pullTask?.cancel()
         pullTask = nil
         request?.endAudio()

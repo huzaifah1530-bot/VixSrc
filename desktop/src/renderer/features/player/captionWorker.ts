@@ -21,6 +21,7 @@ const MODEL = 'onnx-community/whisper-base'
 
 const scope = self as unknown as { postMessage: (message: CaptionResponse) => void }
 
+const files = new Map<string, { loaded: number; total: number }>()
 let asr: AutomaticSpeechRecognitionPipeline | null = null
 let loading: Promise<AutomaticSpeechRecognitionPipeline> | null = null
 
@@ -32,9 +33,13 @@ function load(model: string): Promise<AutomaticSpeechRecognitionPipeline> {
     loading = pipeline('automatic-speech-recognition', model, {
       dtype: 'q8',
       progress_callback: (p: { status?: string; file?: string; loaded?: number; total?: number }) => {
-        if (p.status === 'progress' && p.total) {
-          post({ type: 'progress', file: p.file, loaded: p.loaded ?? 0, total: p.total })
-        }
+        if (p.status !== 'progress' || !p.total || !p.file) return
+        // Several files download in parallel; report one overall figure.
+        files.set(p.file, { loaded: p.loaded ?? 0, total: p.total })
+        let loaded = 0
+        let total = 0
+        for (const f of files.values()) { loaded += f.loaded; total += f.total }
+        post({ type: 'progress', loaded, total })
       }
     } as never)
       .then(model => {

@@ -233,6 +233,7 @@ struct PlayerSheet: View {
         options.servers = viewModel.store.servers.map(\.name)
         options.selectedServer = viewModel.currentServerIndex
         options.onSelectServer = { viewModel.switchServer(to: $0) }
+        options.isAnime = viewModel.selected?.isAnime == true
         if viewModel.selected?.type == .tv {
             options.nextEpisodeLabel = viewModel.nextEpisodeLabel
             options.onNextEpisode = { Task { await viewModel.playNextEpisode() } }

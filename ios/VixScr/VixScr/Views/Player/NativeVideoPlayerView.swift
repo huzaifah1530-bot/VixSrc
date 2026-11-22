@@ -519,7 +519,7 @@ private struct PlayerSurface: View {
                             } else { Text("English") }
                         }
                     }
-                    if playerManager.spokenAudioLanguage != "en" {
+                    if options.isAnime && playerManager.spokenAudioLanguage != "en" {
                         Button {
                             Task {
                                 await playerManager.selectGeneratedCaptions(locale: "ja-JP")
@@ -828,6 +828,10 @@ struct PlayerOptions {
 
     var nextEpisodeLabel: String?
     var onNextEpisode: (() -> Void)?
+
+    /// Japanese generated captions (and their English translation) are only
+    /// offered for anime.
+    var isAnime = false
 }
 
 /// Glass disc icon, used as a Menu label in the top bar.
@@ -1193,6 +1197,17 @@ struct CaptionOverlay: View {
     var body: some View {
         VStack {
             Spacer()
+            if playerManager.currentCaption == nil, let status = playerManager.generatedCaptionStatus {
+                Text(status)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.white.opacity(0.85))
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(.black.opacity(0.45), in: Capsule())
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, bottomInset)
+            }
             if let caption = playerManager.currentCaption {
                 Text(caption)
                     .font(.system(size: 16 * captionScale, weight: .semibold))

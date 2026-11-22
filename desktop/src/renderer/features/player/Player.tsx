@@ -34,6 +34,12 @@ let captionPreference: { kind: Caption['kind']; label?: string; index?: number; 
 const generatedLabel = (language: CaptionLanguage, translate: boolean) =>
   language === 'ja' ? (translate ? 'Auto-generated · Japanese → English' : 'Auto-generated · Japanese') : 'Auto-generated · English'
 
+/** Probed streams say what they are; others are guessed from the URL. */
+function sourceIsHls(source: { format?: string; url: string }): boolean {
+  return source.format
+    ? source.format === 'hls'
+    : /\.m3u8|\/hls|playlist|master/i.test(source.url) || !/\.(mp4|webm|mov|mkv)(\?|$)/i.test(source.url)
+}
 export function Player() {
   const p = usePlayer()
   const servers = useSettings(s => (p.kind === 'anime' ? s.animeServers : s.servers))
@@ -104,9 +110,7 @@ export function Player() {
 
     const fail = (why: string) => usePlayer.getState().rejectCurrent(why)
     // Probed streams say what they are; others are guessed from the URL.
-    const isHls = source.format
-      ? source.format === 'hls'
-      : /\.m3u8|\/hls|playlist|master/i.test(source.url) || !/\.(mp4|webm|mov|mkv)(\?|$)/i.test(source.url)
+    const isHls = sourceIsHls(source)
     if (isHls && Hls.isSupported()) {
       const h = new Hls({ enableWorker: true, maxBufferLength: 45, startFragPrefetch: true })
       hls.current = h
@@ -143,10 +147,12 @@ export function Player() {
     } else if (captionPreference?.kind === 'hls') {
       setCaption({ kind: 'hls', index: captionPreference.index ?? 0 })
     } else if (captionPreference?.kind === 'generated') {
+      // Japanese is only offered for anime; anything else falls back to English.
+      const japanese = captionPreference.language === 'ja' && p.kind === 'anime'
       setCaption({
         kind: 'generated',
-        language: captionPreference.language ?? 'en',
-        translate: !!captionPreference.translate
+        language: japanese ? 'ja' : 'en',
+        translate: japanese && !!captionPreference.translate
       })
     } else if (captionPreference?.kind === 'off') {
       setCaption({ kind: 'off' })
@@ -187,8 +193,10 @@ export function Player() {
     }
     const element = video.current
     if (!element) return
+    if (!source) return
     const session = new AutoCaptionSession(
       element,
+      { url: source.url, hls: sourceIsHls(source) },
       { language: caption.language, translate: caption.translate },
       setGenCues,
       setGenState
@@ -554,8 +562,12 @@ export function Player() {
                   <MenuItem selected={caption.kind === 'off'} onSelect={() => { chooseCaption({ kind: 'off' }); close() }}>Off</MenuItem>
                   <div className="menu-label">Auto-generated</div>
                   <MenuItem selected={caption.kind === 'generated' && caption.language === 'en'} onSelect={() => { chooseCaption({ kind: 'generated', language: 'en', translate: false }); close() }}>English</MenuItem>
-                  <MenuItem selected={caption.kind === 'generated' && caption.language === 'ja' && !caption.translate} onSelect={() => { chooseCaption({ kind: 'generated', language: 'ja', translate: false }); close() }}>Japanese</MenuItem>
-                  <MenuItem selected={caption.kind === 'generated' && caption.language === 'ja' && caption.translate} onSelect={() => { chooseCaption({ kind: 'generated', language: 'ja', translate: true }); close() }}>Japanese → English</MenuItem>
+                  {p.kind === 'anime' && (
+                    <>
+                      <MenuItem selected={caption.kind === 'generated' && caption.language === 'ja' && !caption.translate} onSelect={() => { chooseCaption({ kind: 'generated', language: 'ja', translate: false }); close() }}>Japanese</MenuItem>
+                      <MenuItem selected={caption.kind === 'generated' && caption.language === 'ja' && caption.translate} onSelect={() => { chooseCaption({ kind: 'generated', language: 'ja', translate: true }); close() }}>Japanese → English</MenuItem>
+                    </>
+                  )}
                   {captionStatus && <div className="menu-note">{captionStatus}</div>}
                   {source.subtitles.length > 0 && <div className="menu-label">This video</div>}
                   {source.subtitles.map((t, i) => <MenuItem key={t.url} selected={caption.kind === 'external' && caption.index === i} onSelect={() => { chooseCaption({ kind: 'external', index: i }); close() }}>{t.label}</MenuItem>)}

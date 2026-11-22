@@ -53,6 +53,9 @@ final class VideoPlayerManager {
     private(set) var generatedCaptionLocale: String?
     private(set) var translateGeneratedCaptions = false
     private(set) var generatedCaptionError: String?
+    /// Live progress/diagnostic line for generated captions ("Audio received…",
+    /// recognizer errors). Empty or nil once captions are flowing.
+    private(set) var generatedCaptionStatus: String?
     private enum CaptionPreference: Codable, Equatable { case off, external(String), embedded(String), generated(String) }
     private static let captionPreferenceKey = "vela_caption_preference"
     @ObservationIgnored private var captionPreference: CaptionPreference?
@@ -711,6 +714,9 @@ final class VideoPlayerManager {
         do {
             try engine.start(item: item, locale: Locale(identifier: locale),
                              playbackTime: { [weak self] in self?.currentTime ?? 0 },
+                             onStatus: { [weak self] status in
+                self?.generatedCaptionStatus = status.isEmpty ? nil : status
+            },
                              onCues: { [weak self] cues in
                 guard let self else { return }
                 self.generatedCues = cues
@@ -736,6 +742,7 @@ final class VideoPlayerManager {
         }
         autoCaptionEngine = nil
         generatedCaptionLocale = nil
+        generatedCaptionStatus = nil
         translateGeneratedCaptions = false
         generatedCues = []
         translatedCues = []

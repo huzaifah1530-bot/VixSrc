@@ -141,6 +141,7 @@ struct AnimePlayerSheet: View {
         options.servers = viewModel.store.animeServers.map(\.name)
         options.selectedServer = viewModel.currentServerIndex
         options.onSelectServer = { viewModel.switchServer(to: $0) }
+        options.isAnime = true
         if let next = viewModel.nextEpisode {
             options.nextEpisodeLabel = "E\(next.number)"
             options.onNextEpisode = { viewModel.selectEpisode(next) }
