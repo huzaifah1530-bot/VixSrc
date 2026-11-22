@@ -2,7 +2,7 @@ name: iOS Build
 
 on:
   push:
-    branches: [main]
+    branches: [main, "codex/**"]
     paths:
       - "ios/**"
       - ".github/workflows/ios-build.yml"

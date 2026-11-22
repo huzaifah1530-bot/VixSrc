@@ -16,15 +16,23 @@ import { registerPlayer } from '@/lib/remote'
 import { party, partyActive, useParty } from '@/lib/party'
 import { PartyButton, PartyPanel } from '../party/PartyPanel'
 import { useIntroSkip } from './useIntroSkip'
+import { AutoCaptionSession, type CaptionLanguage, type GeneratedCaptionState } from './autoCaptions'
 
-type Caption = { kind: 'off' } | { kind: 'external'; index: number } | { kind: 'hls'; index: number }
+type Caption =
+  | { kind: 'off' }
+  | { kind: 'external'; index: number }
+  | { kind: 'hls'; index: number }
+  | { kind: 'generated'; language: CaptionLanguage; translate: boolean }
 const captionPreferenceKey = 'vela_caption_preference'
-let captionPreference: { kind: Caption['kind']; label?: string; index?: number } | null = (() => {
+let captionPreference: { kind: Caption['kind']; label?: string; index?: number; language?: CaptionLanguage; translate?: boolean } | null = (() => {
   try {
     const saved = JSON.parse(localStorage.getItem(captionPreferenceKey) ?? 'null')
-    return saved && ['off', 'external', 'hls'].includes(saved.kind) ? saved : null
+    return saved && ['off', 'external', 'hls', 'generated'].includes(saved.kind) ? saved : null
   } catch { return null }
 })()
+
+const generatedLabel = (language: CaptionLanguage, translate: boolean) =>
+  language === 'ja' ? (translate ? 'Auto-generated · Japanese → English' : 'Auto-generated · Japanese') : 'Auto-generated · English'
 
 export function Player() {
   const p = usePlayer()
@@ -69,6 +77,8 @@ export function Player() {
   const [cues, setCues] = useState<Cue[]>([])
   const [hlsTracks, setHlsTracks] = useState<string[]>([])
   const [hlsCaption, setHlsCaption] = useState<string | null>(null)
+  const [genCues, setGenCues] = useState<Cue[]>([])
+  const [genState, setGenState] = useState<GeneratedCaptionState>({ status: 'idle' })
 
   const source = p.sources[p.sourceIndex]
   const native = !!source
@@ -77,7 +87,9 @@ export function Player() {
       ? { kind: 'external', label: source?.subtitles[choice.index]?.label, index: choice.index }
       : choice.kind === 'hls'
         ? { kind: 'hls', label: hlsTracks[choice.index], index: choice.index }
-        : { kind: 'off' }
+        : choice.kind === 'generated'
+          ? { kind: 'generated', language: choice.language, translate: choice.translate }
+          : { kind: 'off' }
     localStorage.setItem(captionPreferenceKey, JSON.stringify(captionPreference))
     setCaption(choice)
   }
@@ -130,6 +142,12 @@ export function Player() {
       setCaption(index >= 0 && index < source.subtitles.length ? { kind: 'external', index } : { kind: 'off' })
     } else if (captionPreference?.kind === 'hls') {
       setCaption({ kind: 'hls', index: captionPreference.index ?? 0 })
+    } else if (captionPreference?.kind === 'generated') {
+      setCaption({
+        kind: 'generated',
+        language: captionPreference.language ?? 'en',
+        translate: !!captionPreference.translate
+      })
     } else if (captionPreference?.kind === 'off') {
       setCaption({ kind: 'off' })
     } else {
@@ -157,6 +175,28 @@ export function Player() {
   }, [caption, source])
 
   useEffect(() => { if (video.current) { video.current.volume = volume; video.current.muted = muted } }, [volume, muted, p.loadToken])
+
+  // ── Auto-generated captions ─────────────────────────────────────────
+  // A session owns the audio tap + Whisper worker for as long as this caption
+  // choice is active; changing source or track tears it down.
+  useEffect(() => {
+    setGenCues([])
+    if (caption.kind !== 'generated' || !native) {
+      setGenState({ status: 'idle' })
+      return
+    }
+    const element = video.current
+    if (!element) return
+    const session = new AutoCaptionSession(
+      element,
+      { language: caption.language, translate: caption.translate },
+      setGenCues,
+      setGenState
+    )
+    session.start()
+    return () => session.dispose()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [caption, p.loadToken, native])
 
   // ── Progress + media session ────────────────────────────────────────
   const lastSave = useRef(0)
@@ -247,7 +287,7 @@ export function Player() {
   const captionApi = useRef({ list: [] as string[], index: -1, set: (_i: number) => {} })
   captionApi.current = {
     list: [...(source?.subtitles.map(t => t.label) ?? []), ...hlsTracks],
-    index: caption.kind === 'off' ? -1 : caption.kind === 'external' ? caption.index : (source?.subtitles.length ?? 0) + caption.index,
+    index: caption.kind === 'off' || caption.kind === 'generated' ? -1 : caption.kind === 'external' ? caption.index : (source?.subtitles.length ?? 0) + caption.index,
     set: (i: number) => {
       const ext = source?.subtitles.length ?? 0
       chooseCaption(i < 0 ? { kind: 'off' } : i < ext ? { kind: 'external', index: i } : { kind: 'hls', index: i - ext })
@@ -371,7 +411,19 @@ export function Player() {
   }
 
   const shown = scrub !== null ? scrub * duration : time
-  const caption_text = caption.kind === 'external' ? captionAt(cues, time) : caption.kind === 'hls' ? hlsCaption : null
+  const caption_text = caption.kind === 'external' ? captionAt(cues, time)
+    : caption.kind === 'hls' ? hlsCaption
+      : caption.kind === 'generated' ? captionAt(genCues, time)
+        : null
+  const captionLabel = caption.kind === 'off' ? 'Captions off'
+    : caption.kind === 'external' ? source?.subtitles[caption.index]?.label ?? 'Captions'
+      : caption.kind === 'hls' ? hlsTracks[caption.index] ?? 'Captions'
+        : generatedLabel(caption.language, caption.translate)
+  const captionStatus = caption.kind === 'generated' && genState.status !== 'ready'
+    ? genState.status === 'error'
+      ? genState.detail ?? 'Auto-generated captions are unavailable for this video.'
+      : `${genState.detail ?? 'Preparing on-device captions…'}${genState.progress != null && genState.progress < 1 ? ` ${Math.round(genState.progress * 100)}%` : ''}`
+    : null
   const showNext = native && Number.isFinite(duration) && duration > 0 && duration - time <= 300 && usePlayer.getState().hasNext()
 
   const grouped = useMemo(() => {
@@ -449,6 +501,7 @@ export function Player() {
       <PartyPanel />
       {partyWaiting.length > 0 && <div className="party-banner glass-strong" role="status">Waiting for {partyWaiting.slice(0, 3).join(', ')}{partyWaiting.length > 3 ? ` +${partyWaiting.length - 3}` : ''}…</div>}
       {partyStatus === 'reconnecting' && <div className="party-banner glass-strong" role="status">Reconnecting to the party…</div>}
+      {captionStatus && <div className="caption-status glass-strong" role="status">{captionStatus}</div>}
       {fastBadge && <div className="fast-badge glass-strong">2× <Icon name="next" size={12} fill /></div>}
       {skipFx && (
         <div key={skipFx.dir} className={cx('skip-fx', skipFx.dir < 0 ? 'is-left' : 'is-right', skipFx.leaving && 'is-leaving')} aria-hidden="true"
@@ -494,12 +547,19 @@ export function Player() {
               </>
             )}
           </MenuButton>
-          {native && (source.subtitles.length > 0 || hlsTracks.length > 0) && (
-            <MenuButton label={caption.kind === 'off' ? 'Captions off' : caption.kind === 'external' ? source.subtitles[caption.index]?.label ?? 'Captions' : hlsTracks[caption.index]} icon="captions">
+          {native && (
+            <MenuButton label={captionLabel} icon="captions">
               {close => (
                 <>
                   <MenuItem selected={caption.kind === 'off'} onSelect={() => { chooseCaption({ kind: 'off' }); close() }}>Off</MenuItem>
+                  <div className="menu-label">Auto-generated</div>
+                  <MenuItem selected={caption.kind === 'generated' && caption.language === 'en'} onSelect={() => { chooseCaption({ kind: 'generated', language: 'en', translate: false }); close() }}>English</MenuItem>
+                  <MenuItem selected={caption.kind === 'generated' && caption.language === 'ja' && !caption.translate} onSelect={() => { chooseCaption({ kind: 'generated', language: 'ja', translate: false }); close() }}>Japanese</MenuItem>
+                  <MenuItem selected={caption.kind === 'generated' && caption.language === 'ja' && caption.translate} onSelect={() => { chooseCaption({ kind: 'generated', language: 'ja', translate: true }); close() }}>Japanese → English</MenuItem>
+                  {captionStatus && <div className="menu-note">{captionStatus}</div>}
+                  {source.subtitles.length > 0 && <div className="menu-label">This video</div>}
                   {source.subtitles.map((t, i) => <MenuItem key={t.url} selected={caption.kind === 'external' && caption.index === i} onSelect={() => { chooseCaption({ kind: 'external', index: i }); close() }}>{t.label}</MenuItem>)}
+                  {hlsTracks.length > 0 && <div className="menu-label">Stream</div>}
                   {hlsTracks.map((t, i) => <MenuItem key={'h' + i} selected={caption.kind === 'hls' && caption.index === i} onSelect={() => { chooseCaption({ kind: 'hls', index: i }); close() }}>{t}</MenuItem>)}
                 </>
               )}

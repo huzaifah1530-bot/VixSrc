@@ -1,7 +1,7 @@
 {
   "name": "vela",
   "productName": "Vela",
-  "version": "1.10.2",
+  "version": "1.10.3",
   "description": "Vela desktop",
   "main": "out/main/index.js",
   "private": true,
@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@ghostery/adblocker-electron": "2.20.1",
+    "@huggingface/transformers": "^4.3.2",
     "bonjour-service": "1.4.4",
     "cross-fetch": "4.1.0",
     "qrcode": "1.5.4"

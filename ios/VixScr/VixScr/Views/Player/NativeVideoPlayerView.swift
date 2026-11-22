@@ -495,16 +495,19 @@ private struct PlayerSurface: View {
     private var captionsMenu: some View {
         let captionsOn = playerManager.selectedSubtitleIndex != nil || playerManager.selectedExternalSubtitleIndex != nil || playerManager.generatedCaptionLocale != nil
         return Menu {
-            Section("Captions") {
+            Section {
                 Button {
                     playerManager.selectSubtitle(at: nil)
                     playerManager.selectExternalSubtitle(at: nil)
                 } label: {
                     if !captionsOn { Label("Off", systemImage: "checkmark") } else { Text("Off") }
                 }
+            }
+            // Top-level section: nesting it inside the track list made the
+            // choices disappear from the menu on iOS.
+            Section("Auto-generated") {
                 if playerManager.canGenerateCaptions {
-                    Section("Auto-generated") {
-                        if playerManager.spokenAudioLanguage != "ja" {
+                    if playerManager.spokenAudioLanguage != "ja" {
                         Button {
                             Task {
                                 await playerManager.selectGeneratedCaptions(locale: "en-US")
@@ -515,8 +518,8 @@ private struct PlayerSurface: View {
                                 Label("English", systemImage: "checkmark")
                             } else { Text("English") }
                         }
-                        }
-                        if playerManager.spokenAudioLanguage != "en" {
+                    }
+                    if playerManager.spokenAudioLanguage != "en" {
                         Button {
                             Task {
                                 await playerManager.selectGeneratedCaptions(locale: "ja-JP")
@@ -537,28 +540,40 @@ private struct PlayerSurface: View {
                                 Label("Japanese → English", systemImage: "checkmark")
                             } else { Text("Japanese → English") }
                         }
+                    }
+                } else {
+                    Button {} label: {
+                        Text(playerManager.generatedCaptionsUnavailableReason ?? "Auto-generated captions are unavailable on this device.")
+                    }
+                    .disabled(true)
+                }
+            }
+            if !playerManager.subtitleOptions.isEmpty {
+                Section("This video") {
+                    ForEach(Array(playerManager.subtitleOptions.enumerated()), id: \.offset) { index, option in
+                        Button {
+                            playerManager.selectSubtitle(at: index)
+                        } label: {
+                            if playerManager.selectedSubtitleIndex == index {
+                                Label(option.displayName, systemImage: "checkmark")
+                            } else {
+                                Text(option.displayName)
+                            }
                         }
                     }
                 }
-                ForEach(Array(playerManager.subtitleOptions.enumerated()), id: \.offset) { index, option in
-                    Button {
-                        playerManager.selectSubtitle(at: index)
-                    } label: {
-                        if playerManager.selectedSubtitleIndex == index {
-                            Label(option.displayName, systemImage: "checkmark")
-                        } else {
-                            Text(option.displayName)
-                        }
-                    }
-                }
-                ForEach(Array(playerManager.externalSubtitles.enumerated()), id: \.offset) { index, track in
-                    Button {
-                        playerManager.selectExternalSubtitle(at: index)
-                    } label: {
-                        if playerManager.selectedExternalSubtitleIndex == index {
-                            Label(track.label, systemImage: "checkmark")
-                        } else {
-                            Text(track.label)
+            }
+            if !playerManager.externalSubtitles.isEmpty {
+                Section("Side-loaded") {
+                    ForEach(Array(playerManager.externalSubtitles.enumerated()), id: \.offset) { index, track in
+                        Button {
+                            playerManager.selectExternalSubtitle(at: index)
+                        } label: {
+                            if playerManager.selectedExternalSubtitleIndex == index {
+                                Label(track.label, systemImage: "checkmark")
+                            } else {
+                                Text(track.label)
+                            }
                         }
                     }
                 }

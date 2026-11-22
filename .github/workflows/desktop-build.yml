@@ -5,7 +5,7 @@ name: Desktop Build
 # only when explicitly requested.
 on:
   push:
-    branches: [main]
+    branches: [main, "codex/**"]
     paths:
       - "desktop/**"
       - ".github/workflows/desktop-build.yml"
@@ -50,9 +50,21 @@ jobs:
         shell: bash
         run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
 
+      # Ship the installer inside a zip. Browsers treat a downloaded .exe (and
+      # especially an unsigned one) as suspicious; a zip keeps the raw binary
+      # out of the download flow and preserves its signature/metadata intact.
+      - name: Zip installer
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem release/Vela-Setup-*.exe | Select-Object -First 1
+          if (-not $exe) { throw "Installer not found in release/" }
+          $zip = "release/Vela-Setup-${{ steps.version.outputs.version }}.zip"
+          Compress-Archive -Path $exe.FullName -DestinationPath $zip -CompressionLevel Optimal
+          Get-Item $zip | Select-Object Name, Length
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: Vela-Setup-${{ steps.version.outputs.version }}
-          path: desktop/release/Vela-Setup-*.exe
+          path: desktop/release/Vela-Setup-*.zip
           if-no-files-found: error

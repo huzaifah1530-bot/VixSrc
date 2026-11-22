@@ -32,6 +32,8 @@ final class AutoCaptionEngine {
     private var recognitionTask: SFSpeechRecognitionTask?
     private var pullTask: Task<Void, Never>?
     private var baseTime = 0.0
+    private var lastTimestamp = -1.0
+    private var pendingSeek: Double?
     private var retainedCues: [SubtitleCue] = []
     private var onCues: ([SubtitleCue]) -> Void = { _ in }
 
@@ -74,21 +76,57 @@ final class AutoCaptionEngine {
                 guard sample.sampleCount > 0 else { continue }
                 let timestamp = sample.presentationTimeStamp.seconds
                 guard timestamp.isFinite else { continue }
-                if next.sequenceWasRestarted || self.request == nil || timestamp - self.baseTime >= 50 {
+
+                // A seek (or a restart of the underlying sequence) invalidates
+                // the recognizer's timeline, so start a fresh request anchored
+                // at the new position instead of emitting cues with the old
+                // offset.
+                if let seek = self.pendingSeek {
+                    self.pendingSeek = nil
+                    if abs(seek - timestamp) < 12 {
+                        self.startRecognition(recognizer: recognizer, at: timestamp)
+                        self.lastTimestamp = timestamp
+                        continue
+                    }
+                }
+                let jumped = self.lastTimestamp >= 0 && abs(timestamp - self.lastTimestamp) > 2.5
+                if next.sequenceWasRestarted || jumped || self.request == nil || timestamp - self.baseTime >= 50 {
                     self.startRecognition(recognizer: recognizer, at: timestamp)
                 }
+                self.lastTimestamp = timestamp
+
                 // Do not transcribe far ahead of the picture or retain the
                 // entire episode's decoded audio in memory.
+                let start = playbackTime()
                 while !Task.isCancelled, timestamp > playbackTime() + 8 {
                     try? await Task.sleep(for: .milliseconds(200))
+                    // The viewer seeked backwards; drop this decoded sample and
+                    // let the next one (from the new position) restart us.
+                    if playbackTime() < start - 1.5 { break }
                 }
                 guard !Task.isCancelled else { break }
+                if playbackTime() < start - 1.5 {
+                    self.startRecognition(recognizer: recognizer, at: playbackTime())
+                    self.lastTimestamp = timestamp
+                    continue
+                }
                 sample.withUnsafeSampleBuffer { unsafe in
                     self.request?.appendAudioSampleBuffer(unsafe)
                 }
             }
             self.request?.endAudio()
         }
+    }
+
+    /// Called by the player after a seek so the recognizer restarts at the new
+    /// playhead instead of continuing the old timeline.
+    func noteSeek(to time: Double) {
+        pendingSeek = time
+        lastTimestamp = -1
+        request?.endAudio()
+        recognitionTask?.cancel()
+        recognitionTask = nil
+        request = nil
     }
 
     private func startRecognition(recognizer: SFSpeechRecognizer, at timestamp: Double) {
@@ -119,8 +157,8 @@ final class AutoCaptionEngine {
         var group: [Word] = []
         func finishGroup() {
             guard let first = group.first, let last = group.last else { return }
-            fresh.append(SubtitleCue(start: first.start, end: last.end + 0.7,
-                                     text: group.map(\.text).joined(separator: " ")))
+            let text = CaptionText.format(group.map(\.text).joined(separator: " "))
+            fresh.append(SubtitleCue(start: first.start, end: last.end + 0.7, text: text))
             group.removeAll()
         }
         for word in words {
@@ -148,5 +186,49 @@ final class AutoCaptionEngine {
         item = nil
         output = nil
         retainedCues = []
+        lastTimestamp = -1
+        pendingSeek = nil
+    }
+}
+
+/// Speech-to-text output is close to caption-ready but still needs a light
+/// pass so numbers read naturally on screen (grouped digits, no bare "one
+/// thousand two hundred"). Punctuation comes from `addsPunctuation`.
+enum CaptionText {
+    private static let numberRuns = try? NSRegularExpression(pattern: "\\b\\d{4,9}\\b")
+
+    static func format(_ text: String) -> String {
+        var out = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        out = out.replacingOccurrences(of: " ,", with: ",")
+        out = out.replacingOccurrences(of: " .", with: ".")
+        // Group long digit runs: 1000000 → 1,000,000. Years and short
+        // numbers are left alone so "1999" stays a year.
+        guard let numberRuns else { return out }
+        let range = NSRange(out.startIndex..., in: out)
+        var result = ""
+        var cursor = out.startIndex
+        for match in numberRuns.matches(in: out, range: range) {
+            guard let r = Range(match.range, in: out) else { continue }
+            result += String(out[cursor..<r.lowerBound])
+            result += grouped(String(out[r]))
+            cursor = r.upperBound
+        }
+        result += String(out[cursor...])
+        return result
+    }
+
+    private static func grouped(_ digits: String) -> String {
+        guard digits.count >= 5 || (digits.count == 4 && !isYear(digits)) else { return digits }
+        var out = ""
+        for (i, ch) in digits.enumerated() {
+            if i > 0, (digits.count - i) % 3 == 0 { out.append(",") }
+            out.append(ch)
+        }
+        return out
+    }
+
+    private static func isYear(_ digits: String) -> Bool {
+        guard let value = Int(digits) else { return false }
+        return (1000...2099).contains(value)
     }
 }

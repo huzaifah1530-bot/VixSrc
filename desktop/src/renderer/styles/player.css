@@ -130,6 +130,8 @@ video::cue { background: rgba(0,0,0,.72); font-family: var(--font); font-weight:
 .party-offset { min-width: 52px; text-align: center; font-weight: 700; font-variant-numeric: tabular-nums; }
 .grow { flex: 1; min-width: 0; }
 .party-banner { position: absolute; z-index: 6; top: 70px; left: 50%; transform: translateX(-50%); padding: 8px 16px; border-radius: 999px; font-weight: 700; }
+.caption-status { position: absolute; z-index: 5; top: 70px; left: 50%; transform: translateX(-50%); padding: 7px 14px; border-radius: 999px; font-size: var(--fs-caption); font-weight: 600; color: var(--text); pointer-events: none; }
+.menu-note { padding: 4px 10px 8px; max-width: 260px; font-size: var(--fs-caption); line-height: 1.35; color: var(--text-3); }
 .player-transport.is-locked button { opacity: .45; }
 .party-dock { position: fixed; z-index: 90; right: 22px; bottom: 22px; display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-radius: 999px; font-weight: 700; color: var(--text); animation: pop-in .3s var(--spring); }
 .party-dock-panel .party-panel { position: fixed; top: auto; bottom: 74px; right: 22px; max-height: 70vh; z-index: 95; }

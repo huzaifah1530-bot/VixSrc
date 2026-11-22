@@ -59,13 +59,25 @@ final class VideoPlayerManager {
     @ObservationIgnored private var externalCues: [SubtitleCue] = []
     @ObservationIgnored private var subtitleTask: Task<Void, Never>?
     @ObservationIgnored private var autoCaptionEngine: AnyObject?
+    @ObservationIgnored private var restoreGeneratedOnForeground = false
     @ObservationIgnored private var lifecycleObservers: [NSObjectProtocol] = []
 
     var canGenerateCaptions: Bool {
         if #available(iOS 27.0, *) { return true }
         return false
     }
-    var hasAnySubtitles: Bool { canGenerateCaptions || !subtitleOptions.isEmpty || !externalSubtitles.isEmpty }
+    /// Shown in the captions menu when the OS cannot decode the player's
+    /// audio for transcription, so the option is explained instead of missing.
+    var generatedCaptionsUnavailableReason: String? {
+        canGenerateCaptions ? nil
+            : "Auto-generated captions need iOS 27 or later, because earlier versions don’t expose the player’s decoded audio."
+    }
+    /// The menu stays available whenever this device can play a native item:
+    /// auto-generated captions are relevant even when the stream ships no
+    /// subtitle tracks of its own.
+    var hasAnySubtitles: Bool {
+        player != nil || canGenerateCaptions || !subtitleOptions.isEmpty || !externalSubtitles.isEmpty
+    }
     /// HLS audio tracks usually identify their spoken language. When a host
     /// omits it, the menu offers both languages instead of guessing.
     var spokenAudioLanguage: String? {
@@ -116,6 +128,13 @@ final class VideoPlayerManager {
         // Pause only this device; in a watch party, leaving the app must not
         // pause everyone (we re-sync on return).
         rawPause()
+        // Transcription cannot keep running for a paused item, and leaving it
+        // attached holds the audio output. Restart from the saved choice when
+        // the viewer comes back.
+        if generatedCaptionLocale != nil {
+            restoreGeneratedOnForeground = true
+            stopGeneratedCaptions()
+        }
         saveProgress()
         if !RemoteNowPlaying.shared.isActive { MPNowPlayingInfoCenter.default().nowPlayingInfo = nil }
         removeRemoteCommands()
@@ -127,6 +146,17 @@ final class VideoPlayerManager {
 
     private func handleEnterForeground() {
         try? AVAudioSession.sharedInstance().setActive(true)
+        guard restoreGeneratedOnForeground else { return }
+        restoreGeneratedOnForeground = false
+        // Keep the viewer's chosen caption source across app switches.
+        if case .generated(let locale) = captionPreference, let item = player?.currentItem {
+            let translated = locale == "ja-JP->en"
+            Task { [weak self] in
+                guard let self, self.player?.currentItem === item else { return }
+                await self.selectGeneratedCaptions(locale: translated ? "ja-JP" : locale,
+                                                   translated: translated, remember: false)
+            }
+        }
     }
 
     // MARK: - Picture in Picture
@@ -503,6 +533,7 @@ final class VideoPlayerManager {
             postWebRemoteCommand("seek", position: clamped)
         }
         currentTime = clamped
+        noteCaptionSeek(clamped)
         updateCaption(at: clamped)
         pendingResumePosition = 0
         publishNowPlayingInfo()
@@ -655,17 +686,27 @@ final class VideoPlayerManager {
     @ObservationIgnored private var generatedCues: [SubtitleCue] = []
     @ObservationIgnored private var translatedCues: [SubtitleCue] = []
 
+    /// A seek moves the playhead away from the audio the recognizer is
+    /// decoding; restart it there so new cues stay in sync.
+    private func noteCaptionSeek(_ time: Double) {
+        if #available(iOS 27.0, *), let engine = autoCaptionEngine as? AutoCaptionEngine {
+            engine.noteSeek(to: time)
+        }
+    }
+
     func selectGeneratedCaptions(locale: String, translated: Bool = false, remember: Bool = true) async {
-        guard #available(iOS 27.0, *), let item = player?.currentItem else { return }
         generatedCaptionError = nil
+        guard canGenerateCaptions else {
+            generatedCaptionError = generatedCaptionsUnavailableReason
+            return
+        }
+        guard let item = player?.currentItem else { return }
         guard await AutoCaptionEngine.authorize() else {
             generatedCaptionError = AutoCaptionEngine.Failure.permission.localizedDescription
             return
         }
         guard player?.currentItem === item else { return }
         stopGeneratedCaptions()
-        selectSubtitle(at: nil, remember: false)
-        selectExternalSubtitle(at: nil, remember: false)
         let engine = AutoCaptionEngine()
         do {
             try engine.start(item: item, locale: Locale(identifier: locale),
@@ -678,6 +719,10 @@ final class VideoPlayerManager {
             autoCaptionEngine = engine
             generatedCaptionLocale = locale
             translateGeneratedCaptions = translated
+            // Only hide the other tracks once transcription actually started,
+            // so a failure leaves the viewer with their previous captions.
+            selectSubtitle(at: nil, remember: false)
+            selectExternalSubtitle(at: nil, remember: false)
             if remember { rememberCaption(.generated(translated ? "ja-JP->en" : locale)) }
         } catch {
             generatedCaptionError = error.localizedDescription
