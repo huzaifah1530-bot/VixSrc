@@ -37,11 +37,36 @@ final class AutoCaptionEngine {
     private var retainedCues: [SubtitleCue] = []
     private var onCues: ([SubtitleCue]) -> Void = { _ in }
 
-    static func authorize() async -> Bool {
-        let status = await withCheckedContinuation { continuation in
-            SFSpeechRecognizer.requestAuthorization { continuation.resume(returning: $0) }
+    /// Nonisolated on purpose: Speech calls this handler on a background queue.
+    /// A closure formed inside this @MainActor class would inherit main-actor
+    /// isolation, and Swift 6 traps when it runs off the main thread (this was
+    /// the crash right after tapping Allow).
+    nonisolated static func authorize() async -> Bool {
+        let status = await withCheckedContinuation { (continuation: CheckedContinuation<SFSpeechRecognizerAuthorizationStatus, Never>) in
+            SFSpeechRecognizer.requestAuthorization { @Sendable status in
+                continuation.resume(returning: status)
+            }
         }
         return status == .authorized
+    }
+
+    /// Built outside the main actor for the same reason as `authorize()`: the
+    /// recognizer delivers results on its own queue.
+    nonisolated private static func makeRecognitionTask(
+        recognizer: SFSpeechRecognizer,
+        request: SFSpeechAudioBufferRecognitionRequest,
+        offset: Double,
+        deliver: @escaping @Sendable ([Word], Double) -> Void
+    ) -> SFSpeechRecognitionTask {
+        recognizer.recognitionTask(with: request) { @Sendable result, error in
+            guard let result, error == nil else { return }
+            let words = result.bestTranscription.segments.map {
+                Word(start: offset + $0.timestamp,
+                     end: offset + $0.timestamp + $0.duration,
+                     text: $0.substring)
+            }
+            deliver(words, offset)
+        }
     }
 
     func start(item: AVPlayerItem, locale: Locale, playbackTime: @escaping () -> Double,
@@ -140,14 +165,8 @@ final class AutoCaptionEngine {
         request.addsPunctuation = true
         self.request = request
         let offset = timestamp
-        recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
-            guard let result, error == nil else { return }
-            let words = result.bestTranscription.segments.map {
-                Word(start: offset + $0.timestamp,
-                     end: offset + $0.timestamp + $0.duration,
-                     text: $0.substring)
-            }
-            Task { @MainActor [weak self] in self?.accept(words, from: offset) }
+        recognitionTask = Self.makeRecognitionTask(recognizer: recognizer, request: request, offset: offset) { [weak self] words, offset in
+            Task { @MainActor in self?.accept(words, from: offset) }
         }
     }
 
