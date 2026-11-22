@@ -696,7 +696,7 @@ final class VideoPlayerManager {
 
     func selectGeneratedCaptions(locale: String, translated: Bool = false, remember: Bool = true) async {
         generatedCaptionError = nil
-        guard canGenerateCaptions else {
+        guard #available(iOS 27.0, *) else {
             generatedCaptionError = generatedCaptionsUnavailableReason
             return
         }
