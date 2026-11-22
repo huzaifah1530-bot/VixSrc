@@ -258,7 +258,11 @@ struct HomeView: View {
         .sheet(isPresented: Binding(
             get: { viewModel.isPlayerPresented },
             set: { viewModel.isPlayerPresented = $0 }
-        )) {
+        ), onDismiss: {
+            // Swipe-down used to leave a paused, orphaned player: shrink it
+            // into the mini player instead (no-op if already handled).
+            viewModel.playerSheetDisappeared()
+        }) {
             PlayerSheet(viewModel: viewModel)
         }
     }

@@ -176,6 +176,19 @@ final class AnimeViewModel {
 
     func open(_ item: MediaItem) {
         guard let slug = item.animeSlug else { return }
+        // A party viewer opening their own pick leaves the party: ask first.
+        // Room-driven opens (loadPartyMedia) never ask, so they stay synchronous.
+        let key = item.resumeEpisode.map { "anime:\(slug):\($0)" }
+        guard PartySession.shared.wouldLeave(mediaKey: key) else { performOpen(item, slug: slug); return }
+        Task { @MainActor [weak self] in
+            guard await PartySession.shared.confirmLeave("Opening \(item.title)", mediaKey: key) else { return }
+            self?.performOpen(item, slug: slug)
+        }
+    }
+
+    private func performOpen(_ item: MediaItem, slug: String) {
+        // The new title replaces whatever the mini player was showing.
+        MiniPlayerCenter.shared.release(playerManager)
         heroCycleTask?.cancel()
         selected = item
         details = nil
@@ -191,7 +204,9 @@ final class AnimeViewModel {
         loadDetails(resumeEpisode: item.resumeEpisode)
     }
 
-    private func loadDetails(resumeEpisode: Int?) {
+    /// `confirmFallback`: after a server switch, playing a different episode
+    /// than the one asked for would leave a party, so ask first.
+    private func loadDetails(resumeEpisode: Int?, confirmFallback: Bool = false) {
         guard let server = currentServer, let slug = slugsByServer[currentServerIndex] else { return }
         let index = currentServerIndex
         isLoadingDetails = true
@@ -209,9 +224,22 @@ final class AnimeViewModel {
                     if item.posterPath?.isEmpty != false { item.posterPath = details.show.posterURL; item.backdropPath = details.show.posterURL }
                     self.selected = item
                 }
-                let target = details.episodes.first { $0.intNumber == resumeEpisode } ?? details.episodes.first
-                if let target { self.selectEpisode(target) }
-                else { self.statusMessage = "No episodes yet" }
+                let exact = details.episodes.first { $0.intNumber == resumeEpisode }
+                guard let target = exact ?? details.episodes.first else {
+                    self.statusMessage = "No episodes yet"
+                    return
+                }
+                if confirmFallback, exact == nil, let resumeEpisode {
+                    let proceed = await PartySession.shared.confirmLeave(
+                        "\(server.name) doesn't have episode \(resumeEpisode). Playing episode \(target.number)",
+                        mediaKey: self.partyKey(for: target))
+                    guard !Task.isCancelled, self.currentServerIndex == index else { return }
+                    guard proceed else {
+                        self.statusMessage = "Episode \(resumeEpisode) isn't on \(server.name)"
+                        return
+                    }
+                }
+                self.selectEpisode(target)
             } catch {
                 guard let self, !Task.isCancelled else { return }
                 self.isLoadingDetails = false
@@ -297,8 +325,10 @@ final class AnimeViewModel {
         resetPlayback()
         let server = store.animeServers[index]
         showToast("Switched to \(server.name)")
+        // The same episode keeps the party key (it comes from the show, not
+        // the server), so only a fallback to another episode needs asking.
         if slugsByServer[index] != nil {
-            loadDetails(resumeEpisode: resume)
+            loadDetails(resumeEpisode: resume, confirmFallback: true)
             return
         }
         isLoadingDetails = true
@@ -314,7 +344,7 @@ final class AnimeViewModel {
                 return
             }
             self.slugsByServer[index] = slug
-            self.loadDetails(resumeEpisode: resume)
+            self.loadDetails(resumeEpisode: resume, confirmFallback: true)
         }
     }
 
@@ -416,11 +446,118 @@ final class AnimeViewModel {
 
     func closePlayer() {
         PartySession.shared.detach(self)
+        sheetExitHandled = true
+        playerManager.keepsPlayingWhenHidden = false
+        MiniPlayerCenter.shared.release(playerManager)
         playerManager.wantsFullscreen = false
         isPlayerPresented = false
         detailsTask?.cancel()
         resetPlayback()
         startHeroCycle()
+    }
+
+    // MARK: - Leaving a party
+
+    /// An episode the viewer picked (list, Next Episode). Asks a party
+    /// viewer first, since their own pick takes them out of the party.
+    func chooseEpisode(_ episode: AnimeKaiClient.EpisodeInfo, action: String = "Choosing another episode") {
+        let key = partyKey(for: episode)
+        guard PartySession.shared.wouldLeave(mediaKey: key) else { selectEpisode(episode); return }
+        Task { @MainActor [weak self] in
+            guard await PartySession.shared.confirmLeave(action, mediaKey: key) else { return }
+            self?.selectEpisode(episode)
+        }
+    }
+
+    /// The Watch Together key `currentPartyMedia()` would report.
+    private func partyKey(for episode: AnimeKaiClient.EpisodeInfo) -> String? {
+        selected?.animeSlug.map { "anime:\($0):\(episode.number)" }
+    }
+
+    // MARK: - Mini player
+
+    /// Set once the sheet's exit was dealt with (minimized or closed), so
+    /// the swipe-down callbacks don't act a second time.
+    @ObservationIgnored private var sheetExitHandled = false
+
+    /// Native playback that can carry on in the mini player.
+    private var canMinimize: Bool {
+        playerManager.player != nil && playerManager.error == nil && !DeviceLink.shared.routesPlayback
+    }
+
+    /// The player sheet appeared (opened, or expanded from the mini player).
+    func playerSheetAppeared() {
+        sheetExitHandled = false
+        MiniPlayerCenter.shared.playerWillShow(playerManager)
+        // Armed for as long as the sheet is up (the stream may load later):
+        // on a swipe-down the inline player's onDisappear can run before we
+        // hear about the dismissal. Closing for real cleans up anyway.
+        playerManager.keepsPlayingWhenHidden = true
+    }
+
+    /// The sheet's close button: shrink into the mini player when the
+    /// video can keep playing, otherwise close as before.
+    func leavePlayer() {
+        sheetExitHandled = true
+        if !minimize() { requestClose() }
+    }
+
+    /// The sheet went away without the close button (swipe-down).
+    func playerSheetDisappeared() {
+        // A fullscreen cover hides the sheet too; that isn't leaving.
+        guard !sheetExitHandled, !playerManager.wantsFullscreen else { return }
+        sheetExitHandled = true
+        if !minimize() { requestClose(reopenOnCancel: true) }
+    }
+
+    /// Closes the player, asking a party viewer first. `reopenOnCancel`
+    /// brings back a sheet that was already swiped away.
+    func requestClose(reopenOnCancel: Bool = false) {
+        let party = PartySession.shared
+        guard party.wouldLeave(closing: self) else { closePlayer(); return }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            if await party.confirmLeave("Closing the player", closing: self) {
+                self.closePlayer()
+            } else if reopenOnCancel {
+                self.sheetExitHandled = false
+                self.isPlayerPresented = true
+            }
+        }
+    }
+
+    @discardableResult
+    private func minimize() -> Bool {
+        guard canMinimize, let item = selected else {
+            playerManager.keepsPlayingWhenHidden = false
+            return false
+        }
+        playerManager.keepsPlayingWhenHidden = true
+        isPlayerPresented = false
+        // Expanding goes back to the tab that presented the sheet.
+        let tab = PartySession.shared.router?.selection
+        MiniPlayerCenter.shared.show(
+            manager: playerManager,
+            title: item.title,
+            subtitle: nowPlayingSubtitle,
+            artworkURL: item.posterURL,
+            expand: { [weak self] in self?.expandFromMini(to: tab) },
+            close: { [weak self] in self?.requestClose() }
+        )
+        return true
+    }
+
+    private func expandFromMini(to tab: AppTab?) {
+        guard let router = PartySession.shared.router, let tab, router.selection != tab else {
+            isPlayerPresented = true
+            return
+        }
+        router.selection = tab
+        // Let the tab come on screen first; a hidden tab can't present.
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            self?.isPlayerPresented = true
+        }
     }
 
     // MARK: - Progress

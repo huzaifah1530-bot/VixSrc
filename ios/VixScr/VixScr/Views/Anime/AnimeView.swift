@@ -52,7 +52,9 @@ struct AnimeView: View {
             }
             viewModel.debounceSearch("")
         }
-        .sheet(isPresented: $viewModel.isPlayerPresented, onDismiss: { viewModel.closePlayer() }) {
+        // Swipe-down shrinks a playing video into the mini player; it only
+        // closes when there's nothing to keep playing (no-op if already handled).
+        .sheet(isPresented: $viewModel.isPlayerPresented, onDismiss: { viewModel.playerSheetDisappeared() }) {
             AnimePlayerSheet(viewModel: viewModel)
         }
     }

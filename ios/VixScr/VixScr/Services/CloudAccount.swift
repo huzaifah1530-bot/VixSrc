@@ -17,12 +17,21 @@ final class CloudAccount {
         let isCurrent: Bool
     }
 
+    /// Outcome of the most recent shared sync, shown live on the Account page.
+    enum SyncState: Equatable, Sendable {
+        case idle, syncing, synced(Date), offline, failed(String)
+    }
+
     private struct Session: Codable { var username: String; var token: String; var accountKey: String }
     private var session: Session?
+    private(set) var syncState: SyncState = .idle
     @ObservationIgnored private weak var syncEngine: SyncEngine?
     @ObservationIgnored private weak var backupStore: AppStore?
     @ObservationIgnored private var syncTask: Task<Void, Never>?
     @ObservationIgnored private var pollingTask: Task<Void, Never>?
+    /// The sync currently talking to the server. Kept apart from `syncTask`
+    /// (the debounce) so rescheduling never cancels requests mid-flight.
+    @ObservationIgnored private var runningSync: Task<SyncState, Never>?
     var username: String? { session?.username }
     private var revisionKey: String? { session.map { "vela_cloud_ios_revision_\($0.accountKey)" } }
     private var backupHashKey: String? { session.map { "vela_cloud_ios_hash_\($0.accountKey)" } }
@@ -62,6 +71,7 @@ final class CloudAccount {
             }
         }
         session = value
+        if value == nil { syncState = .idle }
     }
 
     enum CloudError: LocalizedError {
@@ -144,13 +154,21 @@ final class CloudAccount {
         _ = try? await request("session", method: "DELETE")
         try? save(nil)
     }
-    func refreshSession() async {
+    /// Picks up a username changed on another device. `visible` reports the
+    /// result through the status pill; background refreshes stay silent.
+    func refreshSession(visible: Bool = false) async {
         guard var current = session else { return }
-        guard let (_, result) = try? await request("session"),
-              let name = result["username"] as? String else { return }
-        if name != current.username {
-            current.username = name
-            try? save(current)
+        let pill = visible ? StatusPillCenter.shared.begin("Checking your Vela account…") : nil
+        do {
+            let (_, result) = try await request("session")
+            guard let name = result["username"] as? String else { throw CloudError.message("Invalid cloud response.") }
+            if name != current.username {
+                current.username = name
+                try? save(current)
+            }
+            if let pill { StatusPillCenter.shared.finish(pill, success: true, text: "Signed in as \(name)") }
+        } catch {
+            if let pill { StatusPillCenter.shared.finish(pill, success: false, text: Self.failureText(Self.syncFailure(error))) }
         }
     }
     func rename(to newName: String) async throws {
@@ -209,7 +227,27 @@ final class CloudAccount {
         syncTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(seconds))
             guard !Task.isCancelled else { return }
-            await self?.syncShared()
+            await self?.runSync()
+        }
+    }
+
+    /// Syncs right away instead of waiting for the debounce. `visible` shows
+    /// progress and the outcome in the status pill; pass false for anything
+    /// the user didn't explicitly ask for.
+    func syncNow(visible: Bool) {
+        guard session != nil else { return }
+        // This run covers whatever the pending debounce would have sent.
+        syncTask?.cancel()
+        let pill = visible ? StatusPillCenter.shared.begin("Syncing with Vela Cloud…") : nil
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let result = await self.runSync()
+            guard let pill else { return }
+            if case .synced = result {
+                StatusPillCenter.shared.finish(pill, success: true, text: "Up to date")
+            } else {
+                StatusPillCenter.shared.finish(pill, success: false, text: CloudAccount.failureText(result))
+            }
         }
     }
 
@@ -229,23 +267,92 @@ final class CloudAccount {
         pollingTask = nil
     }
 
-    private func syncShared() async {
-        guard session != nil, let engine = syncEngine else { return }
+    /// Runs one shared sync, waiting for any sync already in flight first so
+    /// the debounce, polling and Sync Now never race each other.
+    @discardableResult
+    private func runSync() async -> SyncState {
+        while let running = runningSync { _ = await running.value }
+        // Unstructured on purpose: cancelling the caller (a debounce being
+        // rescheduled) must not cancel the network requests underneath.
+        let task = Task { @MainActor [weak self] () -> SyncState in
+            guard let self else { return .idle }
+            let result = await self.syncShared()
+            self.runningSync = nil
+            return result
+        }
+        runningSync = task
+        return await task.value
+    }
+
+    private func syncShared() async -> SyncState {
+        guard session != nil else {
+            syncState = .idle
+            return .idle
+        }
+        guard let engine = syncEngine else {
+            // Only possible before launch has attached the sync engine.
+            return .failed("Sync is still starting. Try again in a moment.")
+        }
+        syncState = .syncing
+        let result = await pushShared(engine)
+        // A 401 signs the device out mid-sync; don't leave a stale failure behind.
+        syncState = session == nil ? .idle : result
+        return result
+    }
+
+    private func pushShared(_ engine: SyncEngine) async -> SyncState {
         for _ in 0..<3 {
-            guard let (status, response) = try? await request("backup/shared", allowMissing: true) else { return }
+            let fetched: (Int, [String: Any])
+            do {
+                fetched = try await request("backup/shared", allowMissing: true)
+            } catch {
+                return Self.syncFailure(error)
+            }
+            let (status, response) = fetched
             let revision = status == 200 ? (response["revision"] as? Int ?? 0) : 0
             if status == 200 {
-                guard let remote = SyncDoc.validated(response["payload"]) else { return }
+                guard let remote = SyncDoc.validated(response["payload"]) else {
+                    return .failed("Cloud data couldn't be read.")
+                }
                 engine.mergeRemote(remote)
             }
-            guard let payload = engine.current.jsonObject as? [String: Any] else { return }
+            guard let payload = engine.current.jsonObject as? [String: Any] else {
+                return .failed("Couldn't read this iPhone's library.")
+            }
             do {
                 _ = try await request("backup/shared", method: "PUT", body: ["baseRevision": revision, "payload": payload])
                 await autoUploadBackup()
-                return
+                return .synced(Date())
             } catch CloudError.message(let message) where message.contains("changed on another device") {
                 continue
-            } catch { return }
+            } catch {
+                return Self.syncFailure(error)
+            }
+        }
+        return .failed("Cloud data kept changing. Try again.")
+    }
+
+    /// Connectivity errors read as "offline" rather than a scary failure;
+    /// everything else keeps the server's own message.
+    private static func syncFailure(_ error: Error) -> SyncState {
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .notConnectedToInternet, .networkConnectionLost, .timedOut, .cannotFindHost,
+                 .cannotConnectToHost, .dnsLookupFailed, .dataNotAllowed, .internationalRoamingOff:
+                return .offline
+            default:
+                return .failed(urlError.localizedDescription)
+            }
+        }
+        return .failed(error.localizedDescription)
+    }
+
+    private static func failureText(_ state: SyncState) -> String {
+        switch state {
+        case .offline: return "You're offline"
+        case .failed(let reason): return reason
+        case .idle: return "Sign in to sync"
+        case .syncing, .synced: return "Up to date"
         }
     }
 

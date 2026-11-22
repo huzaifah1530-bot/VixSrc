@@ -399,6 +399,12 @@ final class CatalogViewModel {
 
     @MainActor
     func open(_ item: MediaItem) async {
+        // A party viewer opening their own pick leaves the party: ask first.
+        // Room-driven opens (loadPartyMedia) never ask.
+        let key = partyKey(for: item, season: item.resumeSeason, episode: item.resumeEpisode)
+        guard await PartySession.shared.confirmLeave("Opening \(item.title)", mediaKey: key) else { return }
+        // The new title replaces whatever the mini player was showing.
+        MiniPlayerCenter.shared.release(playerManager)
         heroCycleTask?.cancel()
         selected = item
         hero = item
@@ -440,7 +446,7 @@ final class CatalogViewModel {
                 throw TMDBError.decoding
             }
             let targetSeasonNumber = item.resumeSeason ?? firstSeason.seasonNumber
-            await selectSeason(targetSeasonNumber, preferredEpisode: item.resumeEpisode)
+            await selectSeason(targetSeasonNumber, preferredEpisode: item.resumeEpisode, leaveAction: nil)
         } catch {
             isLoadingEpisodes = false
             episodeErrorMessage = error.localizedDescription
@@ -464,14 +470,21 @@ final class CatalogViewModel {
         showToast("Could not find TMDB title \(id)")
     }
 
+    /// `leaveAction` names the change in the "leave the party?" question;
+    /// nil when the caller already asked (or the room asked for it).
     @MainActor
-    func selectSeason(_ seasonNumber: Int, preferredEpisode: Int? = nil) async {
+    func selectSeason(_ seasonNumber: Int, preferredEpisode: Int? = nil,
+                      leaveAction: String? = "Choosing another season") async {
         guard let details = tvDetails,
               let seasonMeta = details.usableSeasons.first(where: { $0.seasonNumber == seasonNumber }),
               let tvId = selected?.tmdbId, !tvId.isEmpty else {
             // Clear the spinner, otherwise `open()` leaves it spinning forever.
             isLoadingEpisodes = false
             return
+        }
+        if let leaveAction, let item = selected {
+            let key = partyKey(for: item, season: seasonNumber, episode: preferredEpisode)
+            guard await PartySession.shared.confirmLeave(leaveAction, mediaKey: key) else { return }
         }
 
         selectedSeason = seasonMeta
@@ -492,7 +505,7 @@ final class CatalogViewModel {
             isLoadingEpisodes = false
 
             if let target = fetchedEpisodes.first(where: { $0.episodeNumber == preferredEpisode }) ?? fetchedEpisodes.first {
-                await selectEpisode(target)
+                await selectEpisode(target, leaveAction: nil)
             }
         } catch {
             isLoadingEpisodes = false
@@ -536,10 +549,15 @@ final class CatalogViewModel {
     }
 
     func playNextEpisode() async {
+        guard let item = selected else { return }
         if let next = nextEpisode {
-            await selectEpisode(next)
+            let key = partyKey(for: item, season: next.seasonNumber ?? selectedSeason?.seasonNumber, episode: next.episodeNumber)
+            guard await PartySession.shared.confirmLeave("Playing the next episode", mediaKey: key) else { return }
+            await selectEpisode(next, leaveAction: nil)
         } else if let season = nextSeason {
-            await selectSeason(season.seasonNumber)
+            let key = partyKey(for: item, season: season.seasonNumber, episode: 1)
+            guard await PartySession.shared.confirmLeave("Playing the next episode", mediaKey: key) else { return }
+            await selectSeason(season.seasonNumber, leaveAction: nil)
         }
     }
 
@@ -586,8 +604,13 @@ final class CatalogViewModel {
         if let ep = episodes.first(where: { $0.episodeNumber == e }) { selectedEpisode = ep }
     }
 
+    /// `leaveAction`: see `selectSeason`.
     @MainActor
-    func selectEpisode(_ episode: Episode) async {
+    func selectEpisode(_ episode: Episode, leaveAction: String? = "Choosing another episode") async {
+        if let leaveAction, let item = selected {
+            let key = partyKey(for: item, season: episode.seasonNumber ?? selectedSeason?.seasonNumber, episode: episode.episodeNumber)
+            guard await PartySession.shared.confirmLeave(leaveAction, mediaKey: key) else { return }
+        }
         selectedEpisode = episode
         guard let item = selected, let season = selectedSeason else { return }
         let episodeLabel = "S\(season.seasonNumber) · E\(episode.episodeNumber)"
@@ -831,9 +854,106 @@ final class CatalogViewModel {
         selectedNativeSourceIndex = 0
     }
 
+    // MARK: - Mini player
+
+    /// Set once the sheet's exit was dealt with (minimized or closed), so
+    /// the swipe-down callbacks don't act a second time.
+    @ObservationIgnored private var sheetExitHandled = false
+
+    /// Native playback that can carry on in the mini player (not the web
+    /// player, the computer, or a failed stream).
+    private var canMinimize: Bool {
+        playerManager.player != nil && playerManager.error == nil && !DeviceLink.shared.routesPlayback
+    }
+
+    /// The player sheet appeared (opened, or expanded from the mini player).
+    func playerSheetAppeared() {
+        sheetExitHandled = false
+        MiniPlayerCenter.shared.playerWillShow(playerManager)
+        // Armed for as long as the sheet is up (the stream may load later):
+        // on a swipe-down the inline player's onDisappear can run before we
+        // hear about the dismissal. Closing for real cleans up anyway.
+        playerManager.keepsPlayingWhenHidden = true
+    }
+
+    /// The sheet's close button: shrink into the mini player when the
+    /// video can keep playing, otherwise close as before.
+    func leavePlayer() {
+        sheetExitHandled = true
+        if !minimize() { requestClose() }
+    }
+
+    /// The sheet went away without the close button (swipe-down).
+    func playerSheetDisappeared() {
+        // A fullscreen cover hides the sheet too; that isn't leaving.
+        guard !sheetExitHandled, !playerManager.wantsFullscreen else { return }
+        sheetExitHandled = true
+        if !minimize() { requestClose(reopenOnCancel: true) }
+    }
+
+    /// Closes the player, asking a party viewer first. `reopenOnCancel`
+    /// brings back a sheet that was already swiped away.
+    func requestClose(reopenOnCancel: Bool = false) {
+        let party = PartySession.shared
+        guard party.wouldLeave(closing: self) else { closePlayer(); return }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            if await party.confirmLeave("Closing the player", closing: self) {
+                self.closePlayer()
+            } else if reopenOnCancel {
+                self.sheetExitHandled = false
+                self.isPlayerPresented = true
+            }
+        }
+    }
+
+    @discardableResult
+    private func minimize() -> Bool {
+        guard canMinimize, let item = selected else {
+            playerManager.keepsPlayingWhenHidden = false
+            return false
+        }
+        playerManager.keepsPlayingWhenHidden = true
+        isPlayerPresented = false
+        // Expanding goes back to the tab that presented the sheet.
+        let tab = PartySession.shared.router?.selection
+        MiniPlayerCenter.shared.show(
+            manager: playerManager,
+            title: item.title,
+            subtitle: nowPlayingEpisodeSubtitle,
+            artworkURL: item.backdropURL ?? item.posterURL,
+            expand: { [weak self] in self?.expandFromMini(to: tab) },
+            close: { [weak self] in self?.requestClose() }
+        )
+        return true
+    }
+
+    private func expandFromMini(to tab: AppTab?) {
+        guard let router = PartySession.shared.router, let tab, router.selection != tab else {
+            isPlayerPresented = true
+            return
+        }
+        router.selection = tab
+        // Let the tab come on screen first; a hidden tab can't present.
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            self?.isPlayerPresented = true
+        }
+    }
+
+    /// The Watch Together key `currentPartyMedia()` would report.
+    private func partyKey(for item: MediaItem, season: Int?, episode: Int?) -> String? {
+        if item.type == .movie { return "movie:\(item.tmdbId)" }
+        guard let season, let episode else { return nil }
+        return "tv:\(item.tmdbId):\(season):\(episode)"
+    }
+
     @MainActor
     func closePlayer() {
         PartySession.shared.detach(self)
+        sheetExitHandled = true
+        playerManager.keepsPlayingWhenHidden = false
+        MiniPlayerCenter.shared.release(playerManager)
         playerManager.wantsFullscreen = false
         isPlayerPresented = false
         rejectedNativeStreamURLs.removeAll()

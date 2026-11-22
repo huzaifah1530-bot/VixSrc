@@ -15,6 +15,8 @@ import SwiftUI
 /// so that mechanism is intentionally NOT ported.
 @main
 struct VelaApp: App {
+    /// Supplies the orientation mask the player narrows to rotate on command.
+    @UIApplicationDelegateAdaptor(VelaAppDelegate.self) private var appDelegate
     @State private var store: AppStore
     @State private var animeViewModel: AnimeViewModel
     @State private var router = TabRouter()
@@ -192,7 +194,9 @@ struct RootView: View {
                 case .active:
                     DeviceLink.shared.appBecameActive()
                     PartySession.shared.appBecameActive()
-                    CloudAccount.shared.scheduleSync(after: 1)
+                    // Coming back to the app is when people look for fresh
+                    // data, so this sync shows the status pill.
+                    CloudAccount.shared.syncNow(visible: true)
                     CloudAccount.shared.startPolling()
                     Task { await CloudAccount.shared.refreshSession() }
                 case .background:
@@ -205,7 +209,9 @@ struct RootView: View {
             .updatePrompt()
             .partyPrompts(root: true)
             .overlay(alignment: .bottom) { PartyDock() }
+            .overlay(alignment: .bottomTrailing) { MiniPlayerOverlay() }
             .overlay(alignment: .top) { PartyPasteBanner() }
+            .statusPillHost()
             // Leave the Anime tab if it is switched off.
             .onChange(of: store.animeEnabled) { _, enabled in
                 if !enabled {

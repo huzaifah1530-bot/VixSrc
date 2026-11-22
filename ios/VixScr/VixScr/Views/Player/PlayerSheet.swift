@@ -20,7 +20,8 @@ struct PlayerSheet: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
-                        viewModel.closePlayer()
+                        // Shrinks into the mini player while a video plays.
+                        viewModel.leavePlayer()
                     } label: {
                         Image(systemName: "xmark")
                             .font(.system(size: 13, weight: .bold))
@@ -45,7 +46,14 @@ struct PlayerSheet: View {
         .deviceLinkPrompts()
         .overlay(alignment: .top) { PartyBanner() }
         .partyPrompts()
-        .onAppear { if PartySession.shared.active { PartySession.shared.attach(viewModel) } }
+        .partyLeaveConfirmation(.sheet)
+        .onAppear {
+            // Attach first, so closing another player's mini doesn't end the room's media.
+            if PartySession.shared.active { PartySession.shared.attach(viewModel) }
+            viewModel.playerSheetAppeared()
+        }
+        // Swipe-down (wherever the sheet is presented from) minimizes or closes.
+        .onDisappear { viewModel.playerSheetDisappeared() }
         // Keep the episode list in step with what the computer is playing.
         .onChange(of: DeviceLink.shared.remote) { _, state in
             guard DeviceLink.shared.routesPlayback, DeviceLink.shared.shouldFollowRemote, let state else { return }

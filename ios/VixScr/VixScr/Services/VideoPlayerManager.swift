@@ -16,6 +16,9 @@ final class VideoPlayerManager {
     /// Fullscreen player is up. Kept here (not in the view) so it survives
     /// switching episodes; cleared when the player sheet closes.
     var wantsFullscreen = false
+    /// The player sheet or mini player owns the video: the inline player
+    /// going away (sheet dismissed into the mini player) must not pause it.
+    @ObservationIgnored var keepsPlayingWhenHidden = false
     
     // Playback state
     private(set) var isPlaying = false

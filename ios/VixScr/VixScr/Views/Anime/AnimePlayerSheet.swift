@@ -13,7 +13,7 @@ struct AnimePlayerSheet: View {
                     playerFrame
                     if let next = viewModel.nextEpisode {
                         NextEpisodeButton(label: "E\(next.number) · \(next.title)") {
-                            viewModel.selectEpisode(next)
+                            viewModel.chooseEpisode(next, action: "Playing the next episode")
                         }
                     }
                     if viewModel.store.animeServers.count > 1 {
@@ -58,7 +58,8 @@ struct AnimePlayerSheet: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
-                        viewModel.closePlayer()
+                        // Shrinks into the mini player while a video plays.
+                        viewModel.leavePlayer()
                     } label: {
                         Image(systemName: "xmark")
                             .font(.system(size: 13, weight: .bold))
@@ -82,7 +83,14 @@ struct AnimePlayerSheet: View {
         .deviceLinkPrompts()
         .overlay(alignment: .top) { PartyBanner() }
         .partyPrompts()
-        .onAppear { if PartySession.shared.active { PartySession.shared.attach(viewModel) } }
+        .partyLeaveConfirmation(.sheet)
+        .onAppear {
+            // Attach first, so closing another player's mini doesn't end the room's media.
+            if PartySession.shared.active { PartySession.shared.attach(viewModel) }
+            viewModel.playerSheetAppeared()
+        }
+        // Swipe-down minimizes or closes (AnimeView's onDismiss does the same; first wins).
+        .onDisappear { viewModel.playerSheetDisappeared() }
         .onChange(of: DeviceLink.shared.remote) { _, state in
             guard DeviceLink.shared.routesPlayback, DeviceLink.shared.shouldFollowRemote, let state else { return }
             viewModel.followRemote(state)
@@ -144,7 +152,7 @@ struct AnimePlayerSheet: View {
         options.isAnime = true
         if let next = viewModel.nextEpisode {
             options.nextEpisodeLabel = "E\(next.number)"
-            options.onNextEpisode = { viewModel.selectEpisode(next) }
+            options.onNextEpisode = { viewModel.chooseEpisode(next, action: "Playing the next episode") }
         }
         return options
     }
@@ -267,7 +275,7 @@ struct AnimePlayerSheet: View {
                                 viewModel.store.progress(for: "tv:\($0.tmdbId):1:\(episode.intNumber)")?.progress
                             }
                         ) {
-                            viewModel.selectEpisode(episode)
+                            viewModel.chooseEpisode(episode)
                         }
                     }
                 }

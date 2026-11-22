@@ -27,7 +27,11 @@ struct SettingsView: View {
     @State private var showImportConfirm = false
     @State private var pendingImportURL: URL?
     @AppStorage(CaptionSize.storageKey) private var captionScale = CaptionSize.medium.rawValue
+    @AppStorage("vela_rotate_clockwise") private var rotateClockwise = true
 
+    /// Top level is a short list of categories, like the Settings app; each
+    /// pushes a Form built from the section properties below. The pages are
+    /// closures over this view, so their state and helpers stay shared.
     var body: some View {
         NavigationStack {
             Form {
@@ -35,31 +39,43 @@ struct SettingsView: View {
                     NavigationLink {
                         AccountView()
                     } label: {
-                        HStack(spacing: 12) {
-                            Image(systemName: "person.crop.circle.fill")
-                                .font(.system(size: 36)).foregroundStyle(.blue)
-                            VStack(alignment: .leading) {
-                                Text(storeAccountName)
-                                    .font(.headline)
-                                Text(CloudAccount.shared.username == nil ? "Sign in or create a Vela account" : "Cloud backup and account settings")
-                                    .font(.subheadline).foregroundStyle(.secondary)
-                            }
-                        }
+                        accountRow
                     }
                 }
-                credentialSection
-                devicesSection
-                performanceSection
-                cardSizeSection
-                playerSection
-                serverManagementSection
-                animeToggleSection
-                animeServerSection
-                    .disabled(!store.animeEnabled)
-                    .opacity(store.animeEnabled ? 1 : 0.45)
-                backupSection
-                searchHistorySection
-                aboutSection
+
+                Section {
+                    NavigationLink { generalPage } label: {
+                        SettingsCategoryRow(title: "General", symbol: "gearshape.fill", color: .gray,
+                                            value: store.credential.isEmpty ? "Add TMDB Key" : nil)
+                    }
+                    NavigationLink { appearancePage } label: {
+                        SettingsCategoryRow(title: "Appearance", symbol: "paintbrush.fill", color: .blue)
+                    }
+                    NavigationLink { playbackPage } label: {
+                        SettingsCategoryRow(title: "Playback", symbol: "play.rectangle.fill", color: .red)
+                    }
+                }
+
+                Section {
+                    NavigationLink { serversPage } label: {
+                        SettingsCategoryRow(title: "Servers", symbol: "server.rack", color: .indigo,
+                                            value: "\(store.servers.count)")
+                    }
+                    NavigationLink { animePage } label: {
+                        SettingsCategoryRow(title: "Anime", symbol: "sparkles", color: .pink,
+                                            value: store.animeEnabled ? "On" : "Off")
+                    }
+                }
+
+                Section {
+                    NavigationLink { devicesPage } label: {
+                        SettingsCategoryRow(title: "Watch Together & Devices", symbol: "person.2.fill", color: .green,
+                                            value: DeviceLink.shared.connectedDesktop?.name)
+                    }
+                    NavigationLink { dataPage } label: {
+                        SettingsCategoryRow(title: "Data", symbol: "externaldrive.fill", color: .orange)
+                    }
+                }
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.large)
@@ -74,7 +90,137 @@ struct SettingsView: View {
         .onAppear { credentialText = store.credential }
     }
 
-    private var storeAccountName: String { CloudAccount.shared.username ?? "Vela Account" }
+    private var storeAccountName: String { CloudAccount.shared.username ?? "Sign In" }
+
+    private var accountRow: some View {
+        HStack(spacing: 12) {
+            Group {
+                if let username = CloudAccount.shared.username {
+                    Text(String(username.prefix(1)).uppercased())
+                        .font(.title3.weight(.bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 44, height: 44)
+                        .background(Circle().fill(Color.blue.gradient))
+                } else {
+                    Image(systemName: "person.crop.circle.fill")
+                        .font(.system(size: 44))
+                        .foregroundStyle(.blue)
+                }
+            }
+            .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(storeAccountName)
+                    .font(.headline)
+                Text(CloudAccount.shared.username == nil ? "Sign in or create a Vela account" : "Vela Cloud, sync and devices")
+                    .font(.subheadline).foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    // MARK: - Pages
+
+    private var generalPage: some View {
+        Form {
+            credentialSection
+            aboutSection
+        }
+        .navigationTitle("General")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private var appearancePage: some View {
+        Form {
+            performanceSection
+            cardSizeSection
+        }
+        .navigationTitle("Appearance")
+        .navigationBarTitleDisplayMode(.inline)
+        .alert("Restart Required", isPresented: $showRestartAlert) {
+            Button("Restart Now", role: .destructive) {
+                // exit(0) is the accepted iOS pattern for forced app restart.
+                // The OS relaunches the app cleanly from scratch.
+                exit(0)
+            }
+            Button("Later", role: .cancel) {}
+        } message: {
+            Text("Performance mode changes take full effect after restarting Vela.")
+        }
+    }
+
+    private var playbackPage: some View {
+        Form {
+            playerSection
+            introSection
+            captionsSection
+        }
+        .navigationTitle("Playback")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private var serversPage: some View {
+        Form {
+            serverManagementSection
+        }
+        .navigationTitle("Servers")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private var animePage: some View {
+        Form {
+            animeToggleSection
+            animeServerSection
+                .disabled(!store.animeEnabled)
+                .opacity(store.animeEnabled ? 1 : 0.45)
+        }
+        .navigationTitle("Anime")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private var devicesPage: some View {
+        Form {
+            devicesSection
+        }
+        .navigationTitle("Watch Together & Devices")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private var dataPage: some View {
+        Form {
+            backupSection
+            searchHistorySection
+        }
+        .navigationTitle("Data")
+        .navigationBarTitleDisplayMode(.inline)
+        // Presenters live on the page that owns their buttons, so they still
+        // show when this page is pushed rather than the root list.
+        .fileExporter(
+            isPresented: $isExporting,
+            document: exportDocument,
+            contentType: .json,
+            defaultFilename: "Vela Backup \(Date().formatted(.iso8601.year().month().day()))"
+        ) { result in
+            if case .success = result { showToast("Vela data exported") }
+            exportDocument = nil
+        }
+        // UIKit picker in copy mode: works without security-scoped access,
+        // which sandboxed hosts like LiveContainer don't always grant, and
+        // accepts any file so a backup renamed or saved as .txt still opens.
+        .sheet(isPresented: $isImporting) {
+            BackupDocumentPicker { url in
+                isImporting = false
+                pendingImportURL = url
+                showImportConfirm = true
+            }
+            .ignoresSafeArea()
+        }
+        .alert("Import Vela Data?", isPresented: $showImportConfirm) {
+            Button("Import", role: .destructive) { performImport() }
+            Button("Cancel", role: .cancel) { pendingImportURL = nil }
+        } message: {
+            Text("This replaces your current key, history, favourites and settings with the backup.")
+        }
+    }
 
     private func showToast(_ message: String) {
         toastTask?.cancel()
@@ -181,16 +327,6 @@ struct SettingsView: View {
         } footer: {
             Text("Performance Mode disables Liquid Glass blur and animations. Ultra Performance Mode also hides backdrop images. Use either on older hardware or to save battery.")
         }
-        .alert("Restart Required", isPresented: $showRestartAlert) {
-            Button("Restart Now", role: .destructive) {
-                // exit(0) is the accepted iOS pattern for forced app restart.
-                // The OS relaunches the app cleanly from scratch.
-                exit(0)
-            }
-            Button("Later", role: .cancel) {}
-        } message: {
-            Text("Performance mode changes take full effect after restarting Vela.")
-        }
     }
 
     private static func clock(_ t: Double?) -> String {
@@ -210,11 +346,59 @@ struct SettingsView: View {
                 }
             }
             .pickerStyle(.segmented)
+            Picker("Rotate Direction", selection: $rotateClockwise) {
+                Text("Clockwise").tag(true)
+                Text("Counterclockwise").tag(false)
+            }
+        } header: {
+            Text("Player")
+        } footer: {
+            Text("Double-tap the left or right of the video to skip back or forward, and hold either edge for 2× speed. Tap the centre to play or pause. Pinch out to zoom up to 3×; it snaps to fill the screen when close. Pinch in to return to the full picture. The Rotate button turns the picture in the direction above, even with rotation lock on.")
+        }
+    }
+
+    private var captionsSection: some View {
+        Section {
             Picker("Caption Size", selection: $captionScale) {
                 ForEach(CaptionSize.allCases) { size in
                     Text(size.label).tag(size.rawValue)
                 }
             }
+            Button {
+                openCaptionStyleSettings()
+            } label: {
+                HStack {
+                    Text("Caption Style")
+                        .foregroundStyle(.primary)
+                    Spacer()
+                    Image(systemName: "arrow.up.forward.app")
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .accessibilityHint("Opens Subtitles & Captioning in the Settings app")
+        } header: {
+            Text("Captions")
+        } footer: {
+            Text("Caption Size applies to subtitles Vela draws itself. Text colour, font and background follow the system Subtitles & Captioning style.")
+        }
+    }
+
+    /// Jumps straight to Accessibility > Subtitles & Captioning. That URL
+    /// isn't public API and can stop working, so fall back to Vela's own
+    /// page in Settings when it doesn't open.
+    private func openCaptionStyleSettings() {
+        Task { @MainActor in
+            if let url = URL(string: "App-prefs:ACCESSIBILITY&path=SUBTITLES_CAPTIONING"),
+               await UIApplication.shared.open(url) {
+                return
+            }
+            guard let fallback = URL(string: UIApplication.openSettingsURLString) else { return }
+            _ = await UIApplication.shared.open(fallback)
+        }
+    }
+
+    private var introSection: some View {
+        Section {
             Toggle("Automatically Skip Intros", isOn: Binding(
                 get: { store.autoSkipIntro },
                 set: { store.autoSkipIntro = $0 }
@@ -242,9 +426,9 @@ struct SettingsView: View {
                 }
             }
         } header: {
-            Text("Player")
+            Text("Intros")
         } footer: {
-            Text("Double-tap the left or right of the video to skip back or forward. Hold either edge for 2× speed. Pinch inward to fill the screen; pinch outward to see the full picture. Caption Size applies to subtitles Vela draws itself. Skip actions use SkipDB data (ODbL 1.0), with TheIntroDB or AniSkip fallback; in a watch party only the host skips automatically. Set custom intro times in the Intro start / end boxes under a show's player (both 00:00 = off); they apply to every episode.")
+            Text("Skip actions use SkipDB data (ODbL 1.0), with TheIntroDB or AniSkip fallback; in a watch party only the host skips automatically. Set custom intro times in the Intro start / end boxes under a show's player (both 00:00 = off); they apply to every episode.")
         }
     }
 
@@ -476,32 +660,6 @@ struct SettingsView: View {
         } footer: {
             Text("Exports your TMDB key, favourites, watch history and timings, search history, servers and preferences to a file. The file contains your API key, so keep it private. Importing replaces everything on this device.")
         }
-        .fileExporter(
-            isPresented: $isExporting,
-            document: exportDocument,
-            contentType: .json,
-            defaultFilename: "Vela Backup \(Date().formatted(.iso8601.year().month().day()))"
-        ) { result in
-            if case .success = result { showToast("Vela data exported") }
-            exportDocument = nil
-        }
-        // UIKit picker in copy mode: works without security-scoped access,
-        // which sandboxed hosts like LiveContainer don't always grant, and
-        // accepts any file so a backup renamed or saved as .txt still opens.
-        .sheet(isPresented: $isImporting) {
-            BackupDocumentPicker { url in
-                isImporting = false
-                pendingImportURL = url
-                showImportConfirm = true
-            }
-            .ignoresSafeArea()
-        }
-        .alert("Import Vela Data?", isPresented: $showImportConfirm) {
-            Button("Import", role: .destructive) { performImport() }
-            Button("Cancel", role: .cancel) { pendingImportURL = nil }
-        } message: {
-            Text("This replaces your current key, history, favourites and settings with the backup.")
-        }
     }
 
     private func performImport() {
@@ -574,6 +732,34 @@ struct SettingsView: View {
         }
         store.credential = value
         showToast("TMDB key saved")
+    }
+}
+
+/// Settings-app style category row: white glyph in a rounded colour square,
+/// a title, and an optional trailing value.
+private struct SettingsCategoryRow: View {
+    let title: String
+    let symbol: String
+    let color: Color
+    var value: String? = nil
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: symbol)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 29, height: 29)
+                .background(color.gradient, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                .accessibilityHidden(true)
+            Text(title)
+            Spacer(minLength: 8)
+            if let value {
+                Text(value)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        }
+        .accessibilityElement(children: .combine)
     }
 }
 

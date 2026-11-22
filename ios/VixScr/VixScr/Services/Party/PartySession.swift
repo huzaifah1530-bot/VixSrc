@@ -79,13 +79,31 @@ final class PartySession {
     // MARK: - Start / join / leave
 
     func start(from host: PartyPlayerHost) {
-        attach(host)
-        begin(.new(), creating: true)
+        guard active else {
+            attach(host)
+            begin(.new(), creating: true)
+            return
+        }
+        // Starting a new room leaves this one (host too): ask first.
+        Task { @MainActor [weak self] in
+            guard let self, await self.ask("Starting a new watch party will make you leave this one. Continue?") else { return }
+            self.attach(host)
+            self.begin(.new(), creating: true)
+        }
     }
 
     @discardableResult
     func join(_ text: String) -> Bool {
         guard let invite = PartyConnection.Invite(text: text) else { show("That isn't a Vela watch party link"); return false }
+        // Joining another room leaves this one (host too): ask first.
+        // The same link just rejoins, as before.
+        if active, invite.link != link {
+            Task { @MainActor [weak self] in
+                guard let self, await self.ask("Joining another watch party will make you leave this one. Continue?") else { return }
+                self.begin(invite, creating: false)
+            }
+            return true
+        }
         begin(invite, creating: false)
         return true
     }
@@ -145,7 +163,90 @@ final class PartySession {
         host?.playerManager.setRate(1)
         core = nil; conn = nil
         active = false; status = .closed; peers = []; waitingOn = []; sheetOpen = false; prompt = nil; following = false
+        // Out of the party now, so an unanswered "leave?" no longer applies.
+        if let pending = pendingLeave {
+            pendingLeave = nil
+            pending.continuation.resume(returning: true)
+        }
         if was && !silent { show("Left the watch party") }
+    }
+
+    // MARK: - Asking before leaving
+
+    /// A viewer's own action would take them out of the party; they're asked
+    /// first. Shown by `partyLeaveConfirmation` on the front-most presentation.
+    struct LeaveRequest: Identifiable {
+        let id = UUID()
+        let message: String
+        fileprivate let continuation: CheckedContinuation<Bool, Never>
+    }
+    private(set) var pendingLeave: LeaveRequest?
+
+    struct LeavePresenter { let id: UUID; let level: Int }
+    /// Views that can show the question, in the order they appeared.
+    private(set) var leavePresenters: [LeavePresenter] = []
+
+    /// The front-most presenter: highest level, then the latest to appear.
+    var leavePresenter: UUID? {
+        leavePresenters.enumerated().max { a, b in
+            a.element.level != b.element.level ? a.element.level < b.element.level : a.offset < b.offset
+        }?.element.id
+    }
+
+    func registerLeavePresenter(_ id: UUID, level: Int) {
+        leavePresenters.removeAll { $0.id == id }
+        leavePresenters.append(LeavePresenter(id: id, level: level))
+    }
+
+    func unregisterLeavePresenter(_ id: UUID) {
+        leavePresenters.removeAll { $0.id == id }
+    }
+
+    /// Would moving this screen to `key` make a viewer leave? Mirrors
+    /// `localMediaChanged`. A nil key means "something else".
+    func wouldLeave(mediaKey key: String?) -> Bool {
+        // Room-driven loads (and the host) never leave.
+        guard let core, !core.isLeader, loadingKey == nil, !closingForRoom else { return false }
+        guard let key else { return true }
+        let roomKey = aliases.first(where: { $0.value == key })?.key ?? key
+        return roomKey != core.state?.tl.media?.key
+    }
+
+    /// Would closing `host`'s player make a viewer leave? Mirrors `detach`.
+    func wouldLeave(closing host: PartyPlayerHost) -> Bool {
+        guard let core, self.host === host, !core.isLeader, !closingForRoom else { return false }
+        return true
+    }
+
+    /// True right away when `action` keeps the viewer in the party;
+    /// otherwise asks "<action> will make you leave the party. Continue?".
+    func confirmLeave(_ action: String, mediaKey: String?) async -> Bool {
+        guard wouldLeave(mediaKey: mediaKey) else { return true }
+        return await ask("\(action) will make you leave the party. Continue?")
+    }
+
+    func confirmLeave(_ action: String, closing host: PartyPlayerHost) async -> Bool {
+        guard wouldLeave(closing: host) else { return true }
+        return await ask("\(action) will make you leave the party. Continue?")
+    }
+
+    func answerLeave(_ proceed: Bool) {
+        guard let request = pendingLeave else { return }
+        pendingLeave = nil
+        request.continuation.resume(returning: proceed)
+    }
+
+    private func ask(_ message: String) async -> Bool {
+        // Nowhere to show it (shouldn't happen): behave as before.
+        guard leavePresenter != nil else { return true }
+        // A newer question replaces one still on screen.
+        if let old = pendingLeave {
+            pendingLeave = nil
+            old.continuation.resume(returning: false)
+        }
+        return await withCheckedContinuation { continuation in
+            pendingLeave = LeaveRequest(message: message, continuation: continuation)
+        }
     }
 
     /// Back in the foreground: reconnect immediately and catch up.

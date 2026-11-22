@@ -102,6 +102,8 @@ struct PartySheet: View {
         }
         .presentationDetents([.medium, .large])
         .preferredColorScheme(.dark)
+        // Front-most while open (e.g. a party link arriving meanwhile).
+        .partyLeaveConfirmation(.partySheet)
     }
 
     private var statusText: String {
@@ -261,6 +263,14 @@ struct PartyDock: View {
                 // the taps, so the dock could not be opened.
                 .vixGlass(.regular, cornerRadius: 22)
                 .contentShape(RoundedRectangle(cornerRadius: 22))
+                // The mini player sits above the pill (it grows with Dynamic Type).
+                .background {
+                    GeometryReader { g in
+                        Color.clear
+                            .onAppear { MiniPlayerCenter.shared.partyDockHeight = g.size.height }
+                            .onChange(of: g.size.height) { _, h in MiniPlayerCenter.shared.partyDockHeight = h }
+                    }
+                }
             }
             .buttonStyle(.plain)
             .padding(.bottom, 84)
@@ -369,15 +379,17 @@ struct PartyPasteBanner: View {
 /// "The host moved on — follow?" Shown to viewers once; following sticks.
 struct PartyPrompts: ViewModifier {
     @State private var party = PartySession.shared
+    @State private var mini = MiniPlayerCenter.shared
     /// The app-wide instance steps aside while a player screen is up: that
     /// screen has its own, and an alert can only appear from the front-most
-    /// presentation (two at once made it fail to show).
+    /// presentation (two at once made it fail to show). A player shrunk into
+    /// the mini player is still attached but has no screen up, so the app asks.
     var root = false
     func body(content: Content) -> some View {
         content.alert(
             party.prompt?.title != nil ? "The host started something new" : "The host went back to browsing",
             // Both buttons answer; dismissing must never count as "leave".
-            isPresented: Binding(get: { party.prompt != nil && !(root && party.playerAttached) }, set: { _ in }),
+            isPresented: Binding(get: { party.prompt != nil && !(root && party.playerAttached && !mini.isActive) }, set: { _ in }),
             presenting: party.prompt
         ) { _ in
             Button("Follow Host") { party.answerFollow(true) }
@@ -390,6 +402,48 @@ struct PartyPrompts: ViewModifier {
 
 extension View {
     func partyPrompts(root: Bool = false) -> some View { modifier(PartyPrompts(root: root)) }
+
+    /// Shows "Leave the Watch Party?" from this presentation when it's the
+    /// front-most one. Safe to apply at several levels; only one asks.
+    func partyLeaveConfirmation(_ level: PartyPresenterLevel = .root) -> some View {
+        modifier(PartyLeaveConfirmation(level: level))
+    }
+}
+
+/// Where a `partyLeaveConfirmation` sits. Higher wins; at the same level the
+/// one that appeared last wins.
+enum PartyPresenterLevel: Int {
+    case root = 0
+    case sheet = 1
+    case fullscreen = 2
+    case partySheet = 3
+}
+
+/// Cancel / Continue before a viewer's own action takes them out of the
+/// party (closing the player, another episode or title, another party).
+struct PartyLeaveConfirmation: ViewModifier {
+    let level: PartyPresenterLevel
+    @State private var party = PartySession.shared
+    @State private var id = UUID()
+
+    func body(content: Content) -> some View {
+        content
+            // An alert can only appear from the front-most presentation, and
+            // two presenters asking at once made it fail to show.
+            .onAppear { party.registerLeavePresenter(id, level: level.rawValue) }
+            .onDisappear { party.unregisterLeavePresenter(id) }
+            .alert(
+                "Leave the Watch Party?",
+                // Both buttons answer; the binding never dismisses by itself.
+                isPresented: Binding(get: { party.pendingLeave != nil && party.leavePresenter == id }, set: { _ in }),
+                presenting: party.pendingLeave
+            ) { _ in
+                Button("Cancel", role: .cancel) { party.answerLeave(false) }
+                Button("Continue", role: .destructive) { party.answerLeave(true) }
+            } message: { request in
+                Text(request.message)
+            }
+    }
 }
 
 /// "Waiting for …" / reconnecting banner shown over the player.
