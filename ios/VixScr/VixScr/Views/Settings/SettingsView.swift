@@ -359,41 +359,15 @@ struct SettingsView: View {
 
     private var captionsSection: some View {
         Section {
-            Picker("Caption Size", selection: $captionScale) {
-                ForEach(CaptionSize.allCases) { size in
-                    Text(size.label).tag(size.rawValue)
-                }
-            }
-            Button {
-                openCaptionStyleSettings()
+            NavigationLink {
+                CaptionStyleSettingsView()
             } label: {
-                HStack {
-                    Text("Caption Style")
-                        .foregroundStyle(.primary)
-                    Spacer()
-                    Image(systemName: "arrow.up.forward.app")
-                        .foregroundStyle(.secondary)
-                }
+                LabeledContent("Caption Style", value: CaptionSize(rawValue: captionScale)?.label ?? "")
             }
-            .accessibilityHint("Opens Subtitles & Captioning in the Settings app")
         } header: {
             Text("Captions")
         } footer: {
-            Text("Caption Size applies to subtitles Vela draws itself. Text colour, font and background follow the system Subtitles & Captioning style.")
-        }
-    }
-
-    /// Jumps straight to Accessibility > Subtitles & Captioning. That URL
-    /// isn't public API and can stop working, so fall back to Vela's own
-    /// page in Settings when it doesn't open.
-    private func openCaptionStyleSettings() {
-        Task { @MainActor in
-            if let url = URL(string: "App-prefs:ACCESSIBILITY&path=SUBTITLES_CAPTIONING"),
-               await UIApplication.shared.open(url) {
-                return
-            }
-            guard let fallback = URL(string: UIApplication.openSettingsURLString) else { return }
-            _ = await UIApplication.shared.open(fallback)
+            Text("Size, colour, font, background and edge for every caption Vela shows. Also in the player's Settings panel.")
         }
     }
 

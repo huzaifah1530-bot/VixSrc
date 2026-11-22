@@ -34,6 +34,32 @@ enum OrientationLock {
         updateSupportedOrientations(in: scene)
     }
 
+    /// Turns the interface one quarter further in the same direction on every
+    /// call: portrait → landscape → upside down → other landscape → portrait.
+    /// iPhones without a home button can't show upside down, so that step
+    /// goes straight on to the other landscape.
+    static func rotateStep(clockwise: Bool) {
+        // Clockwise as the picture turns relative to the device.
+        var order: [UIInterfaceOrientation] = [.portrait, .landscapeRight, .portraitUpsideDown, .landscapeLeft]
+        if !clockwise { order.reverse() }
+        let supportsUpsideDown = UIDevice.current.userInterfaceIdiom == .pad
+        let current = activeScene?.effectiveGeometry.interfaceOrientation ?? .portrait
+        var index = order.firstIndex(of: current) ?? order.firstIndex(of: .portrait) ?? 0
+        repeat {
+            index = (index + 1) % order.count
+        } while order[index] == .portraitUpsideDown && !supportsUpsideDown
+        rotate(to: mask(for: order[index]))
+    }
+
+    private static func mask(for orientation: UIInterfaceOrientation) -> UIInterfaceOrientationMask {
+        switch orientation {
+        case .landscapeLeft: return .landscapeLeft
+        case .landscapeRight: return .landscapeRight
+        case .portraitUpsideDown: return .portraitUpsideDown
+        default: return .portrait
+        }
+    }
+
     /// Returns to portrait, then lifts the restriction once the rotation has
     /// had time to run, so the rest of the app rotates freely again.
     static func rotateToPortraitThenUnlock() {

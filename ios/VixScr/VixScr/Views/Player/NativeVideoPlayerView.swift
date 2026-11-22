@@ -2,7 +2,6 @@ import SwiftUI
 import AVFoundation
 import AVKit
 import UIKit
-import MediaAccessibility
 import Translation
 
 /// Native video player: AVPlayerLayer plus Vela's own controls, used both
@@ -105,24 +104,10 @@ private struct PlayerSurface: View {
     @State private var showSpeedBadge = false
     @State private var speedBadgeTask: Task<Void, Never>?
 
-    // Zoom. `zoomRaw` follows the fingers; `zoomScale` is what is shown,
-    // with rubber-banding past the upper limit.
-    @State private var zoomScale: CGFloat = 1
-    @State private var zoomRaw: CGFloat = 1
-    @State private var zoomOffset: CGSize = .zero
-    @State private var zoomFilled = false
-    /// Mirrors `zoomFilled` for the Settings menu toggle.
-    @State private var fillToggle = false
-    @State private var isPinching = false
-    @State private var pinchAnchor: CGPoint?
-    @State private var pinchTouches = 0
-    @State private var zoomBadge: String?
-    @State private var zoomBadgeTask: Task<Void, Never>?
-    @State private var canvasSize: CGSize = .zero
-    @State private var videoSize: CGSize = .zero
-
-    @State private var playFlash: PlayFlash?
-    @State private var playFlashTask: Task<Void, Never>?
+    // Zoom lives in its own observable model, so a pinch redraws only the
+    // video layer and badge instead of the whole player.
+    @State private var zoom = PlayerZoomModel()
+    @State private var showSettings = false
 
     enum Side { case left, right }
 
@@ -131,15 +116,9 @@ private struct PlayerSurface: View {
         var pulse = 0
     }
 
-    struct PlayFlash: Equatable {
-        var icon: String
-        var id: Int
-    }
-
     private static let lastCaptionKey = "vela_caption_last_ios"
 
     private let spring = Animation.spring(response: 0.2, dampingFraction: 0.9)
-    private let zoomSpring = Animation.spring(response: 0.38, dampingFraction: 0.84)
 
     private var hasNextEpisodeVisible: Bool {
         options.nextEpisodeLabel != nil && options.onNextEpisode != nil &&
@@ -156,7 +135,21 @@ private struct PlayerSurface: View {
         ZStack {
             canvas
             foreground
+            if showSettings {
+                PlayerSettingsPanel(
+                    playerManager: playerManager,
+                    options: options,
+                    zoom: zoom,
+                    captionsOn: captionsOn,
+                    onCaptionsOff: { turnCaptionsOff() },
+                    onGeneratedCaptions: { locale, translated in startGeneratedCaptions(locale: locale, translated: translated) },
+                    onClose: { closeSettings() }
+                )
+                .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                .zIndex(10)
+            }
         }
+        .animation(.spring(response: 0.3, dampingFraction: 0.88), value: showSettings)
         .background {
             if #available(iOS 18.0, *) {
                 CaptionTranslationBridge(playerManager: playerManager,
@@ -178,20 +171,15 @@ private struct PlayerSurface: View {
             scheduleHide()
             rememberCaptionChoice(captionChoiceKey)
         }
-        .task { await watchVideoSize() }
+        .task { await zoom.watchVideoSize(of: playerManager) }
         .onDisappear {
             speedBadgeTask?.cancel()
             leftRippleTask?.cancel()
             rightRippleTask?.cancel()
-            zoomBadgeTask?.cancel()
-            playFlashTask?.cancel()
+            zoom.stop()
             playerManager.endSpeedBoost()
             boostSide = nil
             showSpeedBadge = false
-            if isPinching {
-                isPinching = false
-                applyZoom(PlayerZoomState.load())
-            }
         }
         .onChange(of: playerManager.isPlaying) { _, playing in
             if playing { scheduleHide() } else { reveal(autoHide: false) }
@@ -204,15 +192,7 @@ private struct PlayerSurface: View {
             boostSide = nil
             showSpeedBadge = false
             // The other surface may have changed the zoom.
-            if !isPinching { applyZoom(PlayerZoomState.load()) }
-        }
-        .onChange(of: canvasSize) { _, _ in
-            // Rotation / resize: re-fit, re-fill and re-clamp the pan.
-            if !isPinching { applyZoom(PlayerZoomState.load()) }
-        }
-        .onChange(of: zoomFilled) { _, filled in fillToggle = filled }
-        .onChange(of: fillToggle) { _, on in
-            if on != zoomFilled { setZoomToFill(on) }
+            zoom.reapply()
         }
         .onChange(of: holdingSide) { _, side in
             if let side {
@@ -249,10 +229,7 @@ private struct PlayerSurface: View {
 
                 // Always aspect-fit; zoom is a transform so it can animate
                 // and keep the content under the fingers.
-                VideoPlayerLayer(player: playerManager.player, isFullscreen: isFullscreen, manager: playerManager)
-                    .scaleEffect(zoomScale, anchor: .center)
-                    .offset(zoomOffset)
-                    .allowsHitTesting(false)
+                ZoomedVideoLayer(zoom: zoom, player: playerManager.player, isFullscreen: isFullscreen, manager: playerManager)
 
                 scrims
 
@@ -269,12 +246,13 @@ private struct PlayerSurface: View {
                 // a tap/hold zone and the other lands on a visible control.
                 // It sits on the canvas so its coordinates match the video's.
                 PlayerPinchCapture(isActive: isFullscreen || !playerManager.wantsFullscreen) { event in
-                    handlePinch(event)
+                    zoom.handlePinch(event)
                 }
                 .allowsHitTesting(false)
             }
-            .onAppear { canvasSize = geo.size }
-            .onChange(of: geo.size) { _, size in canvasSize = size }
+            .onAppear { zoom.canvasSize = geo.size; zoom.reapply() }
+            // Rotation / resize: re-fit, re-fill and re-clamp the pan.
+            .onChange(of: geo.size) { _, size in zoom.canvasSize = size; zoom.reapply() }
         }
         .ignoresSafeArea(edges: isFullscreen ? Edge.Set.all : Edge.Set())
     }
@@ -313,8 +291,6 @@ private struct PlayerSurface: View {
                     .allowsHitTesting(showControls)
                     .accessibilityHidden(!showControls)
             }
-
-            playPauseFlash
 
             topBadges
 
@@ -368,14 +344,11 @@ private struct PlayerSurface: View {
 
     /// Middle of the picture: play / pause, and bring the controls up even
     /// when they were hidden.
+    /// The controls come up with the real play / pause button already showing
+    /// the new state; no separate flash on top of it.
     private func centerTap() {
-        let wasPlaying = playerManager.isPlaying
         playerManager.togglePlayPause()
         reveal(autoHide: true)
-        // A watch-party viewer without control can't toggle; no flash then.
-        if playerManager.isPlaying != wasPlaying {
-            flashPlayPause(playerManager.isPlaying ? "play.fill" : "pause.fill")
-        }
     }
 
     private func tap(_ side: Side) {
@@ -490,35 +463,6 @@ private struct PlayerSurface: View {
         .accessibilityHidden(!visible)
     }
 
-    /// Brief glass flash in the middle after a center tap.
-    @ViewBuilder private var playPauseFlash: some View {
-        if let flash = playFlash {
-            Image(systemName: flash.icon)
-                .font(.system(size: isFullscreen ? 32 : 25, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: isFullscreen ? 76 : 60, height: isFullscreen ? 76 : 60)
-                .vixGlass(.regular, cornerRadius: 999)
-                .id(flash.id)
-                .transition(.asymmetric(
-                    insertion: .scale(scale: 0.75).combined(with: .opacity),
-                    removal: .scale(scale: 1.3).combined(with: .opacity)
-                ))
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
-        }
-    }
-
-    private func flashPlayPause(_ icon: String) {
-        playFlashTask?.cancel()
-        let id = (playFlash?.id ?? 0) + 1
-        withAnimation(.easeOut(duration: 0.12)) { playFlash = PlayFlash(icon: icon, id: id) }
-        playFlashTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 120_000_000)
-            guard !Task.isCancelled else { return }
-            withAnimation(.easeIn(duration: 0.23)) { playFlash = nil }
-        }
-    }
-
     /// The 2× speed badge and the zoom indicator share the top-center slot.
     private var topBadges: some View {
         VStack {
@@ -537,17 +481,7 @@ private struct PlayerSurface: View {
                     .vixGlass(.strong, cornerRadius: 999)
                     .transition(.move(edge: .top).combined(with: .opacity).combined(with: .scale(scale: 0.8)))
                 }
-                if let zoomBadge {
-                    Text(zoomBadge)
-                        .font(.subheadline.weight(.bold).monospacedDigit())
-                        .contentTransition(.numericText())
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
-                        .vixGlass(.strong, cornerRadius: 999)
-                        .transition(.move(edge: .top).combined(with: .opacity).combined(with: .scale(scale: 0.8)))
-                        .accessibilityLabel("Zoom \(zoomBadge)")
-                }
+                ZoomBadge(zoom: zoom)
             }
             .padding(.top, isFullscreen ? 24 : 12)
             Spacer()
@@ -556,202 +490,28 @@ private struct PlayerSurface: View {
         .allowsHitTesting(false)
     }
 
-    // MARK: Zoom
-
-    private var currentFillScale: CGFloat {
-        PlayerZoomMath.fillScale(video: videoSize, canvas: canvasSize)
-    }
-
-    private func handlePinch(_ event: PlayerPinchEvent) {
-        switch event.state {
-        case .began:
-            isPinching = true
-            zoomRaw = zoomScale
-            pinchAnchor = event.location
-            pinchTouches = event.touches
-            zoomBadgeTask?.cancel()
-            showZoomBadge(scaleLabel(zoomScale), autoHide: false)
-        case .changed:
-            guard isPinching else { return }
-            let canvas = event.size.width > 0 ? event.size : canvasSize
-            let upper = PlayerZoomMath.upperLimit(fill: PlayerZoomMath.fillScale(video: videoSize, canvas: canvas))
-            let oldScale = max(zoomScale, PlayerZoomMath.minScale)
-            zoomRaw = PlayerZoomMath.clampRaw(zoomRaw * event.scaleDelta, upper: upper)
-            let newScale = PlayerZoomMath.displayed(raw: zoomRaw, upper: upper)
-            // A finger lifting or landing moves the centroid; re-anchor
-            // instead of treating that jump as a pan.
-            let previous = event.touches == pinchTouches ? (pinchAnchor ?? event.location) : event.location
-            let center = CGPoint(x: canvas.width / 2, y: canvas.height / 2)
-            // The content point under the previous centroid stays under the
-            // current one, which also pans with two fingers.
-            let contentX = (previous.x - center.x - zoomOffset.width) / oldScale
-            let contentY = (previous.y - center.y - zoomOffset.height) / oldScale
-            let proposed = CGSize(width: event.location.x - center.x - newScale * contentX,
-                                  height: event.location.y - center.y - newScale * contentY)
-            zoomScale = newScale
-            zoomOffset = PlayerZoomMath.clampedOffset(proposed, scale: newScale, video: videoSize, canvas: canvas)
-            zoomFilled = false
-            pinchAnchor = event.location
-            pinchTouches = event.touches
-            showZoomBadge(scaleLabel(newScale), autoHide: false)
-        case .ended, .cancelled, .failed:
-            guard isPinching else { return }
-            isPinching = false
-            pinchAnchor = nil
-            settleZoom()
-        default:
-            break
-        }
-    }
-
-    /// Release: spring into range, or snap to fill / the original frame.
-    private func settleZoom() {
-        let fill = currentFillScale
-        let upper = PlayerZoomMath.upperLimit(fill: fill)
-        let shown = zoomScale
-        let tolerance = PlayerZoomMath.snapTolerance
-        let canFill = fill > 1.01
-        let nearFill = canFill && abs(shown - fill) <= fill * tolerance
-        let nearOne = abs(shown - 1) <= tolerance
-
-        var target = shown
-        var filled = false
-        var label = scaleLabel(shown)
-        var snapped = false
-        if shown < 1 {
-            target = 1
-            label = "Original"
-        } else if shown > upper {
-            target = upper
-            filled = canFill && abs(upper - fill) < 0.001
-            label = filled ? "Zoomed to fill" : scaleLabel(upper)
-        } else if nearFill && (!nearOne || abs(shown - fill) < abs(shown - 1)) {
-            target = fill
-            filled = true
-            label = "Zoomed to fill"
-            snapped = true
-        } else if nearOne {
-            target = 1
-            label = "Original"
-            snapped = true
-        }
-
-        // Scaling about the center keeps the same spot in view.
-        let ratio = shown > 0 ? target / shown : 1
-        let offset = PlayerZoomMath.clampedOffset(
-            CGSize(width: zoomOffset.width * ratio, height: zoomOffset.height * ratio),
-            scale: target, video: videoSize, canvas: canvasSize)
-        withAnimation(zoomSpring) {
-            zoomScale = target
-            zoomOffset = offset
-            zoomFilled = filled
-        }
-        zoomRaw = target
-        if snapped { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
-        showZoomBadge(label)
-        saveZoom()
-    }
-
-    /// Settings › Zoom to Fill.
-    private func setZoomToFill(_ on: Bool) {
-        let target: CGFloat = on ? currentFillScale : 1
-        withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) {
-            zoomScale = target
-            zoomOffset = .zero
-            zoomFilled = on
-        }
-        zoomRaw = target
-        showZoomBadge(on ? "Zoomed to fill" : "Original")
-        saveZoom()
-    }
-
-    /// Applies a stored zoom to the current canvas and picture. A filled
-    /// zoom is recomputed, since the fill scale depends on both sizes.
-    private func applyZoom(_ state: PlayerZoomState) {
-        let fill = currentFillScale
-        let upper = PlayerZoomMath.upperLimit(fill: fill)
-        let scale = state.filled ? fill : min(max(state.scale, 1), upper)
-        let pan = CGSize(width: state.panX * canvasSize.width, height: state.panY * canvasSize.height)
-        zoomScale = scale
-        zoomRaw = scale
-        zoomFilled = state.filled
-        zoomOffset = PlayerZoomMath.clampedOffset(pan, scale: scale, video: videoSize, canvas: canvasSize)
-    }
-
-    private func saveZoom() {
-        guard canvasSize.width > 0, canvasSize.height > 0 else { return }
-        PlayerZoomState(scale: zoomScale,
-                        panX: zoomOffset.width / canvasSize.width,
-                        panY: zoomOffset.height / canvasSize.height,
-                        filled: zoomFilled).save()
-    }
-
-    private func scaleLabel(_ scale: CGFloat) -> String {
-        String(format: "%.1f×", Double(scale))
-    }
-
-    private func showZoomBadge(_ text: String, autoHide: Bool = true) {
-        zoomBadgeTask?.cancel()
-        if zoomBadge == nil {
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.72)) { zoomBadge = text }
-        } else if zoomBadge != text {
-            // Live pinch updates change every frame; only snaps animate.
-            if autoHide {
-                withAnimation(.snappy(duration: 0.2)) { zoomBadge = text }
-            } else {
-                zoomBadge = text
-            }
-        }
-        guard autoHide else { return }
-        zoomBadgeTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 1_000_000_000)
-            guard !Task.isCancelled else { return }
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { zoomBadge = nil }
-        }
-    }
-
-    /// Polls the item's presentation size on the main actor. KVO on the
-    /// player item could call back off the main thread.
-    private func watchVideoSize() async {
-        var lastItem: ObjectIdentifier?
-        var first = true
-        while !Task.isCancelled {
-            let item = playerManager.player?.currentItem
-            let id = item.map { ObjectIdentifier($0) }
-            let size = item?.presentationSize ?? .zero
-            if first || id != lastItem {
-                // New item: reapply where the viewer left the zoom.
-                first = false
-                lastItem = id
-                videoSize = size
-                if !isPinching { applyZoom(PlayerZoomState.load()) }
-            } else if size.width > 0, size.height > 0, size != videoSize {
-                videoSize = size
-                if !isPinching { applyZoom(PlayerZoomState.load()) }
-            }
-            try? await Task.sleep(nanoseconds: 400_000_000)
-        }
-    }
-
     // MARK: Controls
 
     private var controls: some View {
-        VStack(spacing: 0) {
-            topBar
-            Spacer(minLength: 0)
-            transport
-                .offset(x: !isFullscreen && hasNextEpisodeVisible && playerManager.activeSkipSegment != nil ? -60 : 0)
-            Spacer(minLength: 0)
-            nextEpisodePill
-            PlayerScrubber(playerManager: playerManager, isFullscreen: isFullscreen) {
-                reveal(autoHide: false)
-            } onEnd: {
-                scheduleHide()
+        ZStack {
+            VStack(spacing: 0) {
+                topBar
+                Spacer(minLength: 0)
+                nextEpisodePill
+                PlayerScrubber(playerManager: playerManager, isFullscreen: isFullscreen) {
+                    reveal(autoHide: false)
+                } onEnd: {
+                    scheduleHide()
+                }
             }
+            .padding(.horizontal, isFullscreen ? 20 : 14)
+            .padding(.top, isFullscreen ? 14 : 10)
+            .padding(.bottom, isFullscreen ? 6 : 8)
+
+            // Its own layer, so Next Episode / Skip buttons appearing never
+            // push play / pause off the centre of the screen.
+            transport
         }
-        .padding(.horizontal, isFullscreen ? 20 : 14)
-        .padding(.top, isFullscreen ? 14 : 10)
-        .padding(.bottom, isFullscreen ? 6 : 8)
     }
 
     /// One action at a time, including adjacent recap → intro transitions.
@@ -862,7 +622,9 @@ private struct PlayerSurface: View {
             .disabled(!playerManager.hasAnySubtitles)
             .opacity(playerManager.hasAnySubtitles ? 1 : 0.4)
 
-            settingsMenu
+            GlassIconButton(systemImage: "gearshape", size: size, label: "Settings") {
+                openSettings()
+            }
 
             GlassIconButton(systemImage: isFullscreen ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
                             size: size,
@@ -880,219 +642,22 @@ private struct PlayerSurface: View {
             onToggleFullscreen()
             return
         }
-        if OrientationLock.isPortrait {
-            OrientationLock.rotate(to: rotateClockwise ? .landscapeRight : .landscapeLeft)
-        } else {
-            OrientationLock.rotate(to: .portrait)
-        }
+        // Each press turns another quarter in the same direction.
+        OrientationLock.rotateStep(clockwise: rotateClockwise)
     }
 
-    private var settingsMenu: some View {
-        Menu {
-            if options.sources.count > 1 {
-                Menu {
-                    let sections = options.sources.reduce(into: [String]()) { if !$0.contains($1.section) { $0.append($1.section) } }
-                    ForEach(sections, id: \.self) { section in
-                        Section(section) {
-                            ForEach(options.sources.filter { $0.section == section }) { choice in
-                                Button {
-                                    options.onSelectSource(choice.id)
-                                    reveal(autoHide: true)
-                                } label: {
-                                    if choice.id == options.selectedSource {
-                                        Label(choice.title, systemImage: "checkmark")
-                                    } else {
-                                        Text(choice.title)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                } label: {
-                    menuLabel(options.sourceLabel,
-                              value: options.sources.first(where: { $0.id == options.selectedSource })?.title,
-                              systemImage: "slider.horizontal.3")
-                }
-            }
-
-            if options.servers.count > 1 {
-                Menu {
-                    ForEach(Array(options.servers.enumerated()), id: \.offset) { index, name in
-                        Button {
-                            options.onSelectServer(index)
-                        } label: {
-                            if index == options.selectedServer {
-                                Label(name, systemImage: "checkmark")
-                            } else {
-                                Text(name)
-                            }
-                        }
-                    }
-                } label: {
-                    menuLabel("Server",
-                              value: options.servers.indices.contains(options.selectedServer) ? options.servers[options.selectedServer] : nil,
-                              systemImage: "server.rack")
-                }
-            }
-
-            Section {
-                Menu {
-                    captionTrackItems
-                } label: {
-                    menuLabel("Captions", value: captionValue, systemImage: "captions.bubble")
-                }
-                .disabled(!playerManager.hasAnySubtitles)
-
-                Button {
-                    openCaptionStyleSettings()
-                } label: {
-                    Label("Caption Size & Style", systemImage: "textformat.size")
-                }
-            }
-
-            Section {
-                Toggle(isOn: $fillToggle) {
-                    Label("Zoom to Fill", systemImage: "arrow.up.left.and.arrow.down.right")
-                }
-
-                Menu {
-                    Button {
-                        rotateClockwise = true
-                    } label: {
-                        if rotateClockwise {
-                            Label("Clockwise", systemImage: "checkmark")
-                        } else {
-                            Label("Clockwise", systemImage: "rotate.right")
-                        }
-                    }
-                    Button {
-                        rotateClockwise = false
-                    } label: {
-                        if !rotateClockwise {
-                            Label("Counterclockwise", systemImage: "checkmark")
-                        } else {
-                            Label("Counterclockwise", systemImage: "rotate.left")
-                        }
-                    }
-                } label: {
-                    menuLabel("Rotate Direction",
-                              value: rotateClockwise ? "Clockwise" : "Counterclockwise",
-                              systemImage: rotateClockwise ? "rotate.right" : "rotate.left")
-                }
-            }
-        } label: {
-            GlassIcon(systemImage: "gearshape", size: isFullscreen ? 44 : 36)
-        }
-        .accessibilityLabel("Settings")
-        .simultaneousGesture(TapGesture().onEnded { reveal(autoHide: false) })
+    private func openSettings() {
+        hideTask?.cancel()
+        showControls = true
+        showSettings = true
     }
 
-    /// Menu row with the current value as its subtitle, Apple style.
-    private func menuLabel(_ title: String, value: String?, systemImage: String) -> some View {
-        Label {
-            Text(title)
-            if let value { Text(value) }
-        } icon: {
-            Image(systemName: systemImage)
-        }
+    private func closeSettings() {
+        showSettings = false
+        scheduleHide()
     }
 
     // MARK: Captions
-
-    /// Full track picker: Off, auto-generated, embedded and side-loaded.
-    @ViewBuilder private var captionTrackItems: some View {
-        Section {
-            Button {
-                playerManager.selectSubtitle(at: nil)
-                playerManager.selectExternalSubtitle(at: nil)
-            } label: {
-                if !captionsOn { Label("Off", systemImage: "checkmark") } else { Text("Off") }
-            }
-        }
-        // Top-level section: nesting it inside the track list made the
-        // choices disappear from the menu on iOS.
-        Section("Auto-generated") {
-            if playerManager.canGenerateCaptions {
-                if playerManager.spokenAudioLanguage != "ja" {
-                    Button {
-                        startGeneratedCaptions(locale: "en-US", translated: false)
-                    } label: {
-                        if playerManager.generatedCaptionLocale == "en-US" {
-                            Label("English", systemImage: "checkmark")
-                        } else { Text("English") }
-                    }
-                }
-                if options.isAnime && playerManager.spokenAudioLanguage != "en" {
-                    Button {
-                        startGeneratedCaptions(locale: "ja-JP", translated: false)
-                    } label: {
-                        if playerManager.generatedCaptionLocale == "ja-JP" && !playerManager.translateGeneratedCaptions {
-                            Label("Japanese", systemImage: "checkmark")
-                        } else { Text("Japanese") }
-                    }
-                    Button {
-                        startGeneratedCaptions(locale: "ja-JP", translated: true)
-                    } label: {
-                        if playerManager.generatedCaptionLocale == "ja-JP" && playerManager.translateGeneratedCaptions {
-                            Label("Japanese → English", systemImage: "checkmark")
-                        } else { Text("Japanese → English") }
-                    }
-                }
-            } else {
-                Button {} label: {
-                    Text(playerManager.generatedCaptionsUnavailableReason ?? "Auto-generated captions are unavailable on this device.")
-                }
-                .disabled(true)
-            }
-        }
-        if !playerManager.subtitleOptions.isEmpty {
-            Section("This video") {
-                ForEach(Array(playerManager.subtitleOptions.enumerated()), id: \.offset) { index, option in
-                    Button {
-                        playerManager.selectSubtitle(at: index)
-                    } label: {
-                        if playerManager.selectedSubtitleIndex == index {
-                            Label(option.displayName, systemImage: "checkmark")
-                        } else {
-                            Text(option.displayName)
-                        }
-                    }
-                }
-            }
-        }
-        if !playerManager.externalSubtitles.isEmpty {
-            Section("Side-loaded") {
-                ForEach(Array(playerManager.externalSubtitles.enumerated()), id: \.offset) { index, track in
-                    Button {
-                        playerManager.selectExternalSubtitle(at: index)
-                    } label: {
-                        if playerManager.selectedExternalSubtitleIndex == index {
-                            Label(track.label, systemImage: "checkmark")
-                        } else {
-                            Text(track.label)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    /// Current caption choice for the Settings menu subtitle.
-    private var captionValue: String {
-        if let locale = playerManager.generatedCaptionLocale {
-            if locale == "ja-JP" {
-                return playerManager.translateGeneratedCaptions ? "Japanese → English (Auto)" : "Japanese (Auto)"
-            }
-            return "English (Auto)"
-        }
-        if let index = playerManager.selectedSubtitleIndex, playerManager.subtitleOptions.indices.contains(index) {
-            return playerManager.subtitleOptions[index].displayName
-        }
-        if let index = playerManager.selectedExternalSubtitleIndex, playerManager.externalSubtitles.indices.contains(index) {
-            return playerManager.externalSubtitles[index].label
-        }
-        return "Off"
-    }
 
     /// Stable description of the active caption, or nil when captions are off.
     private var captionChoiceKey: String? {
@@ -1114,11 +679,15 @@ private struct PlayerSurface: View {
         UserDefaults.standard.set(key, forKey: Self.lastCaptionKey)
     }
 
+    /// Same as Off in Settings: also stops generated captions.
+    private func turnCaptionsOff() {
+        playerManager.selectSubtitle(at: nil)
+        playerManager.selectExternalSubtitle(at: nil)
+    }
+
     private func toggleCaptions() {
         if captionsOn {
-            // Same as the menu's Off: also stops generated captions.
-            playerManager.selectSubtitle(at: nil)
-            playerManager.selectExternalSubtitle(at: nil)
+            turnCaptionsOff()
         } else {
             turnCaptionsOn()
         }
@@ -1176,21 +745,6 @@ private struct PlayerSurface: View {
         }
     }
 
-    /// Opens Settings › Accessibility › Subtitles & Captioning. The private
-    /// URL is acceptable for this sideloaded build; when iOS refuses it, the
-    /// app's own Settings page opens instead.
-    private func openCaptionStyleSettings() {
-        Task { @MainActor in
-            if let url = URL(string: "App-prefs:ACCESSIBILITY&path=SUBTITLES_CAPTIONING") {
-                let opened = await UIApplication.shared.open(url, options: [:])
-                if opened { return }
-            }
-            if let url = URL(string: UIApplication.openSettingsURLString) {
-                let _: Bool = await UIApplication.shared.open(url, options: [:])
-            }
-        }
-    }
-
     private var transport: some View {
         let step = store.seekInterval
         return HStack(spacing: isFullscreen ? 56 : 36) {
@@ -1229,7 +783,8 @@ private struct PlayerSurface: View {
         hideTask?.cancel()
         hideTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 3_500_000_000)
-            guard !Task.isCancelled, playerManager.isPlaying else { return }
+            // Never hide the controls from under the Settings panel.
+            guard !Task.isCancelled, playerManager.isPlaying, !showSettings else { return }
             showControls = false
         }
     }
@@ -1732,16 +1287,11 @@ private struct CaptionPicker: View {
     }
 }
 
-/// Renders the current side-loaded or generated caption in the device's
-/// caption style (Settings › Accessibility › Subtitles & Captioning), falling
-/// back to white-on-shadow.
+/// Renders the current caption in Vela's own caption style (Settings ›
+/// Playback › Caption Style, or the player's Settings panel).
 struct CaptionOverlay: View {
     @Bindable var playerManager: VideoPlayerManager
     var bottomInset: CGFloat = 14
-    /// Settings › Player › Caption Size.
-    @AppStorage(CaptionSize.storageKey) private var captionScale = CaptionSize.medium.rawValue
-    @Environment(\.scenePhase) private var scenePhase
-    @State private var systemStyle = SystemCaptionStyle.current()
 
     var body: some View {
         VStack {
@@ -1758,15 +1308,7 @@ struct CaptionOverlay: View {
                     .padding(.bottom, bottomInset)
             }
             if let caption = playerManager.currentCaption {
-                Text(caption)
-                    // The app's Caption Size multiplies the system's size.
-                    .font(.system(size: CGFloat(16 * captionScale) * systemStyle.relativeSize, weight: .semibold))
-                    .foregroundStyle(systemStyle.foreground)
-                    .multilineTextAlignment(.center)
-                    .modifier(CaptionEdgeModifier(edge: systemStyle.edge))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .background(systemStyle.background, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                StyledCaptionText(text: caption)
                     .padding(.horizontal, 24)
                     .padding(.bottom, bottomInset)
                     .accessibilityLabel("Caption: \(caption)")
@@ -1774,77 +1316,6 @@ struct CaptionOverlay: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .allowsHitTesting(false)
-        // The style is edited in Settings, so re-read it on every return.
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .active { systemStyle = SystemCaptionStyle.current() }
-        }
-    }
-}
-
-/// The user's system caption appearance, read through MediaAccessibility.
-/// Font family is left to the app; color, opacity, size and edge follow
-/// the system.
-struct SystemCaptionStyle: Equatable {
-    enum EdgeStyle: Equatable { case none, shadow, raised, depressed, outline }
-
-    var foreground: Color = .white
-    var background: Color = .black.opacity(0.35)
-    var relativeSize: CGFloat = 1
-    var edge: EdgeStyle = .shadow
-
-    static func current() -> SystemCaptionStyle {
-        var style = SystemCaptionStyle()
-
-        // "Copy" functions return +1 references.
-        let foreground = MACaptionAppearanceCopyForegroundColor(.user, nil).takeRetainedValue()
-        let foregroundOpacity = MACaptionAppearanceGetForegroundOpacity(.user, nil)
-        // Fully transparent text would hide captions; treat it as unset.
-        if foregroundOpacity > 0.05 {
-            style.foreground = Color(uiColor: UIColor(cgColor: foreground)).opacity(Double(foregroundOpacity))
-        }
-
-        let background = MACaptionAppearanceCopyBackgroundColor(.user, nil).takeRetainedValue()
-        let backgroundOpacity = MACaptionAppearanceGetBackgroundOpacity(.user, nil)
-        if backgroundOpacity >= 0 && backgroundOpacity <= 1 {
-            style.background = Color(uiColor: UIColor(cgColor: background)).opacity(Double(backgroundOpacity))
-        }
-
-        let size = MACaptionAppearanceGetRelativeCharacterSize(.user, nil)
-        if size > 0 { style.relativeSize = min(max(size, 0.5), 2.5) }
-
-        switch MACaptionAppearanceGetTextEdgeStyle(.user, nil) {
-        case MACaptionAppearanceTextEdgeStyle.none: style.edge = .none
-        case .raised: style.edge = .raised
-        case .depressed: style.edge = .depressed
-        case .uniform: style.edge = .outline
-        default: style.edge = .shadow
-        }
-        return style
-    }
-}
-
-private struct CaptionEdgeModifier: ViewModifier {
-    let edge: SystemCaptionStyle.EdgeStyle
-
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        switch edge {
-        case .none:
-            content
-        case .shadow:
-            content
-                .shadow(color: .black, radius: 2)
-                .shadow(color: .black.opacity(0.8), radius: 4)
-        case .raised:
-            content.shadow(color: .black.opacity(0.9), radius: 0, x: 1, y: 1)
-        case .depressed:
-            content.shadow(color: .black.opacity(0.9), radius: 0, x: -1, y: -1)
-        case .outline:
-            content
-                .shadow(color: .black, radius: 0.5)
-                .shadow(color: .black, radius: 0.5)
-                .shadow(color: .black, radius: 0.5)
-        }
     }
 }
 
