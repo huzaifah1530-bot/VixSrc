@@ -64,7 +64,8 @@ function playlistUrls(html: string, embedUrl: URL): ResolvedStream[] | null {
   }
   const lang = embedUrl.searchParams.get('lang')
   if (lang) extra.push(['lang', lang])
-  extra.push(['h', '1'])
+  // VixSrc 403s the playlist when `h=1` is sent but FHD isn't allowed.
+  if (/canPlayFHD\s*=\s*true/i.test(html)) extra.push(['h', '1'])
   extra.forEach(([k, v]) => master.searchParams.append(k, v))
 
   const headers = { 'User-Agent': MOBILE_UA }

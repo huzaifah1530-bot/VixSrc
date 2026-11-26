@@ -294,7 +294,10 @@ struct StreamURLExtractor {
         if let language = embedQuery.first(where: { $0.name == "lang" })?.value {
             components.queryItems = (components.queryItems ?? []) + [URLQueryItem(name: "lang", value: language)]
         }
-        components.queryItems = (components.queryItems ?? []) + [URLQueryItem(name: "h", value: "1")]
+        // VixSrc 403s the playlist when `h=1` is sent but FHD isn't allowed.
+        if firstCapture(pattern: "canPlayFHD\\s*=\\s*(true)", in: html) != nil {
+            components.queryItems = (components.queryItems ?? []) + [URLQueryItem(name: "h", value: "1")]
+        }
 
         var streams: [ResolvedStream] = []
         let streamPattern = "\\{\\s*['\\\"]name['\\\"]\\s*:\\s*['\\\"]([^'\\\"]+)['\\\"][\\s\\S]*?['\\\"]url['\\\"]\\s*:\\s*['\\\"]([^'\\\"]+)['\\\"]"
