@@ -113,7 +113,6 @@ final class AutoCaptionEngine {
         resultCount = 0
         windowsDone = 0
         onStatus("Loading the episode's sound…")
-        enhancer.reset()
         ticker = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
@@ -158,7 +157,6 @@ final class AutoCaptionEngine {
         recognizers = []
         retainedCues = []
         roughCues = []
-        enhancer.reset()
     }
 
     // MARK: Diagnostics
@@ -183,7 +181,6 @@ final class AutoCaptionEngine {
         if let next = cues.first(where: { $0.end > now }) {
             parts.append(next.start <= now ? "Showing" : "Next line in \(String(format: "%.1f", next.start - now)) s")
         }
-        parts.append("Dialogue \(enhancing ? "on" : "off")")
         return parts.joined(separator: " · ")
     }
 
@@ -200,12 +197,6 @@ final class AutoCaptionEngine {
         return false
     }
 
-    /// Clearer sound for the engine only (`DialogueEnhancer`). Settings ›
-    /// Playback › Captions can turn it off to compare.
-    static let enhanceKey = "vela_caption_enhance_dialogue"
-    private let enhancer = DialogueEnhancer()
-    private var enhancing: Bool { UserDefaults.standard.object(forKey: Self.enhanceKey) as? Bool ?? true }
-    private var lastEnhancing: Bool?
     var onDiagnostics: ((String) -> Void)?
 
     private func receive(_ raw: AudioChunk) {
@@ -216,12 +207,6 @@ final class AutoCaptionEngine {
             // Already sent (the viewer skipped back): its captions exist.
             guard let unsent = modern.unsent(raw) else { return }
             chunk = unsent
-        }
-        let enhance = enhancing
-        if enhance != lastEnhancing { enhancer.reset(); lastEnhancing = enhance }
-        if enhance {
-            guard let enhanced = enhancer.process(chunk) else { return }
-            chunk = enhanced
         }
         if #available(iOS 26.0, *), let modern = modern as? LongFormTranscriber {
             modern.feed(chunk)

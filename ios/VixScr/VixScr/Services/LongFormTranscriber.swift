@@ -121,12 +121,8 @@ final class LongFormTranscriber {
         let skip = range.upperBound - chunk.start
         guard skip < chunk.duration - 0.05 else { return nil }
         let drop = min(chunk.samples.count, Int(skip * chunk.rate))
-        var stereo: StereoSamples?
-        if let s = chunk.stereo {
-            stereo = StereoSamples(left: Array(s.left.dropFirst(drop)), right: Array(s.right.dropFirst(drop)))
-        }
         return AudioChunk(start: chunk.start + Double(drop) / chunk.rate, rate: chunk.rate,
-                          samples: Array(chunk.samples.dropFirst(drop)), playlistEnd: chunk.playlistEnd, stereo: stereo)
+                          samples: Array(chunk.samples.dropFirst(drop)), playlistEnd: chunk.playlistEnd)
     }
 
     private func cover(_ range: ClosedRange<Double>) {

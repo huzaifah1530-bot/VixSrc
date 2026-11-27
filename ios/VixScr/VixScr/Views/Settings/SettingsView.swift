@@ -358,7 +358,6 @@ struct SettingsView: View {
         }
     }
 
-    @AppStorage(AutoCaptionEngine.enhanceKey) private var enhanceDialogue = true
     @AppStorage(CaptionOverlay.diagnosticsKey) private var captionDiagnostics = false
 
     private var captionsSection: some View {
@@ -368,12 +367,11 @@ struct SettingsView: View {
             } label: {
                 LabeledContent("Caption Style", value: CaptionSize(rawValue: captionScale)?.label ?? "")
             }
-            Toggle("Isolate Dialogue for Auto Captions", isOn: $enhanceDialogue)
             Toggle("Caption Diagnostics", isOn: $captionDiagnostics)
         } header: {
             Text("Captions")
         } footer: {
-            Text("Caption Style: size, colour, font, background and edge for every caption Vela shows. Isolate Dialogue turns down music and effects, and evens out the level, in the copy of the sound auto-generated captions listen to; what you hear doesn't change. Caption Diagnostics shows how far ahead auto captions are ready, at the top of the player.")
+            Text("Caption Style: size, colour, font, background and edge for every caption Vela shows. Caption Diagnostics shows how far ahead auto captions are ready, at the top of the player.")
         }
     }
 
