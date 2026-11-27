@@ -14,7 +14,8 @@ final class HLSAudioFeed {
     }
 
     private(set) var state: State = .starting
-    var lookahead: Double = 30
+    /// Long enough that captions are always transcribed before they play.
+    var lookahead: Double = 45
 
     private let reader: HLSStreamReader
     private let playbackTime: () -> Double

@@ -790,6 +790,24 @@ final class CatalogViewModel {
                                        start: start, videoDuration: videoDuration)
         }
         playerManager.applyTitleConfig(store.titleSettings[titleKey]?.playback(season: selectedSeason?.seasonNumber))
+        updateCaptionVocabulary()
+    }
+
+    /// The title, its episode, cast and character names: generated
+    /// captions get names right more often when told what to listen for.
+    private func updateCaptionVocabulary() {
+        var names: [String] = []
+        if let item = selected { names.append(item.title) }
+        if let episode = selectedEpisode?.name { names.append(episode) }
+        for member in cast.prefix(30) {
+            names.append(member.name)
+            if let character = member.character?.split(separator: "/").first {
+                let clean = character.trimmingCharacters(in: .whitespaces)
+                if !clean.isEmpty, clean.count < 40 { names.append(clean) }
+            }
+        }
+        var seen = Set<String>()
+        playerManager.captionVocabulary = names.filter { seen.insert($0.lowercased()).inserted }
     }
 
     /// Everything Show / Movie Settings needs for the open title.
@@ -1049,6 +1067,7 @@ final class CatalogViewModel {
             let response = try await client.credits(type: item.type, tmdbId: item.tmdbId, credential: store.credential)
             guard !Task.isCancelled, selected?.id == item.id else { return }
             cast = Array((response.cast ?? []).prefix(15))
+            updateCaptionVocabulary()
         } catch {
             guard !Task.isCancelled, selected?.id == item.id else { return }
             cast = []

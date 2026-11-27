@@ -420,6 +420,8 @@ final class AnimeViewModel {
                                        start: start, videoDuration: videoDuration)
         }
         playerManager.applyTitleConfig(store.titleSettings[titleKey]?.playback)
+        playerManager.captionVocabulary = ([item.title, details?.show.japaneseTitle ?? "", selectedEpisode?.title ?? ""]
+            + (details?.identity?.titles ?? [])).filter { !$0.isEmpty && !$0.hasPrefix("Episode ") }
         if switchAudio, let wanted = titleAudioPreference,
            nativeSources.indices.contains(selectedNativeSourceIndex),
            nativeSources[selectedNativeSourceIndex].audio != wanted,

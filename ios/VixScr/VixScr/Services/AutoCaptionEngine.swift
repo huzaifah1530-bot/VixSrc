@@ -29,8 +29,9 @@ final class AutoCaptionEngine {
         let text: String
     }
 
-    /// Longest stretch of audio handed to one recognition request.
-    private static let windowSeconds = 10.0
+    /// Longest stretch of audio handed to one recognition request (the
+    /// iOS 17–25 engine). Longer gives the recognizer more context.
+    private static let windowSeconds = 15.0
     /// Recognitions running at once. iOS cancels an on-device recognition
     /// when another starts, so this must stay 1; 10-second windows on the
     /// device finish well within 10 seconds, and old audio is skipped.
@@ -52,6 +53,11 @@ final class AutoCaptionEngine {
     private var generation = 0
     private var resultCount = 0
     private var windowsDone = 0
+    /// iOS 26+: Apple's long-form transcriber (`LongFormTranscriber`).
+    private var modern: AnyObject?
+    private var spacedLanguage = true
+    /// Names to listen for: the title, its cast and characters.
+    private var vocabulary: [String] = []
 
     /// Nonisolated on purpose: Speech calls this handler on a background queue.
     /// A closure formed inside this @MainActor class would inherit main-actor
@@ -65,12 +71,38 @@ final class AutoCaptionEngine {
         return status == .authorized
     }
 
-    func start(feed: HLSAudioFeed, locale: Locale, playbackTime: @escaping () -> Double,
+    func start(feed: HLSAudioFeed, locale: Locale, vocabulary: [String] = [], playbackTime: @escaping () -> Double,
                onStatus: @escaping (String) -> Void = { _ in },
                onCues: @escaping ([SubtitleCue]) -> Void) throws {
         stop()
+        let language = locale.language.languageCode?.identifier ?? "en"
+        spacedLanguage = !["ja", "zh", "yue", "th"].contains(language)
+        self.vocabulary = vocabulary
+        // The older recognizer: the fallback on iOS 26+, the only engine below.
         let made = (0..<Self.parallelRequests).compactMap { _ in SFSpeechRecognizer(locale: locale) }
-        guard let first = made.first, first.isAvailable, first.supportsOnDeviceRecognition else {
+            .filter { $0.isAvailable && $0.supportsOnDeviceRecognition }
+        if #available(iOS 26.0, *) {
+            let modern = LongFormTranscriber(onWords: { [weak self] words, from, to in
+                self?.accept(words.map { Word(start: $0.start, end: $0.end, text: $0.text) }, from: from, to: to)
+            }, onStatus: { [weak self] status in
+                self?.onStatus(status)
+            })
+            self.modern = modern
+            Task { @MainActor [weak self] in
+                do {
+                    try await modern.start(locale: locale, vocabulary: vocabulary)
+                    guard let self, self.modern === modern else { return }
+                    if self.resultCount == 0 { self.onStatus("Listening…") }
+                } catch {
+                    guard let self, self.modern === modern else { return }
+                    modern.stop()
+                    self.modern = nil
+                    if self.recognizers.isEmpty {
+                        self.onStatus("On-device speech recognition isn't available for this language.")
+                    }
+                }
+            }
+        } else if made.isEmpty {
             throw Failure.unavailable
         }
         recognizers = made
@@ -99,6 +131,7 @@ final class AutoCaptionEngine {
 
     /// The playhead jumped; the feed starts over there, and so do we.
     func noteSeek(to time: Double) {
+        if #available(iOS 26.0, *), let modern = modern as? LongFormTranscriber { modern.restart() }
         generation += 1
         pending.removeAll()
         buffer = []
@@ -107,6 +140,8 @@ final class AutoCaptionEngine {
     }
 
     func stop() {
+        if #available(iOS 26.0, *), let modern = modern as? LongFormTranscriber { modern.stop() }
+        modern = nil
         if let listener { feed?.stopListening(listener) }
         listener = nil
         feed = nil
@@ -131,6 +166,11 @@ final class AutoCaptionEngine {
     private func receive(_ chunk: AudioChunk) {
         // Behind the playhead already (a slow start): no use transcribing.
         guard chunk.end > playbackTime() - 1 else { return }
+        if #available(iOS 26.0, *), let modern = modern as? LongFormTranscriber {
+            modern.feed(chunk)
+            return
+        }
+        guard !recognizers.isEmpty else { return }
         if resultCount == 0 { onStatus("Listening…") }
         let continuous = !buffer.isEmpty && chunk.rate == bufferRate && abs(chunk.start - bufferEnd) < 0.1
         if !continuous {
@@ -158,7 +198,7 @@ final class AutoCaptionEngine {
         let keep: Range<Double>
     }
 
-    private static let overlap = 1.0
+    private static let overlap = 2.0
     private var buffer: [Float] = []
     private var bufferStart = 0.0
     private var bufferRate = 48_000.0
@@ -207,7 +247,9 @@ final class AutoCaptionEngine {
     /// transcribing the past.
     private func fillWorkers() {
         let now = playbackTime()
-        pending.removeAll { $0.keep.upperBound < now + 0.5 }
+        // Only windows that have fully played are dropped; one still playing
+        // is worth finishing.
+        pending.removeAll { $0.keep.upperBound < now - 1 }
         pending.sort { $0.keep.lowerBound < $1.keep.lowerBound }
         while running < Self.parallelRequests, !pending.isEmpty {
             let window = pending.removeFirst()
@@ -236,6 +278,7 @@ final class AutoCaptionEngine {
         request.requiresOnDeviceRecognition = true
         request.shouldReportPartialResults = false
         request.addsPunctuation = true
+        request.contextualStrings = Array(vocabulary.prefix(100))
         request.append(buffer)
         request.endAudio()
 
@@ -303,18 +346,22 @@ final class AutoCaptionEngine {
         }
         var fresh: [SubtitleCue] = []
         var group: [Word] = []
+        // Japanese / Chinese words come without spaces between them.
+        let joiner = spacedLanguage ? " " : ""
+        let maxLength = spacedLanguage ? 42 : 22
+        func line(_ words: [Word]) -> String { words.map(\.text).joined(separator: joiner) }
         func finishGroup() {
             guard let first = group.first, let last = group.last else { return }
-            let text = CaptionText.format(group.map(\.text).joined(separator: " "))
-            fresh.append(SubtitleCue(start: first.start, end: last.end + 0.7, text: text))
+            fresh.append(SubtitleCue(start: first.start, end: last.end + 0.7, text: CaptionText.format(line(group))))
             group.removeAll()
         }
+        let enders: Set<Character> = [".", "?", "!", "。", "？", "！", "…"]
         for word in words {
-            if let last = group.last, word.start - last.end > 1.2 { finishGroup() }
+            // A pause, or a line that would get too long, starts a new line.
+            if let last = group.last,
+               word.start - last.end > 0.8 || line(group + [word]).count > maxLength { finishGroup() }
             group.append(word)
-            if group.count >= 9 || word.text.hasSuffix(".") || word.text.hasSuffix("?") || word.text.hasSuffix("!") {
-                finishGroup()
-            }
+            if let end = word.text.last, enders.contains(end) { finishGroup() }
         }
         finishGroup()
         retainedCues.removeAll { $0.start >= start - 0.05 && $0.start < end }
@@ -353,8 +400,9 @@ enum CaptionText {
 
     static func format(_ text: String) -> String {
         var out = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        out = out.replacingOccurrences(of: " ,", with: ",")
-        out = out.replacingOccurrences(of: " .", with: ".")
+        for mark in [",", ".", "?", "!", ";", ":", "'s", "n't"] {
+            out = out.replacingOccurrences(of: " " + mark, with: mark)
+        }
         // Group long digit runs: 1000000 → 1,000,000. Years and short
         // numbers are left alone so "1999" stays a year.
         guard let numberRuns else { return out }

@@ -1040,6 +1040,9 @@ final class VideoPlayerManager {
     @ObservationIgnored private(set) var streamReader: HLSStreamReader?
     @ObservationIgnored private var audioFeed: HLSAudioFeed?
     @ObservationIgnored private var streamSource: (url: URL, headers: [String: String], cookies: [HTTPCookie])?
+    /// Names generated captions should listen for (title, cast, characters),
+    /// set by the view models.
+    @ObservationIgnored var captionVocabulary: [String] = []
 
     /// The audio language the title's settings ask for, so the sound Vela
     /// reads is the track that's playing.
@@ -1079,7 +1082,7 @@ final class VideoPlayerManager {
         stopGeneratedCaptions()
         let engine = AutoCaptionEngine()
         do {
-            try engine.start(feed: feed, locale: Locale(identifier: locale),
+            try engine.start(feed: feed, locale: Locale(identifier: locale), vocabulary: captionVocabulary,
                              playbackTime: { [weak self] in self?.livePosition ?? 0 },
                              onStatus: { [weak self] status in
                 self?.generatedCaptionStatus = status.isEmpty ? nil : status
