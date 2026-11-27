@@ -253,35 +253,6 @@ struct CaptionConfidenceControl: View {
     }
 }
 
-/// When the Next Episode button shows up.
-struct NextEpisodeTimingControl: View {
-    @Binding var timing: NextEpisodeTiming
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Toggle("When the Credits Start", isOn: $timing.atOutro)
-            if timing.atOutro {
-                Text("Uses the credits found online for each episode; otherwise the time below.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Stepper(value: $timing.secondsBeforeEnd, in: NextEpisodeTiming.range, step: stepSize) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(durationString(timing.secondsBeforeEnd) + " before the end")
-                        .font(.body.monospacedDigit())
-                    if timing.secondsBeforeEnd == NextEpisodeTiming.appDefault {
-                        Text("App default").font(.caption).foregroundStyle(.secondary)
-                    }
-                }
-            }
-        }
-        .padding(.vertical, 4)
-    }
-
-    /// Fine steps near the end, coarser further out.
-    private var stepSize: Double { timing.secondsBeforeEnd < 120 ? 10 : 30 }
-}
-
 // MARK: - Entry card
 
 /// The row under a player that opens the title's settings page. Replaces the

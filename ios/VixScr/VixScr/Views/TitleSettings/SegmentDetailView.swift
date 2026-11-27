@@ -15,7 +15,7 @@ struct SegmentDetailView: View {
     @FocusState private var nameFocused: Bool
 
     private var settings: TitleSettings? { store.titleSettings[context.key] }
-    private var segment: RecordedSegment? { settings?.skipping.segments.first { $0.id == segmentID } }
+    private var segment: RecordedSegment? { settings?.skipping.segment(segmentID) }
 
     var body: some View {
         Form {
@@ -158,8 +158,8 @@ struct SegmentDetailView: View {
     }
 
     private func update(_ change: (inout RecordedSegment) -> Void) {
-        guard var settings, let index = settings.skipping.segments.firstIndex(where: { $0.id == segmentID }) else { return }
-        change(&settings.skipping.segments[index])
+        guard var settings, settings.skipping.segment(segmentID) != nil else { return }
+        settings.skipping.update(segmentID, change)
         store.saveTitleSettings(settings, key: context.key)
         context.apply()
     }
@@ -171,7 +171,7 @@ struct SegmentDetailView: View {
 
     private func delete() {
         guard var settings else { return }
-        settings.skipping.segments.removeAll { $0.id == segmentID }
+        settings.skipping.remove(segmentID)
         SegmentLibrary.delete(segmentID)
         store.saveTitleSettings(settings, key: context.key)
         context.apply()

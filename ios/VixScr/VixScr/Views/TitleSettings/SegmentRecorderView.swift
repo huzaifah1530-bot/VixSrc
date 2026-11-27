@@ -7,9 +7,11 @@ import SwiftUI
 /// to record it.
 struct SegmentRecorderView: View {
     let context: TitleContext
-    /// An existing segment this recording replaces ("Record Again").
-    let replacing: UUID?
+    let request: RecorderRequest
     let onSave: (RecordedSegment) -> Void
+
+    /// An existing segment this recording replaces ("Record Again").
+    private var replacing: UUID? { request.replacing }
 
     @Environment(AppStore.self) private var store
     @Environment(\.dismiss) private var dismiss
@@ -24,7 +26,7 @@ struct SegmentRecorderView: View {
 
     private var existing: RecordedSegment? {
         guard let replacing else { return nil }
-        return store.titleSettings[context.key]?.skipping.segments.first { $0.id == replacing }
+        return store.titleSettings[context.key]?.skipping.segment(replacing)
     }
 
     var body: some View {
@@ -69,7 +71,7 @@ struct SegmentRecorderView: View {
     @ViewBuilder private var content: some View {
         switch model.stage {
         case .choosing:
-            RecorderEpisodePicker(context: context) { episode in open(episode) }
+            RecorderEpisodePicker(context: context, preferredSeason: request.season) { episode in open(episode) }
         case .loading(let message):
             VStack(spacing: 14) {
                 ProgressView().controlSize(.large)
@@ -359,6 +361,17 @@ struct SegmentRecorderView: View {
             model.audioLanguage = code
         }
         guard model.stage == .choosing else { return }
+        if let suggestion = request.suggestion,
+           let episode = EpisodeRef.fromProgressKey(suggestion.episodeKey, label: suggestion.episodeLabel) {
+            // Straight to where Vela found it, already marked.
+            name = suggestion.name
+            detection = suggestion.detection
+            matchConfidence = suggestion.matchConfidence
+            model.open(episode, context: context, startingAt: max(0, suggestion.start - 3))
+            model.start = suggestion.start
+            model.end = suggestion.start + suggestion.duration
+            return
+        }
         if !context.kind.hasEpisodes, let movie = context.currentEpisode {
             open(movie)
         }
@@ -633,6 +646,8 @@ private struct RecorderTimeline: View {
 
 private struct RecorderEpisodePicker: View {
     let context: TitleContext
+    /// The season the segment is for; episodes are only offered from it.
+    var preferredSeason: Int? = nil
     let onPick: (EpisodeRef) -> Void
 
     @State private var season: Int?
@@ -652,13 +667,13 @@ private struct RecorderEpisodePicker: View {
                 Text("Pick an episode where the part you want to skip appears. You'll mark its start and end next.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
-                if let current = context.currentEpisode {
+                if let current = context.currentEpisode, preferredSeason == nil || current.season == preferredSeason {
                     Button { onPick(current) } label: {
                         episodeRow(current, badge: "Watching")
                     }
                 }
             }
-            if context.kind == .show, context.seasons.count > 1 {
+            if context.kind == .show, context.seasons.count > 1, preferredSeason == nil {
                 Section {
                     Picker("Season", selection: Binding(get: { season ?? context.seasons.first ?? 1 }, set: { season = $0 })) {
                         ForEach(context.seasons, id: \.self) { Text("Season \($0)").tag($0) }
@@ -682,7 +697,7 @@ private struct RecorderEpisodePicker: View {
         .searchable(text: $query, prompt: "Find an episode")
         .task(id: season) { await load() }
         .onAppear {
-            if season == nil { season = context.currentSeason ?? context.seasons.first }
+            if season == nil { season = preferredSeason ?? context.currentSeason ?? context.seasons.first }
         }
     }
 

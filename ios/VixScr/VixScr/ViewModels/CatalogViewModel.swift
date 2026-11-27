@@ -789,7 +789,7 @@ final class CatalogViewModel {
             store.rememberSegmentMatch(titleKey: titleKey, segmentID: id, episodeKey: episodeKey,
                                        start: start, videoDuration: videoDuration)
         }
-        playerManager.applyTitleConfig(store.titleSettings[titleKey]?.playback)
+        playerManager.applyTitleConfig(store.titleSettings[titleKey]?.playback(season: selectedSeason?.seasonNumber))
     }
 
     /// Everything Show / Movie Settings needs for the open title.

@@ -31,9 +31,10 @@ final class AutoCaptionEngine {
 
     /// Longest stretch of audio handed to one recognition request.
     private static let windowSeconds = 10.0
-    /// Recognitions running at once, so transcription keeps ahead of the
-    /// picture even when one request is slow.
-    private static let parallelRequests = 2
+    /// Recognitions running at once. iOS cancels an on-device recognition
+    /// when another starts, so this must stay 1; 10-second windows on the
+    /// device finish well within 10 seconds, and old audio is skipped.
+    private static let parallelRequests = 1
 
     private var feed: HLSAudioFeed?
     private var listener: UUID?
@@ -50,6 +51,7 @@ final class AutoCaptionEngine {
     private var playbackTime: () -> Double = { 0 }
     private var generation = 0
     private var resultCount = 0
+    private var windowsDone = 0
 
     /// Nonisolated on purpose: Speech calls this handler on a background queue.
     /// A closure formed inside this @MainActor class would inherit main-actor
@@ -77,6 +79,7 @@ final class AutoCaptionEngine {
         self.onStatus = onStatus
         self.playbackTime = playbackTime
         resultCount = 0
+        windowsDone = 0
         onStatus("Loading the episode's sound…")
         ticker = Task { @MainActor [weak self] in
             while !Task.isCancelled {
@@ -255,9 +258,13 @@ final class AutoCaptionEngine {
         tasks[id]?.cancel()
         tasks[id] = nil
         guard generation == self.generation else { return }
+        windowsDone += 1
         switch outcome {
         case .words(let words):
             accept(words.filter { window.keep.contains($0.start) }, from: window.keep.lowerBound, to: window.keep.upperBound)
+            if resultCount == 0, windowsDone >= 4 {
+                onStatus("Sound is coming in, but no speech has been recognised yet.")
+            }
         case .failed(let message):
             if resultCount == 0 { onStatus("Speech recognition error: \(message)") }
         }

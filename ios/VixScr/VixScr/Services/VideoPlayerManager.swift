@@ -660,7 +660,15 @@ final class VideoPlayerManager {
     /// before the end.
     var nextEpisodeButtonTime: Double {
         let timing = titleConfig?.nextEpisode
-        if timing?.atOutro == true, let outro = skipSegments.first(where: { $0.kind == .outro }) { return outro.start }
+        switch timing?.trigger {
+        case .onlineCredits?:
+            if let outro = skipSegments.first(where: { $0.kind == .outro && $0.source != .recorded }) { return outro.start }
+        case .segment?:
+            let ids = Set(titleConfig?.nextEpisodeSegments.map(\.id) ?? [])
+            if let start = foundSegmentStarts.filter({ ids.contains($0.key) }).values.min() { return max(0, start) }
+        default:
+            break
+        }
         let lead = timing?.secondsBeforeEnd ?? NextEpisodeTiming.appDefault
         return duration - lead
     }
@@ -668,6 +676,10 @@ final class VideoPlayerManager {
     var isNextEpisodeTime: Bool {
         duration.isFinite && duration > 0 && currentTime >= nextEpisodeButtonTime
     }
+
+    /// Count down and start the next episode when its button appears.
+    var autoNextEpisode: Bool { titleConfig?.nextEpisode?.autoPlay == true }
+    var autoNextCountdown: Int { titleConfig?.nextEpisode?.countdown ?? 5 }
 
     /// The track the title's default caption chose in this episode, and how
     /// sure the match was. Shown in the title's settings.
@@ -707,7 +719,7 @@ final class VideoPlayerManager {
     /// Recorded segments for this episode: remembered positions apply at
     /// once; the rest are looked for as the episode plays.
     private func prepareRecordedSegments() {
-        guard let config = titleConfig, config.skipSource == .recorded, !config.recordedSegments.isEmpty,
+        guard let config = titleConfig, !config.detectionTargets.isEmpty,
               !introKey.isEmpty, duration > 0, let item = player?.currentItem else { return }
         let marker = "\(introKey)|\(config.skipSignature.joined(separator: ","))"
         guard recordedPreparedFor != marker else { return }
@@ -717,9 +729,10 @@ final class VideoPlayerManager {
         var known: [SkipSegment] = []
         var targets: [SegmentDetector.Target] = []
         var starts: [UUID: Double] = [:]
-        for segment in config.recordedSegments {
+        let skippable = Set(config.recordedSegments.map(\.id))
+        for segment in config.detectionTargets {
             if let match = segment.match(for: introKey, videoDuration: duration) {
-                known.append(recordedSkip(segment, start: match.start))
+                if skippable.contains(segment.id) { known.append(recordedSkip(segment, start: match.start)) }
                 starts[segment.id] = match.start
             } else if let print = SegmentLibrary.load(segment.id) {
                 targets.append(SegmentDetector.Target(segment: segment, print: print))
@@ -746,11 +759,13 @@ final class VideoPlayerManager {
 
     private func recordedSegmentFound(_ id: UUID, start: Double) {
         searchingSegmentIDs.remove(id)
-        guard let segment = titleConfig?.recordedSegments.first(where: { $0.id == id }) else { return }
+        guard let config = titleConfig, let segment = config.detectionTargets.first(where: { $0.id == id }) else { return }
         // Must fit this video; a "match" past the end is noise.
         guard start > -segment.duration, duration <= 0 || start < duration - SkipSegments.minSegmentSeconds else { return }
-        recordedFound.removeAll { $0.label == segment.buttonTitle && abs($0.start - max(0, start)) < 1 }
-        recordedFound.append(recordedSkip(segment, start: start))
+        if config.recordedSegments.contains(where: { $0.id == id }) {
+            recordedFound.removeAll { $0.label == segment.buttonTitle && abs($0.start - max(0, start)) < 1 }
+            recordedFound.append(recordedSkip(segment, start: start))
+        }
         foundSegmentStarts[id] = start
         recomputeSegments()
         // Found partway in: let the tracker treat it as just reached, so an

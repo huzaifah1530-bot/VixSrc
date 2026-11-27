@@ -408,7 +408,7 @@ struct SettingsView: View {
     }
 
     @ViewBuilder private var titleSettingsSection: some View {
-        let customised = store.titleSettings.filter { $0.value.isCustomised || !$0.value.skipping.segments.isEmpty }
+        let customised = store.titleSettings.filter { $0.value.isCustomised || !$0.value.skipping.allSegments.isEmpty }
         if !customised.isEmpty {
             Section {
                 ForEach(customised.keys.sorted { (customised[$0]?.title ?? $0) < (customised[$1]?.title ?? $1) }, id: \.self) { key in
@@ -443,7 +443,7 @@ struct SettingsView: View {
         if settings.captionTiming.enabled { parts.append("Timing") }
         if settings.audio.enabled { parts.append(settings.kind == .anime ? "Sub/Dub" : "Audio") }
         if settings.skipping.enabled {
-            let count = settings.skipping.segments.count
+            let count = settings.skipping.allSegments.count
             parts.append(settings.skipping.source == .recorded ? (count == 1 ? "1 segment" : "\(count) segments") : "Online skips")
         }
         return parts.isEmpty ? "Recorded segments kept" : parts.joined(separator: " · ")

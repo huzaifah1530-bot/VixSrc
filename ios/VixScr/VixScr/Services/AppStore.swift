@@ -499,28 +499,44 @@ final class AppStore {
 
     /// Remembers where a recorded segment was found in an episode.
     func rememberSegmentMatch(titleKey: String, segmentID: UUID, episodeKey: String, start: Double, videoDuration: Double) {
-        guard var settings = titleSettings[titleKey],
-              let index = settings.skipping.segments.firstIndex(where: { $0.id == segmentID }) else { return }
-        var segment = settings.skipping.segments[index]
-        segment.matches[episodeKey] = SegmentMatch(start: start, videoDuration: videoDuration, foundAt: Date())
-        if segment.matches.count > RecordedSegment.maxRememberedMatches {
-            let oldest = segment.matches.sorted { $0.value.foundAt < $1.value.foundAt }
-                .prefix(segment.matches.count - RecordedSegment.maxRememberedMatches)
-            for (key, _) in oldest { segment.matches[key] = nil }
+        guard var settings = titleSettings[titleKey], settings.skipping.segment(segmentID) != nil else { return }
+        settings.skipping.update(segmentID) { segment in
+            segment.matches[episodeKey] = SegmentMatch(start: start, videoDuration: videoDuration, foundAt: Date())
+            if segment.matches.count > RecordedSegment.maxRememberedMatches {
+                let oldest = segment.matches.sorted { $0.value.foundAt < $1.value.foundAt }
+                    .prefix(segment.matches.count - RecordedSegment.maxRememberedMatches)
+                for (key, _) in oldest { segment.matches[key] = nil }
+            }
         }
-        settings.skipping.segments[index] = segment
         // Not `saveTitleSettings`: a match isn't an edit by the viewer.
         titleSettings[titleKey] = settings
     }
 
     /// Clears a title's settings and its recorded fingerprints.
     func resetTitleSettings(key: String) {
-        for segment in titleSettings[key]?.skipping.segments ?? [] { SegmentLibrary.delete(segment.id) }
+        for segment in titleSettings[key]?.skipping.allSegments ?? [] { SegmentLibrary.delete(segment.id) }
         titleSettings[key] = nil
     }
 
     var allRecordedSegmentIDs: Set<UUID> {
-        Set(titleSettings.values.flatMap { $0.skipping.segments.map(\.id) })
+        Set(titleSettings.values.flatMap { $0.skipping.allSegments.map(\.id) })
+    }
+
+    /// Adds a suggestion for `season`, unless that season already has a
+    /// segment or suggestion with the same name.
+    func addSegmentSuggestion(_ suggestion: SegmentSuggestion, titleKey: String, season: Int) {
+        guard var settings = titleSettings[titleKey] else { return }
+        let name = suggestion.name.lowercased()
+        guard !settings.skipping.segments(season: season).contains(where: { $0.name.lowercased() == name }),
+              !settings.skipping.suggestions(season: season).contains(where: { $0.name.lowercased() == name }) else { return }
+        settings.skipping.suggestions[String(season), default: []].append(suggestion)
+        titleSettings[titleKey] = settings
+    }
+
+    func removeSegmentSuggestion(_ id: UUID, titleKey: String) {
+        guard var settings = titleSettings[titleKey] else { return }
+        for key in settings.skipping.suggestions.keys { settings.skipping.suggestions[key]?.removeAll { $0.id == id } }
+        titleSettings[titleKey] = settings
     }
 
     // MARK: Backup (export / import)

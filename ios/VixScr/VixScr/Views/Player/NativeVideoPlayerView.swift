@@ -108,6 +108,9 @@ private struct PlayerSurface: View {
     // video layer and badge instead of the whole player.
     @State private var zoom = PlayerZoomModel()
     @State private var showSettings = false
+    @State private var autoNextRemaining: Int?
+    @State private var autoNextTask: Task<Void, Never>?
+    @State private var autoNextDismissedFor: String?
 
     enum Side { case left, right }
 
@@ -306,9 +309,120 @@ private struct PlayerSurface: View {
 
             topBadges
 
+            autoNextBanner
+
             skipIntroButton
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onChange(of: autoNextArmed) { _, armed in
+            if armed { startAutoNext() } else { cancelAutoNext() }
+        }
+        .onChange(of: playerManager.currentEpisodeKey) { _, _ in
+            cancelAutoNext()
+            autoNextDismissedFor = nil
+        }
+        .onDisappear { cancelAutoNext() }
+    }
+
+    // MARK: Automatic next episode
+
+    /// Only the surface on screen counts down (the inline one stays alive
+    /// under fullscreen), and watch-party viewers can't move the room.
+    private var autoNextArmed: Bool {
+        let party = PartySession.shared
+        return playerManager.autoNextEpisode && hasNextEpisodeVisible &&
+            (isFullscreen || !playerManager.wantsFullscreen) &&
+            !(party.active && !party.canControl) &&
+            autoNextDismissedFor != playerManager.currentEpisodeKey &&
+            !playerManager.isLoading && playerManager.error == nil
+    }
+
+    private func startAutoNext() {
+        guard autoNextTask == nil else { return }
+        autoNextRemaining = playerManager.autoNextCountdown
+        autoNextTask = Task { @MainActor in
+            while !Task.isCancelled, let remaining = autoNextRemaining, remaining > 0 {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                guard !Task.isCancelled else { return }
+                // Paused: the countdown waits too.
+                if playerManager.isPlaying { autoNextRemaining = remaining - 1 }
+            }
+            guard !Task.isCancelled else { return }
+            playAutoNextNow()
+        }
+    }
+
+    private func playAutoNextNow() {
+        autoNextDismissedFor = playerManager.currentEpisodeKey
+        autoNextTask?.cancel()
+        autoNextTask = nil
+        withAnimation(spring) { autoNextRemaining = nil }
+        options.onNextEpisode?()
+    }
+
+    private func cancelAutoNext() {
+        autoNextTask?.cancel()
+        autoNextTask = nil
+        withAnimation(spring) { autoNextRemaining = nil }
+    }
+
+    @ViewBuilder private var autoNextBanner: some View {
+        if let remaining = autoNextRemaining {
+            VStack {
+                HStack(spacing: 12) {
+                    ZStack {
+                        Circle().stroke(Color.white.opacity(0.25), lineWidth: 3)
+                        Circle()
+                            .trim(from: 0, to: CGFloat(remaining) / CGFloat(max(1, playerManager.autoNextCountdown)))
+                            .stroke(Color.white, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                            .rotationEffect(.degrees(-90))
+                            .animation(.linear(duration: 1), value: remaining)
+                        Text("\(remaining)")
+                            .font(.subheadline.weight(.bold).monospacedDigit())
+                            .contentTransition(.numericText(countsDown: true))
+                    }
+                    .frame(width: 30, height: 30)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Next episode in \(remaining)")
+                            .font(.subheadline.weight(.semibold).monospacedDigit())
+                            .contentTransition(.numericText(countsDown: true))
+                        if let label = options.nextEpisodeLabel {
+                            Text(label).font(.caption).foregroundStyle(.white.opacity(0.7)).lineLimit(1)
+                        }
+                    }
+                    Button("Cancel") {
+                        autoNextDismissedFor = playerManager.currentEpisodeKey
+                        cancelAutoNext()
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .background(Color.white.opacity(0.16), in: Capsule())
+                    .buttonStyle(.plain)
+                    Button { playAutoNextNow() } label: {
+                        Image(systemName: "forward.end.fill")
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(.black)
+                            .frame(width: 34, height: 34)
+                            .background(Color.white, in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Play next episode now")
+                }
+                .foregroundStyle(.white)
+                .padding(.leading, 10)
+                .padding(.trailing, 8)
+                .padding(.vertical, 8)
+                .vixGlass(.strong, cornerRadius: 999)
+                .padding(.top, isFullscreen ? 24 : 10)
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Next episode in \(remaining) seconds")
+                Spacer()
+            }
+            .transition(.move(edge: .top).combined(with: .opacity).combined(with: .scale(scale: 0.85)))
+            .animation(.spring(response: 0.3, dampingFraction: 0.8), value: remaining)
+            .zIndex(5)
+        }
     }
 
     /// Scrims only; they never take touches. Full-bleed so the gradient

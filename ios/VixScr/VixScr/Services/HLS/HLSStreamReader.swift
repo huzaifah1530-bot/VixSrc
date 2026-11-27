@@ -69,6 +69,12 @@ actor HLSStreamReader {
 
     var duration: Double { audioPlaylist?.duration ?? videoPlaylist?.duration ?? 0 }
 
+    /// The stream's length, reading its playlists if needed.
+    func loadDuration() async throws -> Double {
+        try await prepare()
+        return duration
+    }
+
     /// Where the audio segments covering `start..<end` finish.
     func audioSegmentsEnd(from start: Double, to end: Double) async throws -> Double {
         try await prepare()

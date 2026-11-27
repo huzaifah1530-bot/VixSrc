@@ -34,9 +34,11 @@ struct TitleSettingsView: View {
             settings = store.settings(forTitle: context.key, title: context.title, kind: kind)
             if !settings.setupCompleted { showSetup = true }
         }
-        // Matches found while this page is open (the video keeps playing).
+        // Matches, suggestions and segments saved elsewhere (the video keeps
+        // playing, season pages save directly). Every edit here is saved at
+        // once, so the stored copy is always the newest.
         .onChange(of: store.titleSettings[context.key]) { _, saved in
-            if let saved { settings.skipping.segments = saved.skipping.segments }
+            if let saved { settings = saved }
         }
         .fullScreenCover(isPresented: $showSetup) {
             TitleSetupFlow(context: context, initial: settings) { result, wantsRecording in
@@ -48,14 +50,14 @@ struct TitleSettingsView: View {
                     // Let the walkthrough slide away first.
                     Task { @MainActor in
                         try? await Task.sleep(nanoseconds: 450_000_000)
-                        recorder = RecorderRequest(replacing: nil)
+                        recorder = RecorderRequest(replacing: nil, season: nil)
                     }
                 }
             }
         }
         .fullScreenCover(item: $recorder) { request in
-            SegmentRecorderView(context: context, replacing: request.replacing) { segment in
-                save(recorded: segment, replacing: request.replacing)
+            SegmentRecorderView(context: context, request: request) { segment in
+                RecordedSegmentSaver.save(segment, request: request, context: context, store: store)
             }
         }
         .confirmationDialog("Reset \(kind.settingsTitle)?", isPresented: $confirmReset, titleVisibility: .visible) {
@@ -196,29 +198,69 @@ struct TitleSettingsView: View {
         }
 
         if settings.skipping.enabled && settings.skipping.source == .recorded {
-            Section {
-                ForEach(settings.skipping.segments) { segment in
-                    NavigationLink {
-                        SegmentDetailView(context: context, segmentID: segment.id) {
-                            recorder = RecorderRequest(replacing: segment.id)
-                        }
-                    } label: {
-                        SegmentRow(segment: segment, manager: context.playerManager)
+            if kind == .show {
+                Section {
+                    Picker("Segments Apply To", selection: binding(\.skipping.scope)) {
+                        Text("Entire Show").tag(SegmentScope.show)
+                        Text("Each Season").tag(SegmentScope.season)
                     }
+                } footer: {
+                    Text(settings.skipping.scope == .show
+                         ? "The same segments are looked for in every season."
+                         : "Each season has its own segments, for shows whose opening changes. Segments for the entire show are kept for if you switch back.")
                 }
-                Button {
-                    recorder = RecorderRequest(replacing: nil)
-                } label: {
-                    Label(settings.skipping.segments.isEmpty ? "Record a Segment" : "Record Another Segment",
-                          systemImage: "plus.circle.fill")
-                }
-            } header: {
-                Text("My Segments")
-            } footer: {
-                Text(kind.hasEpisodes
-                     ? "Pick an episode, mark where the part starts and ends, and name it. Each segment gets its own Skip button."
-                     : "Mark where the part starts and ends, and name it. It gets its own Skip button.")
             }
+            if kind == .show && settings.skipping.scope == .season {
+                seasonListSection
+            } else {
+                showSegmentsSection
+            }
+        }
+    }
+
+    private var showSegmentsSection: some View {
+        Section {
+            ForEach(settings.skipping.segments) { segment in
+                NavigationLink {
+                    SegmentDetailView(context: context, segmentID: segment.id) {
+                        recorder = RecorderRequest(replacing: segment.id, season: nil)
+                    }
+                } label: {
+                    SegmentRow(segment: segment, manager: context.playerManager)
+                }
+            }
+            Button {
+                recorder = RecorderRequest(replacing: nil, season: nil)
+            } label: {
+                Label(settings.skipping.segments.isEmpty ? "Record a Segment" : "Record Another Segment",
+                      systemImage: "plus.circle.fill")
+            }
+        } header: {
+            Text("My Segments")
+        } footer: {
+            Text(kind.hasEpisodes
+                 ? "Pick an episode, mark where the part starts and ends, and name it. Each segment gets its own Skip button."
+                 : "Mark where the part starts and ends, and name it. It gets its own Skip button.")
+        }
+    }
+
+    private var seasonListSection: some View {
+        Section {
+            if context.seasons.isEmpty {
+                Text("Seasons are still loading.").foregroundStyle(.secondary)
+            }
+            ForEach(context.seasons, id: \.self) { season in
+                NavigationLink {
+                    SeasonSegmentsView(context: context, season: season)
+                } label: {
+                    SeasonStatusRow(season: season, skipping: settings.skipping,
+                                    scanning: SeasonSuggestionFinder.shared.isScanning(titleKey: context.key, season: season))
+                }
+            }
+        } header: {
+            Text("My Segments by Season")
+        } footer: {
+            Text("✓ set up · ⚠ Vela found something you set up in another season; check it and save it · blank: nothing yet. Recording a segment looks for it in the other seasons.")
         }
     }
 
@@ -231,17 +273,55 @@ struct TitleSettingsView: View {
     @ViewBuilder private var nextEpisodeSection: some View {
         if kind.hasEpisodes {
             Section {
-                Toggle("Custom Next Episode Timing", isOn: binding(\.nextEpisode.enabled))
-                if settings.nextEpisode.enabled {
-                    NextEpisodeTimingControl(timing: binding(\.nextEpisode))
-                }
+                Toggle("Custom Next Episode", isOn: binding(\.nextEpisode.enabled))
             } header: {
                 Text("Next Episode")
             } footer: {
-                Text(settings.nextEpisode.enabled
-                     ? "When the Next Episode button appears in the player for this \(kind.noun.lowercased())."
-                     : "Off: the Next Episode button appears five minutes before the end.")
+                if !settings.nextEpisode.enabled {
+                    Text("Off: the Next Episode button appears five minutes before the end.")
+                }
             }
+            if settings.nextEpisode.enabled {
+                Section {
+                    Picker("Show Button", selection: binding(\.nextEpisode.trigger)) {
+                        Text("Before the End").tag(NextEpisodeTiming.Trigger.beforeEnd)
+                        Text("When Credits Start").tag(NextEpisodeTiming.Trigger.onlineCredits)
+                        ForEach(settings.skipping.segmentNames, id: \.self) { name in
+                            Text("When “\(name.isEmpty ? "Skip" : name)” Starts").tag(NextEpisodeTiming.Trigger.segment(name: name))
+                        }
+                    }
+                    Stepper(value: binding(\.nextEpisode.secondsBeforeEnd), in: NextEpisodeTiming.range,
+                            step: settings.nextEpisode.secondsBeforeEnd < 120 ? 10 : 30) {
+                        LabeledContent(settings.nextEpisode.trigger == .beforeEnd ? "Before the End" : "Otherwise",
+                                       value: durationString(settings.nextEpisode.secondsBeforeEnd))
+                    }
+                } footer: {
+                    Text(triggerFooter)
+                }
+                Section {
+                    Toggle("Play Next Automatically", isOn: binding(\.nextEpisode.autoPlay))
+                    if settings.nextEpisode.autoPlay {
+                        Stepper(value: binding(\.nextEpisode.countdown), in: NextEpisodeTiming.countdownRange) {
+                            LabeledContent("Countdown", value: "\(settings.nextEpisode.countdown) s")
+                        }
+                    }
+                } footer: {
+                    Text(settings.nextEpisode.autoPlay
+                         ? "When the button appears, a countdown shows at the top of the player. Tap Cancel to stay on the episode."
+                         : "Off: the next episode only starts when you tap the button.")
+                }
+            }
+        }
+    }
+
+    private var triggerFooter: String {
+        switch settings.nextEpisode.trigger {
+        case .beforeEnd:
+            return "The Next Episode button appears this long before the end."
+        case .onlineCredits:
+            return "Uses the credits found online for each episode. Episodes without them use the time above."
+        case .segment(let name):
+            return "Appears when Vela finds your “\(name.isEmpty ? "Skip" : name)” segment, even if skipping uses online timestamps. Episodes where it isn't found use the time above."
         }
     }
 
@@ -281,7 +361,7 @@ struct TitleSettingsView: View {
         Section {
             Button("Run Setup Again") { showSetup = true }
             Button("Reset \(kind.settingsTitle)", role: .destructive) { confirmReset = true }
-                .disabled(!settings.isCustomised && settings.skipping.segments.isEmpty)
+                .disabled(!settings.isCustomised && settings.skipping.allSegments.isEmpty)
         }
     }
 
@@ -299,43 +379,95 @@ struct TitleSettingsView: View {
     }
 
     private func commit() {
-        // Keep matches recorded meanwhile; the page holds an older copy.
+        // Keep matches recorded meanwhile; the page may hold an older copy.
         if let saved = store.titleSettings[context.key] {
-            for index in settings.skipping.segments.indices {
-                if let current = saved.skipping.segments.first(where: { $0.id == settings.skipping.segments[index].id }) {
-                    settings.skipping.segments[index].matches = current.matches
-                }
-            }
+            settings.skipping.adoptMatches(from: saved.skipping)
+            settings.skipping.suggestions = saved.skipping.suggestions
         }
         store.saveTitleSettings(settings, key: context.key)
         context.apply()
     }
+}
 
-    private func save(recorded segment: RecordedSegment, replacing id: UUID?) {
-        settings = store.settings(forTitle: context.key, title: context.title, kind: kind)
-        if let id, let index = settings.skipping.segments.firstIndex(where: { $0.id == id }) {
-            var updated = segment
-            updated.id = id
-            settings.skipping.segments[index] = updated
-        } else {
-            settings.skipping.segments.append(segment)
+/// What the recorder is for: a new segment or "Record Again", in a season
+/// or the whole title, optionally starting from a suggestion.
+struct RecorderRequest: Identifiable {
+    let id = UUID()
+    let replacing: UUID?
+    let season: Int?
+    var suggestion: SegmentSuggestion? = nil
+}
+
+/// Saves a finished recording where it belongs, and for per-season shows
+/// looks for it in the other seasons.
+@MainActor
+enum RecordedSegmentSaver {
+    static func save(_ segment: RecordedSegment, request: RecorderRequest, context: TitleContext, store: AppStore) {
+        var settings = store.settings(forTitle: context.key, title: context.title, kind: context.kind)
+        var updated = segment
+        if let id = request.replacing { updated.id = id }
+        settings.skipping.put(updated, season: request.season)
+        if let suggestion = request.suggestion {
+            for key in settings.skipping.suggestions.keys {
+                settings.skipping.suggestions[key]?.removeAll { $0.id == suggestion.id }
+            }
         }
         settings.skipping.enabled = true
         settings.skipping.source = .recorded
         settings.setupCompleted = true
         store.saveTitleSettings(settings, key: context.key)
         context.apply()
+        if let season = request.season, settings.skipping.scope == .season, context.kind == .show {
+            SeasonSuggestionFinder.shared.findOthers(for: updated, from: season, context: context, store: store)
+        }
     }
 }
 
-/// Which segment the recorder replaces (nil: a new one).
-struct RecorderRequest: Identifiable {
-    let id = UUID()
-    let replacing: UUID?
+/// A season in the per-season list: set up, suggested, or empty.
+private struct SeasonStatusRow: View {
+    let season: Int
+    let skipping: SkipSettings
+    let scanning: Bool
+
+    var body: some View {
+        let segments = skipping.segments(season: season)
+        let suggestions = skipping.suggestions(season: season)
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Season \(season)")
+                if !segments.isEmpty || !suggestions.isEmpty {
+                    Text(detail(segments: segments.count, suggestions: suggestions.count))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            if scanning {
+                ProgressView().controlSize(.small)
+            }
+            if !suggestions.isEmpty {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                    .accessibilityLabel("Suggested segments to check")
+            }
+            if !segments.isEmpty {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                    .accessibilityLabel("Set up")
+            }
+        }
+    }
+
+    private func detail(segments: Int, suggestions: Int) -> String {
+        var parts: [String] = []
+        if segments > 0 { parts.append(segments == 1 ? "1 segment" : "\(segments) segments") }
+        if suggestions > 0 { parts.append(suggestions == 1 ? "1 suggestion" : "\(suggestions) suggestions") }
+        return parts.joined(separator: " · ")
+    }
 }
 
-/// One recorded segment in the list.
-private struct SegmentRow: View {
+/// One recorded segment in a list.
+struct SegmentRow: View {
     let segment: RecordedSegment
     @Bindable var manager: VideoPlayerManager
 
