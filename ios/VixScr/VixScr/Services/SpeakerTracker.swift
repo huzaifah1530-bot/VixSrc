@@ -259,9 +259,15 @@ final class SpeakerTracker {
         onChange?(earliest)
     }
 
+    /// Sortformer's turns run late against the speech. Measured with
+    /// tools/caption-lab on Game of Thrones, Breaking Bad and Tears of Steel
+    /// against their subtitles: moving turns 0.4–0.8 s earlier roughly
+    /// halved lines split while one person talks, for every model version.
+    private static let lag = 0.6
+
     private func map(_ turn: Turn) -> Turn? {
         guard let start = playbackTime(turn.start), let end = playbackTime(turn.end), end > start else { return nil }
-        return Turn(start: start, end: end, speaker: turn.speaker)
+        return Turn(start: max(0, start - Self.lag), end: end - Self.lag, speaker: turn.speaker)
     }
 
     private func playbackTime(_ time: Double) -> Double? {

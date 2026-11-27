@@ -189,7 +189,7 @@ for name in CommandLine.arguments.dropFirst() {
             print("     \(rule.name.padding(toLength: 26, withPad: " ", startingAt: 0))  \(pct(s.falseSplit, s.single)) of \(s.single)   \(pct(s.hits, s.dashed)) of \(s.dashed)   \(pct(s.unlabeled, s.total))")
         }
         // Timing check: does shifting the speaker turns improve things?
-        let probe = rules[3]
+        let probe = rules.first { $0.name.hasPrefix("APP") } ?? rules[3]
         var sweep: [String] = []
         for step in stride(from: -2.0, through: 2.0, by: 0.4) {
             let s = score(ws, label(ws, turns, probe, shift: step), cues: meta.cues)
