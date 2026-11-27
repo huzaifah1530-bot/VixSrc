@@ -30,14 +30,20 @@ final class AutoCaptionEngine {
     }
 
     /// Longest stretch of audio handed to one recognition request.
-    private static let windowSeconds = 24.0
+    private static let windowSeconds = 10.0
+    /// Recognitions running at once, so transcription keeps ahead of the
+    /// picture even when one request is slow.
+    private static let parallelRequests = 2
 
     private var feed: HLSAudioFeed?
     private var listener: UUID?
-    private var recognizer: SFSpeechRecognizer?
-    private var pending: [AudioChunk] = []
-    private var worker: Task<Void, Never>?
-    private var currentTask: SFSpeechRecognitionTask?
+    /// One recognizer per parallel request.
+    private var recognizers: [SFSpeechRecognizer] = []
+    private var nextRecognizer = 0
+    private var pending: [Window] = []
+    private var running = 0
+    private var ticker: Task<Void, Never>?
+    private var tasks: [UUID: SFSpeechRecognitionTask] = [:]
     private var retainedCues: [SubtitleCue] = []
     private var onCues: ([SubtitleCue]) -> Void = { _ in }
     private var onStatus: (String) -> Void = { _ in }
@@ -61,17 +67,25 @@ final class AutoCaptionEngine {
                onStatus: @escaping (String) -> Void = { _ in },
                onCues: @escaping ([SubtitleCue]) -> Void) throws {
         stop()
-        guard let recognizer = SFSpeechRecognizer(locale: locale),
-              recognizer.isAvailable, recognizer.supportsOnDeviceRecognition else {
+        let made = (0..<Self.parallelRequests).compactMap { _ in SFSpeechRecognizer(locale: locale) }
+        guard let first = made.first, first.isAvailable, first.supportsOnDeviceRecognition else {
             throw Failure.unavailable
         }
-        self.recognizer = recognizer
+        recognizers = made
         self.feed = feed
         self.onCues = onCues
         self.onStatus = onStatus
         self.playbackTime = playbackTime
         resultCount = 0
         onStatus("Loading the episode's sound…")
+        ticker = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                guard let self, !Task.isCancelled else { return }
+                self.flushIfStarved()
+                self.fillWorkers()
+            }
+        }
         listener = feed.listen({ [weak self] chunk in
             self?.receive(chunk)
         }, state: { [weak self] state in
@@ -84,10 +98,8 @@ final class AutoCaptionEngine {
     func noteSeek(to time: Double) {
         generation += 1
         pending.removeAll()
-        currentTask?.cancel()
-        currentTask = nil
-        worker?.cancel()
-        worker = nil
+        buffer = []
+        cancelRecognitions()
         // Cues already made stay; they're still right for their times.
     }
 
@@ -96,52 +108,120 @@ final class AutoCaptionEngine {
         listener = nil
         feed = nil
         generation += 1
-        worker?.cancel()
-        worker = nil
-        currentTask?.cancel()
-        currentTask = nil
+        ticker?.cancel()
+        ticker = nil
+        cancelRecognitions()
         pending.removeAll()
+        buffer = []
+        recognizers = []
         retainedCues = []
+    }
+
+    private func cancelRecognitions() {
+        for task in tasks.values { task.cancel() }
+        tasks.removeAll()
+        running = 0
     }
 
     // MARK: Recognition
 
     private func receive(_ chunk: AudioChunk) {
         // Behind the playhead already (a slow start): no use transcribing.
-        guard chunk.end > playbackTime() - 2 else { return }
+        guard chunk.end > playbackTime() - 1 else { return }
         if resultCount == 0 { onStatus("Listening…") }
-        pending.append(chunk)
-        if worker == nil { startWorker() }
+        let continuous = !buffer.isEmpty && chunk.rate == bufferRate && abs(chunk.start - bufferEnd) < 0.1
+        if !continuous {
+            cutWindows(flush: true)
+            buffer = chunk.samples
+            bufferStart = chunk.start
+            bufferRate = chunk.rate
+            nextWindowStart = max(chunk.start, playbackTime() - 0.5)
+        } else {
+            buffer.append(contentsOf: chunk.samples)
+        }
+        cutWindows(flush: false)
+        fillWorkers()
     }
 
-    private func startWorker() {
-        let generation = generation
-        worker = Task { @MainActor [weak self] in
-            while let self, !Task.isCancelled, generation == self.generation, !self.pending.isEmpty {
-                let window = self.takeWindow()
-                await self.recognize(window, generation: generation)
+    // MARK: Windows
+    //
+    // The sound arrives as one continuous stream, cut into 10-second
+    // windows. Each window is recognised with a second of overlap on both
+    // sides so no word is cut in half, and keeps only the words that start
+    // inside its own 10 seconds; the neighbour has the rest.
+
+    private struct Window {
+        let audio: AudioChunk
+        let keep: Range<Double>
+    }
+
+    private static let overlap = 1.0
+    private var buffer: [Float] = []
+    private var bufferStart = 0.0
+    private var bufferRate = 48_000.0
+    private var nextWindowStart = 0.0
+    private var bufferEnd: Double { bufferStart + Double(buffer.count) / bufferRate }
+
+    /// Cuts every full window out of the buffer; with `flush`, the rest too.
+    private func cutWindows(flush: Bool) {
+        guard !buffer.isEmpty else { return }
+        while nextWindowStart + Self.windowSeconds + Self.overlap <= bufferEnd
+                || (flush && nextWindowStart < bufferEnd - 0.3) {
+            let keepEnd = min(nextWindowStart + Self.windowSeconds, bufferEnd)
+            let from = max(bufferStart, nextWindowStart - Self.overlap)
+            let to = min(bufferEnd, keepEnd + Self.overlap)
+            let first = Int((from - bufferStart) * bufferRate)
+            let last = min(buffer.count, Int((to - bufferStart) * bufferRate))
+            if last > first {
+                pending.append(Window(audio: AudioChunk(start: from, rate: bufferRate, samples: Array(buffer[first..<last])),
+                                      keep: nextWindowStart..<keepEnd))
             }
-            if let self, generation == self.generation { self.worker = nil }
+            nextWindowStart = keepEnd
+        }
+        // Keep only what the next window's lead-in needs.
+        let keepFrom = nextWindowStart - Self.overlap
+        let drop = min(buffer.count, max(0, Int((keepFrom - bufferStart) * bufferRate)))
+        if drop > 0 {
+            buffer.removeFirst(drop)
+            bufferStart += Double(drop) / bufferRate
+        }
+        if flush {
+            buffer = []
         }
     }
 
-    /// Up to `windowSeconds` of consecutive chunks, merged.
-    private func takeWindow() -> AudioChunk {
-        var samples: [Float] = []
-        let first = pending.removeFirst()
-        samples.append(contentsOf: first.samples)
-        var end = first.end
-        while let next = pending.first, next.rate == first.rate, abs(next.start - end) < 0.1,
-              end - first.start + next.duration <= Self.windowSeconds {
-            pending.removeFirst()
-            samples.append(contentsOf: next.samples)
-            end = next.end
-        }
-        return AudioChunk(start: first.start, rate: first.rate, samples: samples)
+    /// The playhead is catching up with the decoded sound (the end of the
+    /// episode, or a slow download): recognise the partial window now.
+    private func flushIfStarved() {
+        guard !buffer.isEmpty, pending.isEmpty, bufferEnd < playbackTime() + Self.windowSeconds else { return }
+        cutWindows(flush: true)
+        fillWorkers()
     }
 
-    private func recognize(_ chunk: AudioChunk, generation: Int) async {
-        guard let recognizer,
+    /// Up to `parallelRequests` recognitions at once, always on the audio
+    /// nearest the playhead. Audio that has already played is dropped, so
+    /// if recognition ever falls behind it skips ahead instead of
+    /// transcribing the past.
+    private func fillWorkers() {
+        let now = playbackTime()
+        pending.removeAll { $0.keep.upperBound < now + 0.5 }
+        pending.sort { $0.keep.lowerBound < $1.keep.lowerBound }
+        while running < Self.parallelRequests, !pending.isEmpty {
+            let window = pending.removeFirst()
+            running += 1
+            let generation = generation
+            Task { @MainActor [weak self] in
+                await self?.recognize(window, generation: generation)
+                guard let self, generation == self.generation else { return }
+                self.running -= 1
+                self.fillWorkers()
+            }
+        }
+    }
+
+    private func recognize(_ window: Window, generation: Int) async {
+        let chunk = window.audio
+        guard let recognizer = recognizers.isEmpty ? nil : recognizers[nextRecognizer % recognizers.count],
               let format = AVAudioFormat(standardFormatWithSampleRate: chunk.rate, channels: 1),
               let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(chunk.samples.count)),
               let channel = buffer.floatChannelData?[0] else { return }
@@ -156,18 +236,28 @@ final class AutoCaptionEngine {
         request.append(buffer)
         request.endAudio()
 
+        nextRecognizer += 1
         let offset = chunk.start
+        let id = UUID()
+        // A recognition that never answers must not stall captions.
+        let deadline = max(15, chunk.duration * 3)
         let outcome: Outcome = await withCheckedContinuation { continuation in
             let once = ResumeOnce()
-            currentTask = Self.makeTask(recognizer: recognizer, request: request, offset: offset) { outcome in
+            tasks[id] = Self.makeTask(recognizer: recognizer, request: request, offset: offset) { outcome in
                 once.resume(continuation, with: outcome)
             }
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(deadline))
+                once.resume(continuation, with: .words([]))
+                self?.tasks[id]?.cancel()
+            }
         }
+        tasks[id]?.cancel()
+        tasks[id] = nil
         guard generation == self.generation else { return }
-        currentTask = nil
         switch outcome {
         case .words(let words):
-            accept(words, from: chunk.start, to: chunk.end)
+            accept(words.filter { window.keep.contains($0.start) }, from: window.keep.lowerBound, to: window.keep.upperBound)
         case .failed(let message):
             if resultCount == 0 { onStatus("Speech recognition error: \(message)") }
         }
@@ -224,6 +314,12 @@ final class AutoCaptionEngine {
         retainedCues.append(contentsOf: fresh)
         retainedCues.sort { $0.start < $1.start }
         if retainedCues.count > 1_500 { retainedCues.removeFirst(retainedCues.count - 1_500) }
+        // One line at a time: each ends when the next begins, so a new line
+        // replaces the last instead of stacking under it.
+        for i in retainedCues.indices.dropLast() where retainedCues[i].end > retainedCues[i + 1].start {
+            let cue = retainedCues[i]
+            retainedCues[i] = SubtitleCue(start: cue.start, end: retainedCues[i + 1].start, text: cue.text)
+        }
         onCues(retainedCues)
     }
 }

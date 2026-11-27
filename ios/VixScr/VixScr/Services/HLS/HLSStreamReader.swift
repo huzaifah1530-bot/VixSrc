@@ -69,6 +69,13 @@ actor HLSStreamReader {
 
     var duration: Double { audioPlaylist?.duration ?? videoPlaylist?.duration ?? 0 }
 
+    /// Where the audio segments covering `start..<end` finish.
+    func audioSegmentsEnd(from start: Double, to end: Double) async throws -> Double {
+        try await prepare()
+        guard let last = audioPlaylist?.segments(from: max(0, start), to: end).last else { return end }
+        return max(last.start + last.duration, start + 0.5)
+    }
+
     /// Start of the audio segment holding `time`, so reads line up with
     /// segment boundaries.
     func audioSegmentStart(at time: Double) async throws -> Double {

@@ -92,27 +92,35 @@ final class HLSAudioFeed {
                     try? await Task.sleep(for: .milliseconds(500))
                     continue
                 }
+                let duration = await reader.duration
+                if duration > 0, from >= duration - 0.05 {
+                    // The end of the episode: wait in case of a seek back.
+                    try? await Task.sleep(for: .seconds(1))
+                    continue
+                }
                 let chunks = try await reader.audio(from: from, to: from + 12)
                 guard !Task.isCancelled, generation == self.generation else { return }
                 failures = 0
                 setState(.running)
-                guard let last = chunks.last, last.playlistEnd > from else { return }
                 for chunk in chunks {
                     for listener in listeners.values { listener(chunk) }
                 }
-                cursor = last.playlistEnd
+                // Always move on, even past a piece with no sound in it.
+                if let reach = chunks.last?.playlistEnd, reach > from {
+                    cursor = reach
+                } else {
+                    cursor = try await reader.audioSegmentsEnd(from: from, to: from + 12)
+                }
             } catch {
                 guard !Task.isCancelled, generation == self.generation else { return }
-                failures += 1
                 if case HLSStreamReader.Failure.unsupported = error {
                     setState(.failed(error.localizedDescription))
                     return
                 }
-                if failures >= 4 {
-                    setState(.failed(error.localizedDescription))
-                    return
-                }
-                try? await Task.sleep(for: .seconds(2))
+                // Network trouble: keep trying, backing off to 10 seconds.
+                failures += 1
+                if failures >= 3 { setState(.failed(error.localizedDescription)) }
+                try? await Task.sleep(for: .seconds(min(10, Double(failures) * 2)))
             }
         }
     }

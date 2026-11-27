@@ -333,7 +333,10 @@ final class VideoPlayerManager {
             if cues[mid].start <= cueTime { found = mid; low = mid + 1 } else { high = mid - 1 }
         }
         var lines: [String] = []
-        if found >= 0 {
+        if found >= 0, generatedCaptionLocale != nil {
+            // Generated captions: only the line being spoken now.
+            if cues[found].end > cueTime { lines = [cues[found].text] }
+        } else if found >= 0 {
             var i = found
             // Overlapping cues (signs + dialogue) render together.
             while i >= 0, i >= found - 4 {
