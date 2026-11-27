@@ -23,6 +23,8 @@ final class HLSAudioFeed {
     private var task: Task<Void, Never>?
     /// Playlist time decoded up to.
     private var cursor: Double?
+    /// Where the current unbroken stretch of decoding began.
+    private var runStart: Double?
     private var generation = 0
     private var onState: [UUID: (State) -> Void] = [:]
 
@@ -53,9 +55,17 @@ final class HLSAudioFeed {
     }
 
     /// The playhead jumped: start decoding from there.
+    /// The playhead jumped. Decoding carries on from where it is when that
+    /// still covers the new position (a short skip back or forward), and
+    /// starts again at the playhead otherwise.
     func noteSeek() {
         guard !listeners.isEmpty else { return }
-        restart()
+        task?.cancel()
+        generation += 1
+        let generation = generation
+        task = Task { @MainActor [weak self] in
+            await self?.run(generation)
+        }
     }
 
     func stop() {
@@ -63,6 +73,7 @@ final class HLSAudioFeed {
         task = nil
         generation += 1
         cursor = nil
+        runStart = nil
     }
 
     private func restart() {
@@ -85,8 +96,11 @@ final class HLSAudioFeed {
         while !Task.isCancelled, generation == self.generation {
             let now = playbackTime()
             do {
-                if cursor == nil || cursor! < now - 2 || cursor! > now + lookahead + 30 {
+                // Start over at the playhead when it left the stretch being
+                // decoded: ahead of it, too far behind, or before it began.
+                if cursor == nil || cursor! < now - 2 || cursor! > now + lookahead + 30 || now < (runStart ?? 0) - 0.5 {
                     cursor = try await reader.audioSegmentStart(at: max(0, now - 0.5))
+                    runStart = cursor
                 }
                 guard generation == self.generation, let from = cursor else { return }
                 if from >= now + lookahead {
@@ -99,7 +113,9 @@ final class HLSAudioFeed {
                     try? await Task.sleep(for: .seconds(1))
                     continue
                 }
-                let chunks = try await reader.audio(from: from, to: from + 12)
+                // Just after a jump, a short first piece so captions start sooner.
+                let span: Double = from - now < 6 ? 5 : 12
+                let chunks = try await reader.audio(from: from, to: from + span)
                 guard !Task.isCancelled, generation == self.generation else { return }
                 failures = 0
                 setState(.running)
@@ -110,7 +126,7 @@ final class HLSAudioFeed {
                 if let reach = chunks.last?.playlistEnd, reach > from {
                     cursor = reach
                 } else {
-                    cursor = try await reader.audioSegmentsEnd(from: from, to: from + 12)
+                    cursor = try await reader.audioSegmentsEnd(from: from, to: from + span)
                 }
             } catch {
                 guard !Task.isCancelled, generation == self.generation else { return }

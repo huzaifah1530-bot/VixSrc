@@ -4,6 +4,11 @@ import CoreMedia
 import Foundation
 import VideoToolbox
 
+struct StereoSamples: Sendable {
+    let left: [Float]
+    let right: [Float]
+}
+
 /// Decoded mono audio starting at `start` on the player's timeline.
 struct AudioChunk: Sendable {
     let start: Double
@@ -12,6 +17,8 @@ struct AudioChunk: Sendable {
     /// Playlist time the downloaded segments reach; where the next request
     /// should begin so nothing is decoded twice.
     var playlistEnd: Double = 0
+    /// The two channels, for stereo sound (dialogue extraction).
+    var stereo: StereoSamples? = nil
     var duration: Double { Double(samples.count) / rate }
     var end: Double { start + duration }
 }
@@ -159,12 +166,14 @@ actor HLSStreamReader {
         let chunkStart = timeline.start + MPEGTSDemuxer.seconds(firstPTS, since: timeline.base)
         guard let decoded = try Self.decodeADTS(adts) else { return [] }
         let reach = segments.last.map { $0.start + $0.duration } ?? end
-        return [AudioChunk(start: chunkStart, rate: decoded.rate, samples: decoded.samples, playlistEnd: reach)]
+        return [AudioChunk(start: chunkStart, rate: decoded.rate, samples: decoded.samples, playlistEnd: reach,
+                           stereo: decoded.stereo)]
     }
 
-    /// AAC in ADTS framing → mono floats. Core Audio reads ADTS files
-    /// directly, which also handles every AAC profile the hosts use.
-    private static func decodeADTS(_ adts: Data) throws -> (samples: [Float], rate: Double)? {
+    /// AAC in ADTS framing → mono floats, plus the left and right channels
+    /// of stereo sound. Core Audio reads ADTS files directly, which also
+    /// handles every AAC profile the hosts use.
+    private static func decodeADTS(_ adts: Data) throws -> (samples: [Float], rate: Double, stereo: StereoSamples?)? {
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("vela-\(UUID().uuidString).aac")
         try adts.write(to: file)
         defer { try? FileManager.default.removeItem(at: file) }
@@ -185,7 +194,13 @@ actor HLSStreamReader {
             let scale = 1 / Float(channelCount)
             for i in 0..<count { mono[i] *= scale }
         }
-        return (mono, format.sampleRate)
+        // Only plain stereo: surround channel orders vary between encoders.
+        var stereo: StereoSamples?
+        if channelCount == 2 {
+            stereo = StereoSamples(left: Array(UnsafeBufferPointer(start: channels[0], count: count)),
+                                   right: Array(UnsafeBufferPointer(start: channels[1], count: count)))
+        }
+        return (mono, format.sampleRate, stereo)
     }
 
     // MARK: Picture

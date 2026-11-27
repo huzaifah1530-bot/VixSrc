@@ -59,6 +59,9 @@ final class VideoPlayerManager {
     /// Live progress/diagnostic line for generated captions ("Audio received…",
     /// recognizer errors). Empty or nil once captions are flowing.
     private(set) var generatedCaptionStatus: String?
+    /// How far ahead generated captions are ready, once a second (shown
+    /// when Settings › Playback › Caption Diagnostics is on).
+    private(set) var captionDiagnostics: String?
     private enum CaptionPreference: Codable, Equatable { case off, external(String), embedded(String), generated(String) }
     private static let captionPreferenceKey = "vela_caption_preference"
     @ObservationIgnored private var captionPreference: CaptionPreference?
@@ -1081,6 +1084,7 @@ final class VideoPlayerManager {
         }
         stopGeneratedCaptions()
         let engine = AutoCaptionEngine()
+        engine.onDiagnostics = { [weak self] text in self?.captionDiagnostics = text }
         do {
             try engine.start(feed: feed, locale: Locale(identifier: locale), vocabulary: captionVocabulary,
                              playbackTime: { [weak self] in self?.livePosition ?? 0 },
@@ -1109,6 +1113,7 @@ final class VideoPlayerManager {
     private func stopGeneratedCaptions() {
         autoCaptionEngine?.stop()
         autoCaptionEngine = nil
+        captionDiagnostics = nil
         generatedCaptionLocale = nil
         generatedCaptionStatus = nil
         translateGeneratedCaptions = false

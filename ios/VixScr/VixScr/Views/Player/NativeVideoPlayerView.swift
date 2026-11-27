@@ -1417,9 +1417,23 @@ private struct CaptionPicker: View {
 struct CaptionOverlay: View {
     @Bindable var playerManager: VideoPlayerManager
     var bottomInset: CGFloat = 14
+    @AppStorage(CaptionOverlay.diagnosticsKey) private var showDiagnostics = false
+
+    static let diagnosticsKey = "vela_caption_diagnostics"
 
     var body: some View {
         VStack {
+            if showDiagnostics, let diagnostics = playerManager.captionDiagnostics {
+                Text(diagnostics)
+                    .font(.caption2.monospacedDigit().weight(.medium))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 6))
+                    .padding(.top, 52)
+                    .padding(.horizontal, 12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
             Spacer()
             if playerManager.currentCaption == nil, let status = playerManager.generatedCaptionStatus {
                 Text(status)

@@ -82,8 +82,8 @@ final class AutoCaptionEngine {
         let made = (0..<Self.parallelRequests).compactMap { _ in SFSpeechRecognizer(locale: locale) }
             .filter { $0.isAvailable && $0.supportsOnDeviceRecognition }
         if #available(iOS 26.0, *) {
-            let modern = LongFormTranscriber(onWords: { [weak self] words, from, to in
-                self?.accept(words.map { Word(start: $0.start, end: $0.end, text: $0.text) }, from: from, to: to)
+            let modern = LongFormTranscriber(onWords: { [weak self] words, from, to, isFinal in
+                self?.accept(words.map { Word(start: $0.start, end: $0.end, text: $0.text) }, from: from, to: to, isFinal: isFinal)
             }, onStatus: { [weak self] status in
                 self?.onStatus(status)
             })
@@ -113,12 +113,14 @@ final class AutoCaptionEngine {
         resultCount = 0
         windowsDone = 0
         onStatus("Loading the episode's sound…")
+        enhancer.reset()
         ticker = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
                 guard let self, !Task.isCancelled else { return }
                 self.flushIfStarved()
                 self.fillWorkers()
+                self.onDiagnostics?(self.diagnostics())
             }
         }
         listener = feed.listen({ [weak self] chunk in
@@ -129,9 +131,11 @@ final class AutoCaptionEngine {
         })
     }
 
-    /// The playhead jumped; the feed starts over there, and so do we.
+    /// The playhead jumped. Captions already made stay and show at once;
+    /// the iOS 26 session keeps running and is simply given the new sound.
+    /// The older engine drops its queued clips.
     func noteSeek(to time: Double) {
-        if #available(iOS 26.0, *), let modern = modern as? LongFormTranscriber { modern.restart() }
+        if modernActive { return }
         generation += 1
         pending.removeAll()
         buffer = []
@@ -153,6 +157,34 @@ final class AutoCaptionEngine {
         buffer = []
         recognizers = []
         retainedCues = []
+        roughCues = []
+        enhancer.reset()
+    }
+
+    // MARK: Diagnostics
+
+    /// "Sound +40 s · Text +31 s · iOS 26 engine · Dialogue on".
+    private func diagnostics() -> String {
+        let now = playbackTime()
+        var parts: [String] = []
+        if #available(iOS 26.0, *), let modern = modern as? LongFormTranscriber {
+            parts.append("Sound +\(Int(modern.sentAhead(of: now))) s")
+            parts.append("iOS 26 engine")
+        } else {
+            let ahead = buffer.isEmpty ? 0 : max(0, bufferEnd - now)
+            parts.append("Sound +\(Int(ahead)) s · \(pending.count) clips queued")
+            parts.append("Older engine")
+        }
+        // The last line already made in the stretch of captions around now.
+        let cues = (retainedCues + roughCues).filter { $0.start >= now - 30 }.sorted { $0.start < $1.start }
+        var reach = now
+        for cue in cues where cue.start <= reach + 12 { reach = max(reach, cue.end) }
+        parts.insert("Text +\(Int(max(0, reach - now))) s", at: 1)
+        if let next = cues.first(where: { $0.end > now }) {
+            parts.append(next.start <= now ? "Showing" : "Next line in \(String(format: "%.1f", next.start - now)) s")
+        }
+        parts.append("Dialogue \(enhancing ? "on" : "off")")
+        return parts.joined(separator: " · ")
     }
 
     private func cancelRecognitions() {
@@ -163,9 +195,34 @@ final class AutoCaptionEngine {
 
     // MARK: Recognition
 
-    private func receive(_ chunk: AudioChunk) {
+    private var modernActive: Bool {
+        if #available(iOS 26.0, *) { return modern is LongFormTranscriber }
+        return false
+    }
+
+    /// Clearer sound for the engine only (`DialogueEnhancer`). Settings ›
+    /// Playback › Captions can turn it off to compare.
+    static let enhanceKey = "vela_caption_enhance_dialogue"
+    private let enhancer = DialogueEnhancer()
+    private var enhancing: Bool { UserDefaults.standard.object(forKey: Self.enhanceKey) as? Bool ?? true }
+    private var lastEnhancing: Bool?
+    var onDiagnostics: ((String) -> Void)?
+
+    private func receive(_ raw: AudioChunk) {
         // Behind the playhead already (a slow start): no use transcribing.
-        guard chunk.end > playbackTime() - 1 else { return }
+        guard raw.end > playbackTime() - 1 else { return }
+        var chunk = raw
+        if #available(iOS 26.0, *), let modern = modern as? LongFormTranscriber {
+            // Already sent (the viewer skipped back): its captions exist.
+            guard let unsent = modern.unsent(raw) else { return }
+            chunk = unsent
+        }
+        let enhance = enhancing
+        if enhance != lastEnhancing { enhancer.reset(); lastEnhancing = enhance }
+        if enhance {
+            guard let enhanced = enhancer.process(chunk) else { return }
+            chunk = enhanced
+        }
         if #available(iOS 26.0, *), let modern = modern as? LongFormTranscriber {
             modern.feed(chunk)
             return
@@ -339,7 +396,10 @@ final class AutoCaptionEngine {
         }
     }
 
-    private func accept(_ words: [Word], from start: Double, to end: Double) {
+    /// Rough lines (iOS 26), shown until the final text for them arrives.
+    private var roughCues: [SubtitleCue] = []
+
+    private func accept(_ words: [Word], from start: Double, to end: Double, isFinal: Bool = true) {
         if !words.isEmpty {
             if resultCount == 0 { onStatus("") }
             resultCount += 1
@@ -364,17 +424,28 @@ final class AutoCaptionEngine {
             if let end = word.text.last, enders.contains(end) { finishGroup() }
         }
         finishGroup()
-        retainedCues.removeAll { $0.start >= start - 0.05 && $0.start < end }
-        retainedCues.append(contentsOf: fresh)
-        retainedCues.sort { $0.start < $1.start }
-        if retainedCues.count > 1_500 { retainedCues.removeFirst(retainedCues.count - 1_500) }
+        if isFinal {
+            retainedCues.removeAll { $0.start >= start - 0.05 && $0.start < end }
+            retainedCues.append(contentsOf: fresh)
+            retainedCues.sort { $0.start < $1.start }
+            if retainedCues.count > 3_000 { retainedCues.removeFirst(retainedCues.count - 3_000) }
+            // Rough lines for this stretch are replaced by the final ones.
+            roughCues.removeAll { $0.start < end + 0.05 && $0.end > start - 0.05 }
+        } else {
+            // Each rough result is the newest guess for the stretch it covers.
+            roughCues.removeAll { $0.end > start - 0.05 }
+            roughCues.append(contentsOf: fresh.filter { cue in
+                !retainedCues.contains { abs($0.start - cue.start) < 0.3 }
+            })
+        }
+        var merged = (retainedCues + roughCues).sorted { $0.start < $1.start }
         // One line at a time: each ends when the next begins, so a new line
         // replaces the last instead of stacking under it.
-        for i in retainedCues.indices.dropLast() where retainedCues[i].end > retainedCues[i + 1].start {
-            let cue = retainedCues[i]
-            retainedCues[i] = SubtitleCue(start: cue.start, end: retainedCues[i + 1].start, text: cue.text)
+        for i in merged.indices.dropLast() where merged[i].end > merged[i + 1].start {
+            let cue = merged[i]
+            merged[i] = SubtitleCue(start: cue.start, end: merged[i + 1].start, text: cue.text)
         }
-        onCues(retainedCues)
+        onCues(merged)
     }
 }
 
