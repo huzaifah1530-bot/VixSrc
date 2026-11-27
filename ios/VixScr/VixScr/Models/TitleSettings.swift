@@ -54,6 +54,7 @@ struct TitleSettings: Codable, Hashable, Sendable {
     var captionTiming = CaptionTiming()
     var audio: AudioDefault
     var skipping = SkipSettings()
+    var nextEpisode = NextEpisodeTiming()
     var updatedAt = Date()
 
     init(title: String, kind: TitleKind) {
@@ -63,12 +64,16 @@ struct TitleSettings: Codable, Hashable, Sendable {
     }
 
     /// Anything switched on.
-    var isCustomised: Bool { caption.enabled || captionTiming.enabled || audio.enabled || skipping.enabled }
+    var isCustomised: Bool {
+        caption.enabled || captionTiming.enabled || audio.enabled || skipping.enabled || nextEpisode.enabled
+    }
 
     /// The parts of these settings the player needs.
     var playback: TitlePlaybackConfig {
         TitlePlaybackConfig(
             captionDefault: caption.enabled ? caption.choice : nil,
+            captionConfidence: caption.minimumConfidence,
+            nextEpisode: nextEpisode.enabled ? nextEpisode : nil,
             captionOffset: captionTiming.enabled ? captionTiming.offset : 0,
             audioDefault: audio.enabled ? audio.choice : nil,
             skipSource: skipping.enabled ? skipping.source : .online,
@@ -78,7 +83,7 @@ struct TitleSettings: Codable, Hashable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case title, kind, setupCompleted, caption, captionTiming, audio, skipping, updatedAt
+        case title, kind, setupCompleted, caption, captionTiming, audio, skipping, nextEpisode, updatedAt
     }
 
     // Decoded field by field so settings saved by older builds (or a backup
@@ -93,6 +98,7 @@ struct TitleSettings: Codable, Hashable, Sendable {
         audio = (try? c.decodeIfPresent(AudioDefault.self, forKey: .audio))
             ?? AudioDefault(choice: kind == .anime ? .animeTrack("Sub") : .language(code: "en", label: nil))
         skipping = (try? c.decodeIfPresent(SkipSettings.self, forKey: .skipping)) ?? SkipSettings()
+        nextEpisode = (try? c.decodeIfPresent(NextEpisodeTiming.self, forKey: .nextEpisode)) ?? NextEpisodeTiming()
         updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
     }
 }
@@ -102,6 +108,37 @@ struct TitleSettings: Codable, Hashable, Sendable {
 struct CaptionDefault: Codable, Hashable, Sendable {
     var enabled = false
     var choice: CaptionChoice = .language(code: "en", label: nil)
+    /// The weakest track match accepted, 0...1 (see `CaptionMatcher`). At
+    /// the default, any track in the right language that isn't a forced or
+    /// signs-only track is fine.
+    var minimumConfidence: Double = 0.5
+
+    private enum CodingKeys: String, CodingKey { case enabled, choice, minimumConfidence }
+
+    init(enabled: Bool = false, choice: CaptionChoice = .language(code: "en", label: nil), minimumConfidence: Double = 0.5) {
+        self.enabled = enabled
+        self.choice = choice
+        self.minimumConfidence = minimumConfidence
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
+        choice = (try? c.decodeIfPresent(CaptionChoice.self, forKey: .choice)) ?? .language(code: "en", label: nil)
+        minimumConfidence = min(1, max(0, try c.decodeIfPresent(Double.self, forKey: .minimumConfidence) ?? 0.5))
+    }
+}
+
+/// When the player's Next Episode button appears, for shows and anime.
+struct NextEpisodeTiming: Codable, Hashable, Sendable {
+    var enabled = false
+    /// Seconds before the end of the episode.
+    var secondsBeforeEnd: Double = NextEpisodeTiming.appDefault
+    /// Show it when the outro (credits) starts instead, when one is known.
+    var atOutro = false
+
+    static let appDefault: Double = 300
+    static let range: ClosedRange<Double> = 10...1_200
 }
 
 /// A caption choice that survives between episodes. Track names differ from
@@ -236,6 +273,8 @@ struct RecordedSegment: Codable, Hashable, Identifiable, Sendable {
     var isEnabled = true
     var autoSkip = false
     var detection: DetectionMethod
+    /// How sure Vela must be before it calls a match, 0...1.
+    var matchConfidence: Double = 0.5
     /// Length of the segment, seconds.
     var duration: Double
     /// Where it was recorded, e.g. "S1 · E3".
@@ -277,7 +316,7 @@ struct RecordedSegment: Codable, Hashable, Identifiable, Sendable {
     static let maxRememberedMatches = 150
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, isEnabled, autoSkip, detection, duration, sourceLabel, sourceKey, sourceStart,
+        case id, name, isEnabled, autoSkip, detection, matchConfidence, duration, sourceLabel, sourceKey, sourceStart,
              hasVisual, hasAudio, createdAt, matches
     }
 
@@ -304,6 +343,7 @@ struct RecordedSegment: Codable, Hashable, Identifiable, Sendable {
         isEnabled = try c.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
         autoSkip = try c.decodeIfPresent(Bool.self, forKey: .autoSkip) ?? false
         detection = (try? c.decodeIfPresent(DetectionMethod.self, forKey: .detection)) ?? .visual
+        matchConfidence = min(1, max(0, try c.decodeIfPresent(Double.self, forKey: .matchConfidence) ?? 0.5))
         duration = try c.decodeIfPresent(Double.self, forKey: .duration) ?? 0
         sourceLabel = try c.decodeIfPresent(String.self, forKey: .sourceLabel) ?? ""
         sourceKey = try c.decodeIfPresent(String.self, forKey: .sourceKey) ?? ""
@@ -326,6 +366,8 @@ struct SegmentMatch: Codable, Hashable, Sendable {
 /// What the player applies for the title that's playing.
 struct TitlePlaybackConfig: Equatable, Sendable {
     var captionDefault: CaptionChoice?
+    var captionConfidence: Double = 0.5
+    var nextEpisode: NextEpisodeTiming?
     var captionOffset: Double
     var audioDefault: AudioChoice?
     var skipSource: SkipSource
@@ -335,12 +377,13 @@ struct TitlePlaybackConfig: Equatable, Sendable {
     /// are left out: saving one must not restart the search that found it.
     var skipSignature: [String] {
         [skipSource.rawValue] + recordedSegments.map {
-            "\($0.id)|\($0.name)|\($0.autoSkip)|\($0.detection.rawValue)|\($0.duration)|\($0.hasVisual)|\($0.hasAudio)"
+            "\($0.id)|\($0.name)|\($0.autoSkip)|\($0.detection.rawValue)|\($0.matchConfidence)|\($0.duration)|\($0.hasVisual)|\($0.hasAudio)"
         }
     }
 
     static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.captionDefault == rhs.captionDefault && lhs.captionOffset == rhs.captionOffset &&
+        lhs.captionDefault == rhs.captionDefault && lhs.captionConfidence == rhs.captionConfidence &&
+            lhs.nextEpisode == rhs.nextEpisode && lhs.captionOffset == rhs.captionOffset &&
             lhs.audioDefault == rhs.audioDefault && lhs.skipSignature == rhs.skipSignature
     }
 }

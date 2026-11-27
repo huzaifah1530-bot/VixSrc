@@ -173,6 +173,115 @@ struct CaptionOffsetControl: View {
     }
 }
 
+// MARK: - Confidence
+
+/// "How sure must Vela be?" from Loose to Strict, for segment matching.
+struct MatchConfidenceControl: View {
+    @Binding var value: Double
+    /// Called when the finger lifts, for saving once instead of per step.
+    var onEditingEnded: () -> Void = {}
+
+    private var label: String {
+        switch value {
+        case ..<0.25: "Loose"
+        case ..<0.45: "Relaxed"
+        case ..<0.6: "Balanced"
+        case ..<0.8: "Careful"
+        default: "Strict"
+        }
+    }
+
+    private var detail: String {
+        switch value {
+        case ..<0.45: "Finds the part even when it's re-cut, re-coloured or louder. May skip something that only looks or sounds alike."
+        case ..<0.6: "The default. Finds the same footage or music in every episode."
+        default: "Only near-identical footage or sound. Use this if Vela skips the wrong thing."
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Match Confidence").font(.subheadline.weight(.semibold))
+                Spacer()
+                Text(label).font(.subheadline).foregroundStyle(.secondary)
+            }
+            Slider(value: $value, in: 0...1) {
+                Text("Match confidence")
+            } minimumValueLabel: {
+                Text("Loose").font(.caption2)
+            } maximumValueLabel: {
+                Text("Strict").font(.caption2)
+            } onEditingChanged: { editing in
+                if !editing { onEditingEnded() }
+            }
+            .accessibilityValue(label)
+            Text(detail).font(.caption).foregroundStyle(.secondary)
+        }
+    }
+}
+
+/// How closely a caption track's name must fit, for default captions.
+struct CaptionConfidenceControl: View {
+    @Binding var value: Double
+
+    private var detail: String {
+        switch value {
+        case ..<0.3: "Any track in the language, including forced or signs-only tracks."
+        case ..<0.8: "Any full track in the language. Prefers names like the one you picked (English CC, English [SDH])."
+        default: "Only the track you picked, by name. Captions stay off in episodes that don't have it."
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Match Confidence").font(.subheadline.weight(.semibold))
+                Spacer()
+                Text("\(Int((value * 100).rounded()))%").font(.subheadline.monospacedDigit()).foregroundStyle(.secondary)
+            }
+            Slider(value: $value, in: 0...1, step: 0.05) {
+                Text("Caption match confidence")
+            } minimumValueLabel: {
+                Text("Any").font(.caption2)
+            } maximumValueLabel: {
+                Text("Exact").font(.caption2)
+            }
+            Text(detail).font(.caption).foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+/// When the Next Episode button shows up.
+struct NextEpisodeTimingControl: View {
+    @Binding var timing: NextEpisodeTiming
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Toggle("When the Credits Start", isOn: $timing.atOutro)
+            if timing.atOutro {
+                Text("Uses the credits found online for each episode; otherwise the time below.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Stepper(value: $timing.secondsBeforeEnd, in: NextEpisodeTiming.range, step: stepSize) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(durationString(timing.secondsBeforeEnd) + " before the end")
+                        .font(.body.monospacedDigit())
+                    if timing.secondsBeforeEnd == NextEpisodeTiming.appDefault {
+                        Text("App default").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    /// Fine steps near the end, coarser further out.
+    private var stepSize: Double { timing.secondsBeforeEnd < 120 ? 10 : 30 }
+}
+
 // MARK: - Entry card
 
 /// The row under a player that opens the title's settings page. Replaces the
@@ -180,30 +289,8 @@ struct CaptionOffsetControl: View {
 struct TitleSettingsCard: View {
     let item: MediaItem
     let makeContext: () -> TitleContext?
-    @Environment(AppStore.self) private var store
 
     private var kind: TitleKind { TitleKind(item: item) }
-
-    private var summary: String {
-        guard let settings = store.titleSettings[item.id], settings.isCustomised else {
-            return "Default captions, audio and skipping for \(kind.scopePhrase)"
-        }
-        var parts: [String] = []
-        if settings.caption.enabled { parts.append("Captions: \(settings.caption.choice.title)") }
-        if settings.captionTiming.enabled, settings.captionTiming.offset != 0 {
-            parts.append("Timing \(CaptionTiming.describe(settings.captionTiming.offset))")
-        }
-        if settings.audio.enabled { parts.append(settings.audio.choice.title) }
-        if settings.skipping.enabled {
-            if settings.skipping.source == .recorded {
-                let count = settings.skipping.segments.filter(\.isEnabled).count
-                parts.append(count == 1 ? "1 skip segment" : "\(count) skip segments")
-            } else {
-                parts.append("Skips found online")
-            }
-        }
-        return parts.joined(separator: " · ")
-    }
 
     var body: some View {
         NavigationLink {
@@ -220,16 +307,9 @@ struct TitleSettingsCard: View {
                     .foregroundStyle(.white)
                     .frame(width: 36, height: 36)
                     .background(Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(kind.settingsTitle)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.primary)
-                    Text(summary)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
-                }
+                Text(kind.settingsTitle)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
                 Spacer(minLength: 8)
                 Image(systemName: "chevron.right")
                     .font(.system(size: 13, weight: .semibold))

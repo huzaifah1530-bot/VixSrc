@@ -17,6 +17,7 @@ struct SegmentRecorderView: View {
     @State private var name = ""
     @State private var detection: DetectionMethod = .visual
     @State private var autoSkip = false
+    @State private var matchConfidence = 0.5
     @State private var isSaving = false
     @State private var saveError: String?
     @FocusState private var nameFocused: Bool
@@ -117,25 +118,33 @@ struct SegmentRecorderView: View {
     }
 
     private var transportRow: some View {
-        HStack(spacing: 28) {
-            Button { model.skip(by: -5) } label: {
-                Image(systemName: "gobackward.5").font(.title2)
+        HStack(spacing: 0) {
+            ForEach([15, 10, 5], id: \.self) { seconds in
+                seekButton(-seconds)
             }
-            .accessibilityLabel("Back 5 seconds")
             Button { model.togglePlay() } label: {
                 Image(systemName: model.isPlaying ? "pause.circle.fill" : "play.circle.fill")
                     .font(.system(size: 46))
                     .contentTransition(.symbolEffect(.replace))
+                    .frame(maxWidth: .infinity)
             }
             .accessibilityLabel(model.isPlaying ? "Pause" : "Play")
-            Button { model.skip(by: 5) } label: {
-                Image(systemName: "goforward.5").font(.title2)
+            ForEach([5, 10, 15], id: \.self) { seconds in
+                seekButton(seconds)
             }
-            .accessibilityLabel("Forward 5 seconds")
         }
         .foregroundStyle(.white)
         .frame(maxWidth: .infinity)
         .disabled(model.isRecording)
+    }
+
+    private func seekButton(_ seconds: Int) -> some View {
+        Button { model.skip(by: Double(seconds)) } label: {
+            Image(systemName: seconds < 0 ? "gobackward.\(-seconds)" : "goforward.\(seconds)")
+                .font(.title3)
+                .frame(maxWidth: .infinity, minHeight: 44)
+        }
+        .accessibilityLabel(seconds < 0 ? "Back \(-seconds) seconds" : "Forward \(seconds) seconds")
     }
 
     private var markButtons: some View {
@@ -245,6 +254,8 @@ struct SegmentRecorderView: View {
             }
             .pickerStyle(.segmented)
             Text(detectionNote).font(.caption).foregroundStyle(.secondary)
+            Divider().padding(.vertical, 4)
+            MatchConfidenceControl(value: $matchConfidence)
         }
         .padding(14)
         .background(cardBackground)
@@ -252,7 +263,7 @@ struct SegmentRecorderView: View {
 
     private var detectionNote: String {
         if detection.usesAudio && !model.audioPossible {
-            return "Finding by sound needs iOS 27 or later; this segment will be found by picture."
+            return "Vela couldn't read this stream's sound (\(model.directFailure ?? "unknown format")), so this segment will be found by picture."
         }
         if detection.usesAudio && context.kind == .anime {
             return detection.detail + " Sound depends on the audio, so record from the Sub or Dub you watch."
@@ -269,7 +280,7 @@ struct SegmentRecorderView: View {
                     captureLine("Sound", done: capture.sound, wanted: detection.usesAudio)
                 }
                 if !model.isCaptured(for: detection) {
-                    Text("Saving plays the marked part once to record it. Keep this screen open.")
+                    Text("Saving reads the marked part straight from the stream. It takes a few seconds; nothing plays.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -300,7 +311,7 @@ struct SegmentRecorderView: View {
             } label: {
                 Group {
                     if model.isRecording {
-                        Text("Recording… \(Int((model.recordingProgress ?? 0) * 100))%")
+                        Text("Reading the part… \(Int((model.recordingProgress ?? 0) * 100))%")
                     } else if isSaving {
                         ProgressView().tint(.black)
                     } else {
@@ -316,7 +327,7 @@ struct SegmentRecorderView: View {
             .disabled(model.markProblem != nil || isSaving)
             .opacity(model.markProblem != nil ? 0.45 : 1)
             if model.isRecording {
-                Button("Stop Recording") { model.cancelRecording() }
+                Button("Stop") { model.cancelRecording() }
                     .font(.subheadline.weight(.semibold))
             }
         }
@@ -341,6 +352,11 @@ struct SegmentRecorderView: View {
             autoSkip = existing.autoSkip
         } else {
             detection = .visual
+        }
+        if let existing { matchConfidence = existing.matchConfidence }
+        // Sound is read from the audio track the title plays in.
+        if case .language(let code, _)? = store.titleSettings[context.key]?.playback.audioDefault {
+            model.audioLanguage = code
         }
         guard model.stage == .choosing else { return }
         if !context.kind.hasEpisodes, let movie = context.currentEpisode {
@@ -368,12 +384,19 @@ struct SegmentRecorderView: View {
         defer { isSaving = false }
 
         if !model.isCaptured(for: detection) {
-            let finished = await model.record()
-            guard finished else {
-                if model.player != nil {
-                    saveError = "Recording stopped before the end of the part. Save again to record it."
+            // Straight from the stream's files first: nothing to watch.
+            let read = await model.readDirectly(method: detection)
+            guard model.player != nil else { return }
+            if !read, !model.isCaptured(for: detection) {
+                // This stream can't be read directly: play the part once
+                // for its picture.
+                let finished = await model.record()
+                guard finished else {
+                    if model.player != nil {
+                        saveError = "Recording stopped before the end of the part. Save again to record it."
+                    }
+                    return
                 }
-                return
             }
         }
         guard let print = model.makePrint() else { return }
@@ -400,6 +423,7 @@ struct SegmentRecorderView: View {
             hasAudio: print.hasAudio,
             autoSkip: autoSkip
         )
+        segment.matchConfidence = matchConfidence
         // It's already known in the episode it was recorded from.
         segment.matches[episode.id] = SegmentMatch(start: start, videoDuration: model.duration, foundAt: Date())
         onSave(segment)
@@ -426,7 +450,7 @@ private struct RecorderVideo: View {
                 VStack(spacing: 10) {
                     HStack(spacing: 8) {
                         Circle().fill(.red).frame(width: 10, height: 10)
-                        Text("Recording").font(.subheadline.weight(.semibold))
+                        Text("Reading the part").font(.subheadline.weight(.semibold))
                     }
                     ProgressView(value: progress)
                         .tint(.white)
@@ -449,48 +473,80 @@ private struct RecorderVideo: View {
 
 // MARK: - Timeline
 
-/// The whole episode, with the marked part highlighted. Drag anywhere to
-/// scrub; drag a flag to move that edge.
+/// The episode, or a zoomed-in stretch of it around the playhead, with the
+/// marked part highlighted. Drag anywhere to scrub; drag a flag to move
+/// that edge. The zoom slider narrows the bar down to 20 seconds, so edges
+/// can be placed precisely on a phone.
 private struct RecorderTimeline: View {
     @Bindable var model: SegmentRecorderModel
     @State private var scrubbing: Double?
     @State private var dragging: Edge?
+    /// 0 = whole episode, 1 = a 20-second window (log scale between).
+    @State private var zoom: Double = 0
+    /// The window stays put while a finger is on the bar.
+    @State private var frozenWindow: (start: Double, length: Double)?
 
     private enum Edge { case start, end }
     private static let space = "recorderTimeline"
+    private static let narrowest = 20.0
+
+    private var duration: Double { max(model.duration, 1) }
+
+    private var window: (start: Double, length: Double) {
+        if let frozenWindow { return frozenWindow }
+        let widest = duration
+        let narrowest = min(Self.narrowest, widest)
+        let length = widest * pow(narrowest / widest, zoom)
+        let anchor = scrubbing ?? model.currentTime
+        let start = min(max(0, anchor - length / 2), max(0, duration - length))
+        return (start, length)
+    }
 
     var body: some View {
         VStack(spacing: 6) {
             GeometryReader { geo in
                 let width = max(1, geo.size.width)
-                let duration = max(model.duration, 1)
-                let x: (Double) -> CGFloat = { CGFloat(min(1, max(0, $0 / duration))) * width }
+                let view = window
+                let x: (Double) -> CGFloat = { CGFloat(($0 - view.start) / view.length) * width }
+                let time: (CGFloat) -> Double = { view.start + Double(min(1, max(0, $0 / width))) * view.length }
                 let shown = scrubbing ?? model.currentTime
                 ZStack(alignment: .leading) {
                     Capsule().fill(Color.white.opacity(0.2)).frame(height: 6)
                     if let start = model.start, let end = model.end, end > start {
-                        Rectangle()
-                            .fill(Color.accentColor)
-                            .frame(width: max(2, x(end) - x(start)), height: 14)
-                            .offset(x: x(start))
+                        let left = max(0, x(start))
+                        let right = min(width, x(end))
+                        if right > left {
+                            Rectangle()
+                                .fill(Color.accentColor)
+                                .frame(width: max(2, right - left), height: 14)
+                                .offset(x: left)
+                        }
                     }
+                    if zoom > 0.02 { ticks(view, width: width) }
                     Capsule().fill(Color.white).frame(width: 3, height: 26).offset(x: x(shown) - 1.5)
-                    if let start = model.start { flag(at: x(start), edge: .start, duration: duration, width: width) }
-                    if let end = model.end { flag(at: x(end), edge: .end, duration: duration, width: width) }
+                    if let start = model.start, (0...width).contains(x(start)) {
+                        flag(at: x(start), edge: .start, view: view, width: width)
+                    }
+                    if let end = model.end, (0...width).contains(x(end)) {
+                        flag(at: x(end), edge: .end, view: view, width: width)
+                    }
                 }
                 .frame(height: 44)
+                .clipped()
                 .contentShape(Rectangle())
                 .coordinateSpace(.named(Self.space))
                 .gesture(
                     DragGesture(minimumDistance: 0, coordinateSpace: .named(Self.space))
                         .onChanged { value in
                             guard dragging == nil else { return }
-                            scrubbing = Double(min(1, max(0, value.location.x / width))) * duration
+                            if frozenWindow == nil { frozenWindow = view }
+                            scrubbing = time(value.location.x)
                         }
                         .onEnded { value in
                             guard dragging == nil else { return }
-                            model.seek(to: Double(min(1, max(0, value.location.x / width))) * duration)
+                            model.seek(to: time(value.location.x))
                             scrubbing = nil
+                            frozenWindow = nil
                         }
                 )
             }
@@ -498,12 +554,22 @@ private struct RecorderTimeline: View {
             .disabled(model.isRecording)
 
             HStack {
-                Text(preciseClockString(scrubbing ?? model.currentTime))
+                Text(clockString(window.start))
                 Spacer()
-                Text(clockString(model.duration))
+                Text(preciseClockString(scrubbing ?? model.currentTime)).foregroundStyle(.primary)
+                Spacer()
+                Text(clockString(window.start + window.length))
             }
             .font(.caption.monospacedDigit())
             .foregroundStyle(.secondary)
+
+            HStack(spacing: 10) {
+                Image(systemName: "minus.magnifyingglass").foregroundStyle(.secondary)
+                Slider(value: $zoom, in: 0...1) { Text("Timeline zoom") }
+                    .accessibilityValue("Showing \(durationString(window.length))")
+                Image(systemName: "plus.magnifyingglass").foregroundStyle(.secondary)
+            }
+            .font(.subheadline)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Timeline")
@@ -517,7 +583,21 @@ private struct RecorderTimeline: View {
         }
     }
 
-    private func flag(at position: CGFloat, edge: Edge, duration: Double, width: CGFloat) -> some View {
+    /// Second marks when zoomed in: every second, 5 s, 10 s or a minute.
+    private func ticks(_ view: (start: Double, length: Double), width: CGFloat) -> some View {
+        let step: Double = view.length <= 30 ? 1 : view.length <= 120 ? 5 : view.length <= 600 ? 10 : 60
+        let first = (view.start / step).rounded(.up) * step
+        let marks = Array(stride(from: first, through: view.start + view.length, by: step))
+        return ForEach(marks, id: \.self) { mark in
+            let major = Int(mark.rounded()) % Int(step * 5) == 0
+            Rectangle()
+                .fill(Color.white.opacity(major ? 0.5 : 0.25))
+                .frame(width: 1, height: major ? 14 : 8)
+                .offset(x: CGFloat((mark - view.start) / view.length) * width)
+        }
+    }
+
+    private func flag(at position: CGFloat, edge: Edge, view: (start: Double, length: Double), width: CGFloat) -> some View {
         VStack(spacing: 0) {
             Image(systemName: edge == .start ? "flag.fill" : "flag.checkered")
                 .font(.system(size: 11, weight: .bold))
@@ -534,7 +614,8 @@ private struct RecorderTimeline: View {
             DragGesture(minimumDistance: 0, coordinateSpace: .named(Self.space))
                 .onChanged { value in
                     dragging = edge
-                    let time = Double(min(1, max(0, value.location.x / width))) * duration
+                    if frozenWindow == nil { frozenWindow = view }
+                    let time = view.start + Double(min(1, max(0, value.location.x / width))) * view.length
                     scrubbing = time
                     if edge == .start { model.start = time } else { model.end = time }
                 }
@@ -542,6 +623,7 @@ private struct RecorderTimeline: View {
                     if let time = scrubbing { model.seek(to: time) }
                     scrubbing = nil
                     dragging = nil
+                    frozenWindow = nil
                 }
         )
     }

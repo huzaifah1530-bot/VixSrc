@@ -1,11 +1,17 @@
 import Foundation
 
+/// How sure a matcher must be before it calls a match, 0...1. The viewer
+/// sets it per segment ("Match Confidence"): low finds more, including
+/// re-cut or re-coloured versions, and risks false matches; high only
+/// takes near-identical footage or sound. 0.5 is the tested default.
+typealias MatchConfidence = Double
+
 /// Finds a recorded segment's frames in live playback.
 ///
 /// Every informative live frame is compared with the recorded frames; each
-/// close one (Hamming distance ≤ `maxDistance` of 64 bits) votes for where
-/// the segment would have started (`live time − recorded time`). Footage
-/// that really is the segment piles its votes onto one start time; chance
+/// close one (small Hamming distance of 64 bits) votes for where the
+/// segment would have started (`live time − recorded time`). Footage that
+/// really is the segment piles its votes onto one start time; chance
 /// look-alikes scatter. A match needs several different live frames, and
 /// several different recorded frames, agreeing within half a second.
 struct VisualMatcher {
@@ -13,24 +19,31 @@ struct VisualMatcher {
     let hashes: [UInt64]
     let duration: Double
 
-    static let maxDistance = 10
+    private let maxDistance: Int
+    private let minLiveFrames: Int
+    private let minReferenceFrames: Int
+    private let minSpan: Double
+
     /// Strongest candidates kept per live frame, so a still image that
     /// resembles many recorded frames can't flood the vote.
     private static let votesPerFrame = 6
     private static let window = 15.0
     private static let cluster = 0.6
-    private static let minLiveFrames = 6
-    private static let minReferenceFrames = 5
-    private static let minSpan = 1.5
 
     private struct Vote { let live: Double; let start: Double; let reference: Int }
     private var votes: [Vote] = []
 
-    init?(print: SegmentPrint) {
+    init?(print: SegmentPrint, confidence: MatchConfidence = 0.5) {
         guard print.hasVisual else { return nil }
         times = print.visualTimes.map(Double.init)
         hashes = print.visualHashes
         duration = print.duration
+        let c = min(1, max(0, confidence))
+        // 0.5 → distance 10, 6 live / 5 recorded frames over 1.5 s.
+        maxDistance = Int((14 - 8 * c).rounded())
+        minLiveFrames = 3 + Int((6 * c).rounded())
+        minReferenceFrames = 2 + Int((6 * c).rounded())
+        minSpan = 0.5 + 2 * c
     }
 
     mutating func reset() { votes.removeAll() }
@@ -43,7 +56,7 @@ struct VisualMatcher {
         var candidates: [(distance: Int, index: Int)] = []
         for (index, hash) in hashes.enumerated() {
             let distance = (hash ^ sample.hash).nonzeroBitCount
-            if distance <= Self.maxDistance { candidates.append((distance, index)) }
+            if distance <= maxDistance { candidates.append((distance, index)) }
         }
         guard !candidates.isEmpty else { return nil }
         candidates.sort { $0.distance < $1.distance }
@@ -62,9 +75,9 @@ struct VisualMatcher {
             let group = sorted[lower...upper]
             let liveFrames = Set(group.map { Int(($0.live * 10).rounded()) })
             let referenceFrames = Set(group.map(\.reference))
-            guard liveFrames.count >= Self.minLiveFrames, referenceFrames.count >= Self.minReferenceFrames,
+            guard liveFrames.count >= minLiveFrames, referenceFrames.count >= minReferenceFrames,
                   let first = group.map(\.live).min(), let last = group.map(\.live).max(),
-                  last - first >= Self.minSpan else { continue }
+                  last - first >= minSpan else { continue }
             let score = liveFrames.count + referenceFrames.count
             if best == nil || score > best!.score { best = (score, group.map(\.start)) }
         }
@@ -73,10 +86,10 @@ struct VisualMatcher {
     }
 }
 
-/// Finds a recorded segment's sound in live playback by sliding the last
-/// two seconds of live audio codes along the recording and measuring the
-/// bit error rate. Unrelated audio sits near 50 % errors; the same audio,
-/// even re-encoded, sits well under 30 %.
+/// Finds a recorded segment's sound by sliding the last two seconds of live
+/// audio codes along the recording and measuring the bit error rate.
+/// Unrelated audio sits near 50 % errors; the same audio, even re-encoded,
+/// sits well under 30 %.
 struct AudioMatcher {
     let codes: [UInt32]
     let start: Double
@@ -85,20 +98,24 @@ struct AudioMatcher {
 
     /// Codes compared at a time: about two seconds.
     static let blockLength = 64
-    private static let threshold = 0.30
-    private static let strongThreshold = 0.20
     private static let checkEvery = 8
+    private let threshold: Double
+    private let strongThreshold: Double
 
     private var live: [AudioCode] = []
     private var sinceCheck = 0
     private var pending: Double?
 
-    init?(print: SegmentPrint) {
+    init?(print: SegmentPrint, confidence: MatchConfidence = 0.5) {
         guard print.hasAudio, print.audioCodes.count > Self.blockLength else { return nil }
         codes = print.audioCodes
         start = print.audioStart
         hop = print.audioHop > 0 ? print.audioHop : AudioFingerprinter.hop
         duration = print.duration
+        let c = min(1, max(0, confidence))
+        // 0.5 → 30 % errors, or 20 % for a single-check match.
+        threshold = 0.38 - 0.16 * c
+        strongThreshold = threshold - 0.10
     }
 
     mutating func reset() {
@@ -130,7 +147,7 @@ struct AudioMatcher {
         guard blockCodes.filter({ $0 == 0 }).count * 5 < Self.blockLength,
               let blockStart = block.first?.time else { pending = nil; return nil }
 
-        let maxErrors = Int(Double(Self.blockLength * 32) * Self.threshold)
+        let maxErrors = Int(Double(Self.blockLength * 32) * threshold)
         var bestErrors = Int.max
         var bestPosition = -1
         let positions = codes.count - Self.blockLength
@@ -150,7 +167,7 @@ struct AudioMatcher {
         guard bestPosition >= 0 else { pending = nil; return nil }
         let rate = Double(bestErrors) / Double(Self.blockLength * 32)
         let segmentStart = blockStart - (start + Double(bestPosition) * hop)
-        if rate <= Self.strongThreshold { pending = nil; return segmentStart }
+        if rate <= strongThreshold { pending = nil; return segmentStart }
         // A weaker hit counts once the next check agrees with it.
         if let previous = pending, abs(previous - segmentStart) < 0.25 { pending = nil; return segmentStart }
         pending = segmentStart

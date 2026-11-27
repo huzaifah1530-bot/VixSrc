@@ -34,6 +34,10 @@ final class SegmentRecorderModel {
 
     @ObservationIgnored private var timeline = FeatureTimeline()
     @ObservationIgnored private var tap: PlaybackFeatureTap?
+    /// Reads the marked part straight from the stream's files.
+    @ObservationIgnored private var reader: HLSStreamReader?
+    /// Why reading the stream directly failed, for the fallback message.
+    private(set) var directFailure: String?
     @ObservationIgnored private var timeObserver: Any?
     @ObservationIgnored private var statusObservation: NSKeyValueObservation?
     @ObservationIgnored private var loadTask: Task<Void, Never>?
@@ -42,7 +46,9 @@ final class SegmentRecorderModel {
     @ObservationIgnored private var initialPosition: Double = 0
     @ObservationIgnored private var lastRevisionSecond = -1
 
-    var audioPossible: Bool { PlaybackFeatureTap.canReadAudio }
+    /// Sound comes from reading the stream directly; if that failed for
+    /// this stream, only the picture can be recorded.
+    var audioPossible: Bool { directFailure == nil }
     var isRecording: Bool { recordingProgress != nil }
 
     // MARK: Loading
@@ -79,14 +85,19 @@ final class SegmentRecorderModel {
             Task { @MainActor [weak self] in self?.tick(time.seconds) }
         }
 
-        let tap = PlaybackFeatureTap(item: item, visual: true, audio: true) { [weak self] in
-            self?.player?.currentTime().seconds ?? 0
-        }
+        // Pictures of whatever plays here are kept too, as a fallback for
+        // streams Vela can't read directly.
+        let tap = PlaybackFeatureTap(item: item, visual: true, audioFeed: nil)
         tap.onVisual = { [weak self] sample in self?.timeline.add(sample) }
-        tap.onAudio = { [weak self] codes in self?.timeline.add(codes) }
         tap.start()
         self.tap = tap
+        reader = HLSStreamReader(url: stream.url, requestHeaders: stream.requestHeaders, cookies: stream.httpCookies,
+                                 audioLanguage: audioLanguage)
+        directFailure = nil
     }
+
+    /// The audio language the title plays in (its default audio setting).
+    var audioLanguage: String?
 
     private func statusChanged() {
         guard let item = player?.currentItem else { return }
@@ -129,6 +140,7 @@ final class SegmentRecorderModel {
         recordingCancelled = true
         tap?.stop()
         tap = nil
+        reader = nil
         if let timeObserver { player?.removeTimeObserver(timeObserver) }
         timeObserver = nil
         statusObservation?.invalidate()
@@ -231,7 +243,48 @@ final class SegmentRecorderModel {
         return timeline.isCaptured(from: start, to: end, method: method, audioPossible: audioPossible)
     }
 
-    /// Plays the marked part once so it is fingerprinted. False if it was
+    /// Downloads just the marked part's segment files and fingerprints its
+    /// picture and sound, without playing anything. A 90-second intro
+    /// takes a few seconds. False if this stream can't be read directly.
+    func readDirectly(method: DetectionMethod) async -> Bool {
+        guard let reader, let start, let end, end > start else { return false }
+        recordingCancelled = false
+        recordingProgress = 0
+        defer {
+            recordingProgress = nil
+            captureRevision += 1
+        }
+        do {
+            if method.usesAudio {
+                let chunks = try await reader.audio(from: max(0, start - 3), to: end + 1)
+                guard !recordingCancelled else { return false }
+                let fingerprinter = AudioFingerprinter()
+                for chunk in chunks {
+                    timeline.add(fingerprinter.append(chunk.samples, startTime: chunk.start, inputRate: chunk.rate))
+                }
+                recordingProgress = method.usesVisual ? 0.3 : 1
+            }
+            if method.usesVisual {
+                let base = method.usesAudio ? 0.3 : 0
+                let samples = try await reader.visualSamples(from: max(0, start - 0.5), to: end + 0.5) { fraction in
+                    Task { @MainActor [weak self] in
+                        guard let self, self.recordingProgress != nil else { return }
+                        self.recordingProgress = base + (1 - base) * fraction
+                    }
+                }
+                guard !recordingCancelled else { return false }
+                for sample in samples { timeline.add(sample) }
+            }
+            directFailure = nil
+            return isCaptured(for: method)
+        } catch {
+            directFailure = error.localizedDescription
+            return false
+        }
+    }
+
+    /// Plays the marked part once so its picture is fingerprinted: the
+    /// fallback for streams Vela can't read directly. False if it was
     /// cancelled or the stream stalled.
     func record() async -> Bool {
         guard let player, let start, let end, end > start else { return false }

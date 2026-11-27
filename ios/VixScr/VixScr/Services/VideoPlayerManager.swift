@@ -64,21 +64,16 @@ final class VideoPlayerManager {
     @ObservationIgnored private var captionPreference: CaptionPreference?
     @ObservationIgnored private var externalCues: [SubtitleCue] = []
     @ObservationIgnored private var subtitleTask: Task<Void, Never>?
-    @ObservationIgnored private var autoCaptionEngine: AnyObject?
+    @ObservationIgnored private var autoCaptionEngine: AutoCaptionEngine?
     @ObservationIgnored private var restoreGeneratedOnForeground = false
     @ObservationIgnored private var generatedToRestore: (locale: String, translated: Bool)?
     @ObservationIgnored private var lifecycleObservers: [NSObjectProtocol] = []
 
-    var canGenerateCaptions: Bool {
-        if #available(iOS 27.0, *) { return true }
-        return false
-    }
-    /// Shown in the captions menu when the OS cannot decode the player's
-    /// audio for transcription, so the option is explained instead of missing.
-    var generatedCaptionsUnavailableReason: String? {
-        canGenerateCaptions ? nil
-            : "Auto-generated captions need iOS 27 or later, because earlier versions don’t expose the player’s decoded audio."
-    }
+    /// Vela decodes the stream's sound itself, so this works on every iOS
+    /// version it runs on.
+    var canGenerateCaptions: Bool { true }
+    /// Shown in the captions menu when generated captions can't be offered.
+    var generatedCaptionsUnavailableReason: String? { nil }
     /// The menu stays available whenever this device can play a native item:
     /// auto-generated captions are relevant even when the stream ships no
     /// subtitle tracks of its own.
@@ -382,6 +377,10 @@ final class VideoPlayerManager {
         
         let asset = Self.asset(url: url, requestHeaders: requestHeaders, httpCookies: httpCookies)
         let item = AVPlayerItem(asset: asset)
+        // Nothing is downloaded until captions or detection ask for sound.
+        streamSource = (url, requestHeaders, httpCookies)
+        streamReader = HLSStreamReader(url: url, requestHeaders: requestHeaders, cookies: httpCookies,
+                                       audioLanguage: titleAudioLanguage)
         attachLegibleOutput(to: item)
         let player = AVPlayer(playerItem: item)
         self.player = player
@@ -594,9 +593,11 @@ final class VideoPlayerManager {
     func applyTitleConfig(_ config: TitlePlaybackConfig?) {
         let previous = titleConfig
         titleConfig = config
+        if config?.audioDefault != previous?.audioDefault { refreshStreamReaderLanguage() }
         setCaptionOffset(config?.captionOffset ?? 0)
         let ready = player?.status == .readyToPlay
-        if ready, config?.captionDefault != previous?.captionDefault {
+        if config?.captionDefault == nil { titleCaptionMatch = nil }
+        if ready, config?.captionDefault != previous?.captionDefault || config?.captionConfidence != previous?.captionConfidence {
             if let choice = config?.captionDefault { _ = applyTitleCaption(choice) }
         }
         if ready, config?.audioDefault != previous?.audioDefault, let audio = config?.audioDefault {
@@ -617,6 +618,7 @@ final class VideoPlayerManager {
     /// episode matches it.
     @discardableResult
     func applyTitleCaption(_ choice: CaptionChoice) -> Bool {
+        if case .language = choice {} else { titleCaptionMatch = nil }
         switch choice {
         case .off:
             stopGeneratedCaptions()
@@ -630,28 +632,43 @@ final class VideoPlayerManager {
             Task { await selectGeneratedCaptions(locale: translated ? "ja-JP" : locale, translated: translated, remember: false) }
             return true
         case .language(let code, let label):
-            // The exact track it was picked from, then any in its language.
-            if let label {
-                if let index = subtitleOptions.firstIndex(where: { $0.displayName == label }) {
-                    if selectedSubtitleIndex != index { selectSubtitle(at: index, remember: false) }
-                    return true
-                }
-                if let index = externalSubtitles.firstIndex(where: { $0.label == label }) {
-                    if selectedExternalSubtitleIndex != index { selectExternalSubtitle(at: index, remember: false) }
-                    return true
-                }
-            }
-            if let index = subtitleOptions.firstIndex(where: { MediaLanguage.matches(option: $0, code: code) }) {
-                if selectedSubtitleIndex != index { selectSubtitle(at: index, remember: false) }
+            // The best-scoring track in this episode, if it's confident enough.
+            let minimum = titleConfig?.captionConfidence ?? 0.5
+            let embedded = CaptionMatcher.best(subtitleOptions.map { CaptionMatcher.candidate($0) }, code: code, label: label, minimum: minimum)
+            let external = CaptionMatcher.best(externalSubtitles.map { CaptionMatcher.candidate(label: $0.label) },
+                                               code: code, label: label, minimum: minimum)
+            if let embedded, embedded.confidence >= (external?.confidence ?? 0) {
+                if selectedSubtitleIndex != embedded.index { selectSubtitle(at: embedded.index, remember: false) }
+                titleCaptionMatch = embedded
                 return true
             }
-            if let index = externalSubtitles.firstIndex(where: { MediaLanguage.matches(label: $0.label, code: code) }) {
-                if selectedExternalSubtitleIndex != index { selectExternalSubtitle(at: index, remember: false) }
+            if let external {
+                if selectedExternalSubtitleIndex != external.index { selectExternalSubtitle(at: external.index, remember: false) }
+                titleCaptionMatch = external
                 return true
             }
+            titleCaptionMatch = nil
             return false
         }
     }
+
+    /// Playback time the Next Episode button appears at: the title's own
+    /// timing, its outro when asked and known, otherwise five minutes
+    /// before the end.
+    var nextEpisodeButtonTime: Double {
+        let timing = titleConfig?.nextEpisode
+        if timing?.atOutro == true, let outro = skipSegments.first(where: { $0.kind == .outro }) { return outro.start }
+        let lead = timing?.secondsBeforeEnd ?? NextEpisodeTiming.appDefault
+        return duration - lead
+    }
+
+    var isNextEpisodeTime: Bool {
+        duration.isFinite && duration > 0 && currentTime >= nextEpisodeButtonTime
+    }
+
+    /// The track the title's default caption chose in this episode, and how
+    /// sure the match was. Shown in the title's settings.
+    private(set) var titleCaptionMatch: CaptionMatcher.Match?
 
     /// Picks the title's default audio track. Sub / Dub is a choice of
     /// source, which the anime view model makes; only HLS tracks apply here.
@@ -708,8 +725,9 @@ final class VideoPlayerManager {
         recordedFound = known
         foundSegmentStarts = starts
         if !targets.isEmpty {
+            let wantsSound = targets.contains { $0.segment.effectiveDetection?.usesAudio == true }
             segmentDetector = SegmentDetector(item: item, targets: targets,
-                                              playbackTime: { [weak self] in self?.livePosition ?? 0 }) { [weak self] id, start in
+                                              audioFeed: wantsSound ? sharedAudioFeed() : nil) { [weak self] id, start in
                 self?.recordedSegmentFound(id, start: start)
             }
             searchingSegmentIDs = segmentDetector?.searching ?? []
@@ -752,6 +770,7 @@ final class VideoPlayerManager {
         currentTime = clamped
         pendingResumePosition = 0
         segmentDetector?.noteSeek()
+        noteCaptionSeek(clamped)
         updateCaption(at: clamped)
     }
     /// The player's real position right now. `currentTime` only updates on
@@ -993,28 +1012,57 @@ final class VideoPlayerManager {
     /// A seek moves the playhead away from the audio the recognizer is
     /// decoding; restart it there so new cues stay in sync.
     private func noteCaptionSeek(_ time: Double) {
-        if #available(iOS 27.0, *), let engine = autoCaptionEngine as? AutoCaptionEngine {
-            engine.noteSeek(to: time)
-        }
+        autoCaptionEngine?.noteSeek(to: time)
+        audioFeed?.noteSeek()
+    }
+
+    // MARK: - The stream's own sound
+
+    /// Reads the playing stream's segments directly (see `HLSStreamReader`).
+    @ObservationIgnored private(set) var streamReader: HLSStreamReader?
+    @ObservationIgnored private var audioFeed: HLSAudioFeed?
+    @ObservationIgnored private var streamSource: (url: URL, headers: [String: String], cookies: [HTTPCookie])?
+
+    /// The audio language the title's settings ask for, so the sound Vela
+    /// reads is the track that's playing.
+    private var titleAudioLanguage: String? {
+        if case .language(let code, _)? = titleConfig?.audioDefault { return code }
+        return nil
+    }
+
+    /// Re-targets the reader at another audio language, if nothing uses it yet.
+    private func refreshStreamReaderLanguage() {
+        guard audioFeed == nil, let source = streamSource else { return }
+        streamReader = HLSStreamReader(url: source.url, requestHeaders: source.headers, cookies: source.cookies,
+                                       audioLanguage: titleAudioLanguage)
+    }
+
+    /// The playing episode's sound, decoded ahead of the playhead. Created
+    /// on first use; shared by captions and segment detection.
+    func sharedAudioFeed() -> HLSAudioFeed? {
+        if let audioFeed { return audioFeed }
+        guard let streamReader else { return nil }
+        let feed = HLSAudioFeed(reader: streamReader) { [weak self] in self?.livePosition ?? 0 }
+        audioFeed = feed
+        return feed
     }
 
     func selectGeneratedCaptions(locale: String, translated: Bool = false, remember: Bool = true) async {
         generatedCaptionError = nil
-        guard #available(iOS 27.0, *) else {
-            generatedCaptionError = generatedCaptionsUnavailableReason
-            return
-        }
         guard let item = player?.currentItem else { return }
         guard await AutoCaptionEngine.authorize() else {
             generatedCaptionError = AutoCaptionEngine.Failure.permission.localizedDescription
             return
         }
-        guard player?.currentItem === item else { return }
+        guard player?.currentItem === item, let feed = sharedAudioFeed() else {
+            generatedCaptionError = AutoCaptionEngine.Failure.audioFormat.localizedDescription
+            return
+        }
         stopGeneratedCaptions()
         let engine = AutoCaptionEngine()
         do {
-            try engine.start(item: item, locale: Locale(identifier: locale),
-                             playbackTime: { [weak self] in self?.currentTime ?? 0 },
+            try engine.start(feed: feed, locale: Locale(identifier: locale),
+                             playbackTime: { [weak self] in self?.livePosition ?? 0 },
                              onStatus: { [weak self] status in
                 self?.generatedCaptionStatus = status.isEmpty ? nil : status
             },
@@ -1038,9 +1086,7 @@ final class VideoPlayerManager {
     }
 
     private func stopGeneratedCaptions() {
-        if #available(iOS 27.0, *) {
-            (autoCaptionEngine as? AutoCaptionEngine)?.stop()
-        }
+        autoCaptionEngine?.stop()
         autoCaptionEngine = nil
         generatedCaptionLocale = nil
         generatedCaptionStatus = nil
@@ -1286,12 +1332,17 @@ final class VideoPlayerManager {
         foundIntro = nil
         introOverride = nil
         introShowKey = nil
+        audioFeed?.stop()
+        audioFeed = nil
+        streamReader = nil
+        streamSource = nil
         // Title settings are handed over again after the next load.
         stopRecordedDetection()
         recordedFound = []
         foundSegmentStarts = [:]
         recordedPreparedFor = ""
         titleConfig = nil
+        titleCaptionMatch = nil
         captionOffset = 0
         audioOptions = []
         selectedAudioIndex = nil

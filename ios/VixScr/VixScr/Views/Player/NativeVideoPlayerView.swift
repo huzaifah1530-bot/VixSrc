@@ -120,10 +120,10 @@ private struct PlayerSurface: View {
 
     private let spring = Animation.spring(response: 0.2, dampingFraction: 0.9)
 
+    /// Five minutes before the end by default; a show can change it in its
+    /// settings.
     private var hasNextEpisodeVisible: Bool {
-        options.nextEpisodeLabel != nil && options.onNextEpisode != nil &&
-        playerManager.duration.isFinite && playerManager.duration > 0 &&
-        playerManager.duration - playerManager.currentTime <= 300
+        options.nextEpisodeLabel != nil && options.onNextEpisode != nil && playerManager.isNextEpisodeTime
     }
 
     private var captionsOn: Bool {
@@ -574,9 +574,8 @@ private struct PlayerSurface: View {
     /// In the last five minutes of an episode, a Next Episode button sits above
     /// the timeline whenever the controls are visible.
     @ViewBuilder private var nextEpisodePill: some View {
-        let remaining = playerManager.duration - playerManager.currentTime
         if let label = options.nextEpisodeLabel, let action = options.onNextEpisode,
-           hasNextEpisodeVisible, remaining <= 300 {
+           hasNextEpisodeVisible {
             HStack {
                 Spacer()
                 Button(action: action) {

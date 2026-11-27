@@ -25,6 +25,7 @@ struct TitleSettingsView: View {
             timingSection
             audioSection
             skippingSection
+            nextEpisodeSection
             manageSection
         }
         .navigationTitle(kind.settingsTitle)
@@ -109,6 +110,12 @@ struct TitleSettingsView: View {
                     .navigationBarTitleDisplayMode(.inline)
                 } label: {
                     LabeledContent("Captions", value: settings.caption.choice.title)
+                }
+                if case .language = settings.caption.choice {
+                    CaptionConfidenceControl(value: binding(\.caption.minimumConfidence))
+                    if context.playerManager.player != nil {
+                        LabeledContent("This Episode", value: captionMatchSummary)
+                    }
                 }
             }
         } header: {
@@ -211,6 +218,29 @@ struct TitleSettingsView: View {
                 Text(kind.hasEpisodes
                      ? "Pick an episode, mark where the part starts and ends, and name it. Each segment gets its own Skip button."
                      : "Mark where the part starts and ends, and name it. It gets its own Skip button.")
+            }
+        }
+    }
+
+    /// The track the default caption picked in the playing episode.
+    private var captionMatchSummary: String {
+        guard let match = context.playerManager.titleCaptionMatch else { return "No track matched" }
+        return "\(match.label) · \(Int((match.confidence * 100).rounded()))% match"
+    }
+
+    @ViewBuilder private var nextEpisodeSection: some View {
+        if kind.hasEpisodes {
+            Section {
+                Toggle("Custom Next Episode Timing", isOn: binding(\.nextEpisode.enabled))
+                if settings.nextEpisode.enabled {
+                    NextEpisodeTimingControl(timing: binding(\.nextEpisode))
+                }
+            } header: {
+                Text("Next Episode")
+            } footer: {
+                Text(settings.nextEpisode.enabled
+                     ? "When the Next Episode button appears in the player for this \(kind.noun.lowercased())."
+                     : "Off: the Next Episode button appears five minutes before the end.")
             }
         }
     }

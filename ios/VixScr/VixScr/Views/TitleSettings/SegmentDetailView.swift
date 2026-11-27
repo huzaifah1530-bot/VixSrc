@@ -10,6 +10,7 @@ struct SegmentDetailView: View {
     @Environment(AppStore.self) private var store
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
+    @State private var confidence = 0.5
     @State private var confirmDelete = false
     @FocusState private var nameFocused: Bool
 
@@ -32,7 +33,10 @@ struct SegmentDetailView: View {
         }
         .navigationTitle(segment?.buttonTitle ?? "Segment")
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear { name = segment?.name ?? "" }
+        .onAppear {
+            name = segment?.name ?? ""
+            confidence = segment?.matchConfidence ?? 0.5
+        }
         .onChange(of: nameFocused) { _, focused in if !focused { saveName() } }
         .onDisappear { saveName() }
         .confirmationDialog("Delete \(segment?.buttonTitle ?? "Segment")?", isPresented: $confirmDelete, titleVisibility: .visible) {
@@ -71,6 +75,10 @@ struct SegmentDetailView: View {
             Toggle("Enabled", isOn: binding(\.isEnabled))
             Toggle("Skip Automatically", isOn: binding(\.autoSkip))
                 .disabled(!segment.isEnabled)
+            MatchConfidenceControl(value: $confidence) {
+                update { $0.matchConfidence = confidence }
+            }
+            .disabled(!segment.isEnabled)
         } footer: {
             Text("Automatic skipping jumps past this part once per episode, the first time it plays. In a watch party only the host skips.")
         }
@@ -137,7 +145,6 @@ struct SegmentDetailView: View {
     }
 
     private func unavailableReason(_ method: DetectionMethod, _ segment: RecordedSegment) -> String? {
-        if method.usesAudio && !PlaybackFeatureTap.canReadAudio { return "Finding by sound needs iOS 27 or later." }
         if method.usesAudio && !segment.hasAudio { return "No sound was recorded. Record again to add it." }
         if method.usesVisual && !segment.hasVisual { return "The picture was too plain to recognise." }
         return nil

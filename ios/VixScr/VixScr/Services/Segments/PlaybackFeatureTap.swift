@@ -3,42 +3,30 @@ import CoreMedia
 import Foundation
 import QuartzCore
 
-/// Reads what an `AVPlayerItem` is showing and playing, without changing
-/// playback, and turns it into fingerprints:
-///   - picture: an `AVPlayerItemVideoOutput` sampled four times a second
-///     (every iOS version Vela runs on);
-///   - sound: the iOS 27 decoded-audio output, the same source on-device
-///     captions use.
-/// Used by the segment recorder and by live segment detection.
+/// Fingerprints what's playing, without changing playback:
+///   - picture: an `AVPlayerItemVideoOutput` sampled four times a second;
+///   - sound: the stream's own audio, decoded by Vela (`HLSAudioFeed`),
+///     which runs ahead of the playhead.
 @MainActor
 final class PlaybackFeatureTap {
     var onVisual: ((VisualSample) -> Void)?
     var onAudio: (([AudioCode]) -> Void)?
 
-    static var canReadAudio: Bool {
-        if #available(iOS 27.0, *) { return true }
-        return false
-    }
+    /// Sound is read from the stream itself, on every iOS version.
+    static var canReadAudio: Bool { true }
 
     private weak var item: AVPlayerItem?
     private let wantsVisual: Bool
-    private let wantsAudio: Bool
-    private let playbackTime: () -> Double
+    private let audioFeed: HLSAudioFeed?
     private var videoOutput: AVPlayerItemVideoOutput?
     private var videoTask: Task<Void, Never>?
-    private var audioTap: AnyObject?
+    private var audioListener: UUID?
+    private let fingerprinter = AudioFingerprinter()
 
-    init(item: AVPlayerItem, visual: Bool, audio: Bool, playbackTime: @escaping () -> Double) {
+    init(item: AVPlayerItem, visual: Bool, audioFeed: HLSAudioFeed?) {
         self.item = item
         self.wantsVisual = visual
-        self.wantsAudio = audio && Self.canReadAudio
-        self.playbackTime = playbackTime
-    }
-
-    /// Audio fingerprints are coming in.
-    var isReceivingAudio: Bool {
-        if #available(iOS 27.0, *), let tap = audioTap as? AudioFeatureTap { return tap.bufferCount > 0 }
-        return false
+        self.audioFeed = audioFeed
     }
 
     func start() {
@@ -57,13 +45,11 @@ final class PlaybackFeatureTap {
                 }
             }
         }
-        if wantsAudio, audioTap == nil {
-            if #available(iOS 27.0, *) {
-                let tap = AudioFeatureTap(item: item, playbackTime: playbackTime) { [weak self] codes in
-                    self?.onAudio?(codes)
-                }
-                tap?.start()
-                audioTap = tap
+        if let audioFeed, audioListener == nil {
+            audioListener = audioFeed.listen { [weak self] chunk in
+                guard let self else { return }
+                let codes = self.fingerprinter.append(chunk.samples, startTime: chunk.start, inputRate: chunk.rate)
+                if !codes.isEmpty { self.onAudio?(codes) }
             }
         }
     }
@@ -73,13 +59,14 @@ final class PlaybackFeatureTap {
         videoTask = nil
         if let videoOutput, let item { item.remove(videoOutput) }
         videoOutput = nil
-        if #available(iOS 27.0, *) { (audioTap as? AudioFeatureTap)?.stop() }
-        audioTap = nil
+        if let audioListener { audioFeed?.stopListening(audioListener) }
+        audioListener = nil
     }
 
-    /// The playhead jumped: sound fingerprints restart from the new place.
+    /// The playhead jumped. The feed restarts itself; a new run of sound
+    /// begins a new fingerprint run.
     func noteSeek() {
-        if #available(iOS 27.0, *) { (audioTap as? AudioFeatureTap)?.noteSeek() }
+        fingerprinter.reset()
     }
 
     private func pollVideo() {
@@ -93,144 +80,9 @@ final class PlaybackFeatureTap {
     }
 }
 
-/// Decoded audio from the iOS 27 sample-buffer output, turned into audio
-/// codes. Timeline handling follows `AutoCaptionEngine`: HLS audio
-/// timestamps can sit on a different timeline than the player's, so the
-/// first buffer (and the first after a seek) calibrates the offset.
-@available(iOS 27.0, *)
-@MainActor
-final class AudioFeatureTap {
-    private weak var item: AVPlayerItem?
-    private let output: AVPlayerItemSampleBufferOutput
-    private let playbackTime: () -> Double
-    private let onCodes: ([AudioCode]) -> Void
-    private let fingerprinter = AudioFingerprinter()
-    private var pullTask: Task<Void, Never>?
-    private var timelineOffset = 0.0
-    private var calibrated = false
-    private var seekPending = false
-    private(set) var bufferCount = 0
-
-    init?(item: AVPlayerItem, playbackTime: @escaping () -> Double, onCodes: @escaping ([AudioCode]) -> Void) {
-        guard let pcm = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1) else { return nil }
-        var asbd = pcm.streamDescription.pointee
-        var description: CMAudioFormatDescription?
-        guard CMAudioFormatDescriptionCreate(allocator: kCFAllocatorDefault, asbd: &asbd,
-                                             layoutSize: 0, layout: nil, magicCookieSize: 0,
-                                             magicCookie: nil, extensions: nil,
-                                             formatDescriptionOut: &description) == noErr,
-              let description else { return nil }
-        let configuration = AVPlayerItemSampleBufferOutputAudioConfiguration()
-        configuration.requestedAudioFormat = description
-        output = AVPlayerItemSampleBufferOutput(configuration: configuration)
-        self.item = item
-        self.playbackTime = playbackTime
-        self.onCodes = onCodes
-    }
-
-    func start() {
-        guard pullTask == nil, let item else { return }
-        item.add(output)
-        let output = output
-        pullTask = Task { @MainActor [weak self] in
-            while !Task.isCancelled, let next = await output.nextSampleBuffer() {
-                guard let self else { return }
-                let sample = next.sampleBuffer
-                guard sample.sampleCount > 0 else { continue }
-                let raw = sample.presentationTimeStamp.seconds
-                guard raw.isFinite else { continue }
-                self.bufferCount += 1
-
-                if next.sequenceWasRestarted || self.seekPending {
-                    self.calibrated = false
-                    self.seekPending = false
-                    self.fingerprinter.reset()
-                }
-                if !self.calibrated {
-                    let delta = self.playbackTime() - raw
-                    self.timelineOffset = abs(delta) > 2 ? delta : 0
-                    self.calibrated = true
-                }
-                let timestamp = raw + self.timelineOffset
-
-                // Stay close to the picture, like the caption engine, so a
-                // long read-ahead can't run the fingerprints far ahead.
-                let started = self.playbackTime()
-                while !Task.isCancelled, timestamp > self.playbackTime() + 8 {
-                    try? await Task.sleep(for: .milliseconds(200))
-                    if self.playbackTime() < started - 1.5 { break }
-                }
-                guard !Task.isCancelled else { break }
-                if self.playbackTime() < started - 1.5 {
-                    self.fingerprinter.reset()
-                    continue
-                }
-
-                let decoded = sample.withUnsafeSampleBuffer { buffer in Self.monoSamples(buffer) }
-                let codes = self.fingerprinter.append(decoded.samples, startTime: timestamp, inputRate: decoded.rate)
-                if !codes.isEmpty { self.onCodes(codes) }
-            }
-        }
-    }
-
-    func noteSeek() {
-        seekPending = true
-        fingerprinter.reset()
-    }
-
-    func stop() {
-        pullTask?.cancel()
-        pullTask = nil
-        if let item { item.remove(output) }
-        item = nil
-    }
-
-    /// The buffer's audio as mono floats, whatever layout iOS delivered.
-    nonisolated private static func monoSamples(_ buffer: CMSampleBuffer) -> (samples: [Float], rate: Double) {
-        guard let description = CMSampleBufferGetFormatDescription(buffer),
-              let format = CMAudioFormatDescriptionGetStreamBasicDescription(description)?.pointee,
-              let block = CMSampleBufferGetDataBuffer(buffer) else { return ([], 48_000) }
-        let rate = format.mSampleRate > 0 ? format.mSampleRate : 48_000
-        let length = CMBlockBufferGetDataLength(block)
-        guard length > 0 else { return ([], rate) }
-        var bytes = [UInt8](repeating: 0, count: length)
-        guard CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: length, destination: &bytes) == kCMBlockBufferNoErr else { return ([], rate) }
-
-        let channels = max(1, Int(format.mChannelsPerFrame))
-        let isFloat = format.mFormatFlags & kAudioFormatFlagIsFloat != 0
-        let nonInterleaved = format.mFormatFlags & kAudioFormatFlagIsNonInterleaved != 0
-        let bytesPerSample = max(1, Int(format.mBitsPerChannel) / 8)
-        // Interleaved: frames × channels samples. Non-interleaved: one plane
-        // per channel, back to back; the first plane is enough.
-        let frames = length / bytesPerSample / channels
-        let stride = nonInterleaved ? 1 : channels
-
-        let samples = bytes.withUnsafeBytes { raw -> [Float] in
-            var out = [Float](repeating: 0, count: frames)
-            if isFloat && bytesPerSample == 4 {
-                let values = raw.bindMemory(to: Float.self)
-                for f in 0..<frames {
-                    var sum: Float = 0
-                    for c in 0..<stride { sum += values[f * stride + c] }
-                    out[f] = sum / Float(stride)
-                }
-            } else if !isFloat && bytesPerSample == 2 {
-                let values = raw.bindMemory(to: Int16.self)
-                for f in 0..<frames {
-                    var sum: Float = 0
-                    for c in 0..<stride { sum += Float(values[f * stride + c]) / 32_768 }
-                    out[f] = sum / Float(stride)
-                }
-            } else {
-                return []
-            }
-            return out
-        }
-        return (samples, rate)
-    }
-}
-
 /// Live detection of the title's recorded segments in the playing item.
+/// Sound is matched ahead of the playhead, so a segment found by sound is
+/// usually known before it plays.
 @MainActor
 final class SegmentDetector {
     struct Target {
@@ -245,27 +97,28 @@ final class SegmentDetector {
     /// Segments still being looked for.
     private(set) var searching: Set<UUID> = []
 
-    init?(item: AVPlayerItem, targets: [Target], playbackTime: @escaping () -> Double,
+    init?(item: AVPlayerItem, targets: [Target], audioFeed: HLSAudioFeed?,
           onMatch: @escaping (UUID, Double) -> Void) {
         var visualMatchers: [UUID: VisualMatcher] = [:]
         var audioMatchers: [UUID: AudioMatcher] = [:]
         var pending: Set<UUID> = []
         for target in targets {
             guard let method = target.segment.effectiveDetection else { continue }
+            let confidence = target.segment.matchConfidence
             var usable = false
-            if method.usesVisual, let matcher = VisualMatcher(print: target.print) {
+            if method.usesVisual, let matcher = VisualMatcher(print: target.print, confidence: confidence) {
                 visualMatchers[target.segment.id] = matcher
                 usable = true
             }
-            if method.usesAudio, PlaybackFeatureTap.canReadAudio, let matcher = AudioMatcher(print: target.print) {
+            if method.usesAudio, audioFeed != nil, let matcher = AudioMatcher(print: target.print, confidence: confidence) {
                 audioMatchers[target.segment.id] = matcher
                 usable = true
             }
             if usable { pending.insert(target.segment.id) }
         }
         guard !pending.isEmpty else { return nil }
-        tap = PlaybackFeatureTap(item: item, visual: !visualMatchers.isEmpty, audio: !audioMatchers.isEmpty,
-                                 playbackTime: playbackTime)
+        tap = PlaybackFeatureTap(item: item, visual: !visualMatchers.isEmpty,
+                                 audioFeed: audioMatchers.isEmpty ? nil : audioFeed)
         self.onMatch = onMatch
         visual = visualMatchers
         audio = audioMatchers
