@@ -46,7 +46,6 @@ final class AutoCaptionEngine {
     private var running = 0
     private var ticker: Task<Void, Never>?
     private var tasks: [UUID: SFSpeechRecognitionTask] = [:]
-    private var retainedCues: [SubtitleCue] = []
     private var onCues: ([SubtitleCue]) -> Void = { _ in }
     private var onStatus: (String) -> Void = { _ in }
     private var playbackTime: () -> Double = { 0 }
@@ -58,6 +57,10 @@ final class AutoCaptionEngine {
     private var spacedLanguage = true
     /// Names to listen for: the title, its cast and characters.
     private var vocabulary: [String] = []
+    /// Who is speaking when (`SpeakerTracker`), for speaker-change lines.
+    private var speakers: SpeakerTracker?
+    static let speakersKey = "vela_caption_speakers"
+    private var speakersEnabled: Bool { UserDefaults.standard.object(forKey: Self.speakersKey) as? Bool ?? true }
 
     /// Nonisolated on purpose: Speech calls this handler on a background queue.
     /// A closure formed inside this @MainActor class would inherit main-actor
@@ -106,6 +109,12 @@ final class AutoCaptionEngine {
             throw Failure.unavailable
         }
         recognizers = made
+        if speakersEnabled {
+            let tracker = SpeakerTracker()
+            tracker.onChange = { [weak self] time in self?.rebuild(from: time - 2) }
+            tracker.start()
+            speakers = tracker
+        }
         self.feed = feed
         self.onCues = onCues
         self.onStatus = onStatus
@@ -155,8 +164,11 @@ final class AutoCaptionEngine {
         pending.removeAll()
         buffer = []
         recognizers = []
-        retainedCues = []
-        roughCues = []
+        finalWords = []
+        roughWords = []
+        builtCues = []
+        speakers?.stop()
+        speakers = nil
     }
 
     // MARK: Diagnostics
@@ -174,7 +186,7 @@ final class AutoCaptionEngine {
             parts.append("Older engine")
         }
         // The last line already made in the stretch of captions around now.
-        let cues = (retainedCues + roughCues).filter { $0.start >= now - 30 }.sorted { $0.start < $1.start }
+        let cues = builtCues.filter { $0.start >= now - 30 }
         var reach = now
         for cue in cues where cue.start <= reach + 12 { reach = max(reach, cue.end) }
         parts.insert("Text +\(Int(max(0, reach - now))) s", at: 1)
@@ -208,6 +220,7 @@ final class AutoCaptionEngine {
             guard let unsent = modern.unsent(raw) else { return }
             chunk = unsent
         }
+        speakers?.feed(chunk)
         if #available(iOS 26.0, *), let modern = modern as? LongFormTranscriber {
             modern.feed(chunk)
             return
@@ -381,56 +394,104 @@ final class AutoCaptionEngine {
         }
     }
 
-    /// Rough lines (iOS 26), shown until the final text for them arrives.
-    private var roughCues: [SubtitleCue] = []
+    // MARK: Lines
+    //
+    // The recognised words are kept, and lines are rebuilt from them around
+    // whatever changed: new final words, new rough words, or the speaker
+    // model reaching that stretch (it often lands a second or two after
+    // the words do).
+
+    private var finalWords: [Word] = []
+    /// Rough words (iOS 26), shown until the final text for them arrives.
+    private var roughWords: [Word] = []
+    private var builtCues: [SubtitleCue] = []
 
     private func accept(_ words: [Word], from start: Double, to end: Double, isFinal: Bool = true) {
         if !words.isEmpty {
             if resultCount == 0 { onStatus("") }
             resultCount += 1
         }
-        var fresh: [SubtitleCue] = []
-        var group: [Word] = []
+        if isFinal {
+            finalWords.removeAll { $0.start >= start - 0.05 && $0.start < end }
+            finalWords.append(contentsOf: words)
+            finalWords.sort { $0.start < $1.start }
+            if finalWords.count > 40_000 { finalWords.removeFirst(finalWords.count - 40_000) }
+            // Rough words for this stretch are replaced by the final ones.
+            roughWords.removeAll { $0.start < end + 0.05 && $0.end > start - 0.05 }
+        } else {
+            // Each rough result is the newest guess for the stretch it covers.
+            roughWords.removeAll { $0.end > start - 0.05 }
+            roughWords.append(contentsOf: words)
+        }
+        rebuild(from: start)
+    }
+
+    /// Rebuilds the lines from just before `time` onwards.
+    private func rebuild(from time: Double) {
+        // Start at a line boundary before the change, and never in the
+        // middle of a two-speaker pair.
+        let cut = builtCues.last { $0.start < time - 1 && !$0.text.contains("\n") }?.start ?? -.infinity
+        builtCues.removeAll { $0.start >= cut }
+        let words = (finalWords + roughWords).filter { $0.start >= cut }.sorted { $0.start < $1.start }
+
         // Japanese / Chinese words come without spaces between them.
         let joiner = spacedLanguage ? " " : ""
         let maxLength = spacedLanguage ? 42 : 22
-        func line(_ words: [Word]) -> String { words.map(\.text).joined(separator: joiner) }
-        func finishGroup() {
-            guard let first = group.first, let last = group.last else { return }
-            fresh.append(SubtitleCue(start: first.start, end: last.end + 0.7, text: CaptionText.format(line(group))))
-            group.removeAll()
-        }
+        func line(_ words: [Word]) -> String { CaptionText.format(words.map(\.text).joined(separator: joiner)) }
         let enders: Set<Character> = [".", "?", "!", "。", "？", "！", "…"]
+
+        var lines: [(words: [Word], speaker: Int?)] = []
+        var group: [Word] = []
+        var groupSpeaker: Int?
+        func finish() {
+            guard !group.isEmpty else { return }
+            lines.append((group, groupSpeaker))
+            group = []
+            groupSpeaker = nil
+        }
         for word in words {
-            // A pause, or a line that would get too long, starts a new line.
-            if let last = group.last,
-               word.start - last.end > 0.8 || line(group + [word]).count > maxLength { finishGroup() }
+            let speaker = speakers?.speaker(from: word.start, to: max(word.end, word.start + 0.1))
+            if let last = group.last {
+                // A pause, a new speaker, or a line that would get too long
+                // starts a new line.
+                let newSpeaker = speaker != nil && groupSpeaker != nil && speaker != groupSpeaker
+                if newSpeaker || word.start - last.end > 0.8 || line(group + [word]).count > maxLength { finish() }
+            }
             group.append(word)
-            if let end = word.text.last, enders.contains(end) { finishGroup() }
+            if groupSpeaker == nil { groupSpeaker = speaker }
+            if let end = word.text.last, enders.contains(end) { finish() }
         }
-        finishGroup()
-        if isFinal {
-            retainedCues.removeAll { $0.start >= start - 0.05 && $0.start < end }
-            retainedCues.append(contentsOf: fresh)
-            retainedCues.sort { $0.start < $1.start }
-            if retainedCues.count > 3_000 { retainedCues.removeFirst(retainedCues.count - 3_000) }
-            // Rough lines for this stretch are replaced by the final ones.
-            roughCues.removeAll { $0.start < end + 0.05 && $0.end > start - 0.05 }
-        } else {
-            // Each rough result is the newest guess for the stretch it covers.
-            roughCues.removeAll { $0.end > start - 0.05 }
-            roughCues.append(contentsOf: fresh.filter { cue in
-                !retainedCues.contains { abs($0.start - cue.start) < 0.3 }
-            })
+        finish()
+
+        var index = 0
+        while index < lines.count {
+            let first = lines[index]
+            guard let firstStart = first.words.first?.start, let firstEnd = first.words.last?.end else { index += 1; continue }
+            let firstText = line(first.words)
+            // Two speakers back to back: both on screen, an em dash each,
+            // the reply added when it's spoken.
+            if index + 1 < lines.count, let a = first.speaker, let b = lines[index + 1].speaker, a != b,
+               let replyStart = lines[index + 1].words.first?.start, let replyEnd = lines[index + 1].words.last?.end,
+               replyStart - firstEnd < 1.5 {
+                let replyText = line(lines[index + 1].words)
+                builtCues.append(SubtitleCue(start: firstStart, end: replyStart, text: "— " + firstText))
+                builtCues.append(SubtitleCue(start: replyStart, end: replyEnd + 0.7, text: "— \(firstText)\n— \(replyText)"))
+                index += 2
+            } else {
+                builtCues.append(SubtitleCue(start: firstStart, end: firstEnd + 0.7, text: firstText))
+                index += 1
+            }
         }
-        var merged = (retainedCues + roughCues).sorted { $0.start < $1.start }
+        if builtCues.count > 8_000 { builtCues.removeFirst(builtCues.count - 8_000) }
+
+        var shown = builtCues
         // One line at a time: each ends when the next begins, so a new line
         // replaces the last instead of stacking under it.
-        for i in merged.indices.dropLast() where merged[i].end > merged[i + 1].start {
-            let cue = merged[i]
-            merged[i] = SubtitleCue(start: cue.start, end: merged[i + 1].start, text: cue.text)
+        for i in shown.indices.dropLast() where shown[i].end > shown[i + 1].start {
+            let cue = shown[i]
+            shown[i] = SubtitleCue(start: cue.start, end: shown[i + 1].start, text: cue.text)
         }
-        onCues(merged)
+        onCues(shown)
     }
 }
 

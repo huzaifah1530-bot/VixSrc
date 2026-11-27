@@ -5,6 +5,13 @@ options:
     iOS: "17.0"
   createIntermediateGroups: true
 
+packages:
+  # On-device speaker model (Sortformer) for splitting auto captions by
+  # speaker. Models download from Hugging Face on first use.
+  FluidAudio:
+    url: https://github.com/FluidInference/FluidAudio
+    exactVersion: 0.18.4
+
 settings:
   base:
     SWIFT_VERSION: "6.0"
@@ -35,4 +42,7 @@ targets:
         SWIFT_EMIT_LOC_STRINGS: YES
         GENERATE_INFOPLIST_FILE: NO
         TARGETED_DEVICE_FAMILY: "1,2"
+    dependencies:
+      - package: FluidAudio
+        product: FluidAudio
     capabilities: []

@@ -359,6 +359,7 @@ struct SettingsView: View {
     }
 
     @AppStorage(CaptionOverlay.diagnosticsKey) private var captionDiagnostics = false
+    @AppStorage(AutoCaptionEngine.speakersKey) private var captionSpeakers = true
 
     private var captionsSection: some View {
         Section {
@@ -367,11 +368,12 @@ struct SettingsView: View {
             } label: {
                 LabeledContent("Caption Style", value: CaptionSize(rawValue: captionScale)?.label ?? "")
             }
+            Toggle("Split Auto Captions by Speaker", isOn: $captionSpeakers)
             Toggle("Caption Diagnostics", isOn: $captionDiagnostics)
         } header: {
             Text("Captions")
         } footer: {
-            Text("Caption Style: size, colour, font, background and edge for every caption Vela shows. Caption Diagnostics shows how far ahead auto captions are ready, at the top of the player.")
+            Text("Caption Style: size, colour, font, background and edge for every caption Vela shows. Split by Speaker starts a new auto-caption line when someone else talks, with an em dash for each speaker when two share the screen; its speaker model downloads once. Caption Diagnostics shows how far ahead auto captions are ready, at the top of the player.")
         }
     }
 
