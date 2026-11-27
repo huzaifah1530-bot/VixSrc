@@ -532,7 +532,7 @@ private struct PlayerSurface: View {
     @ViewBuilder private var skipIntroButton: some View {
         let party = PartySession.shared
         if let segment = playerManager.activeSkipSegment,
-           (segment.kind == .intro || segment.kind == .recap || showControls),
+           (segment.isProminent || showControls),
            !playerManager.isLoading, playerManager.error == nil,
            !(party.active && !party.canControl) {
             VStack {
@@ -545,9 +545,9 @@ private struct PlayerSurface: View {
                     } label: {
                         HStack(spacing: 8) {
                             Image(systemName: "forward.fill")
-                            Text("Skip \(segment.kind.rawValue.capitalized)").lineLimit(1)
+                            Text(segment.buttonTitle).lineLimit(1)
                         }
-                        .id(segment.kind)
+                        .id("\(segment.kind.rawValue)|\(segment.label ?? "")")
                         .transition(.asymmetric(
                             insertion: .offset(y: 10).combined(with: .opacity).combined(with: .scale(scale: 0.94)),
                             removal: .offset(y: -9).combined(with: .opacity)
@@ -556,17 +556,17 @@ private struct PlayerSurface: View {
                         .foregroundStyle(.black)
                         .padding(.horizontal, isFullscreen ? 18 : 14)
                         .padding(.vertical, isFullscreen ? 11 : 8)
-                        .background(segment.kind == .intro || segment.kind == .recap ? Color.white : Color.white.opacity(0.68), in: Capsule())
+                        .background(segment.isProminent ? Color.white : Color.white.opacity(0.68), in: Capsule())
                         .shadow(color: .black.opacity(0.3), radius: 8, y: 3)
                     }
                     .buttonStyle(PlayerButtonStyle())
-                    .accessibilityLabel("Skip \(segment.kind.rawValue)")
+                    .accessibilityLabel(segment.buttonTitle)
                 }
             }
             .padding(.horizontal, isFullscreen ? 20 : 14)
             .padding(.bottom, showControls ? (isFullscreen ? (hasNextEpisodeVisible ? 124 : 82) : (hasNextEpisodeVisible ? 95 : 56)) : (isFullscreen ? 14 : 12))
             .animation(spring, value: showControls)
-            .animation(.spring(response: 0.42, dampingFraction: 0.78), value: segment.kind)
+            .animation(.spring(response: 0.42, dampingFraction: 0.78), value: segment.buttonTitle)
             .transition(.move(edge: .trailing).combined(with: .opacity))
         }
     }

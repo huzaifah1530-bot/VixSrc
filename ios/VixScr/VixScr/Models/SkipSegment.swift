@@ -3,15 +3,32 @@ import Foundation
 /// A skippable part of an episode, in seconds. Mirrors `SkipSegment` and
 /// the helpers in desktop/src/shared/introSkip.ts; keep the two in step
 /// (desktop's `npm run test:intro` covers the shared rules).
+///
+/// iOS only, for now: `.custom` segments with a `label` come from the
+/// viewer's recorded segments (Show Settings), found in each episode by
+/// `SegmentDetector`; desktop doesn't have them yet.
 struct SkipSegment: Hashable, Sendable {
-    enum Kind: String, Sendable { case intro, recap, outro, preview }
-    enum Source: String, Sendable { case stream, skipdb, theintrodb, aniskip, custom }
+    enum Kind: String, Sendable { case intro, recap, outro, preview, custom }
+    enum Source: String, Sendable { case stream, skipdb, theintrodb, aniskip, custom, recorded }
 
     /// The player offers a button while playback is inside this segment.
     let kind: Kind
     let start: Double
     let end: Double
     let source: Source
+    /// Button text for recorded segments ("Skip Opening").
+    var label: String? = nil
+    /// Recorded segments choose for themselves; nil follows the app's
+    /// "Automatically Skip Intros" setting (intros only).
+    var autoSkip: Bool? = nil
+
+    var buttonTitle: String {
+        if let label { return label }
+        return "Skip \(kind.rawValue.capitalized)"
+    }
+
+    /// Shown even while the controls are hidden.
+    var isProminent: Bool { kind == .intro || kind == .recap || kind == .custom }
 }
 
 /// Intro times the user set for a whole show; replaces found intros.
@@ -49,14 +66,14 @@ enum SkipSegments {
         }
         guard end - s.start >= minSegmentSeconds else { return nil }
         if s.kind == .intro && end - s.start > maxIntroSeconds { return nil }
-        return SkipSegment(kind: s.kind, start: s.start, end: end, source: s.source)
+        return SkipSegment(kind: s.kind, start: s.start, end: end, source: s.source, label: s.label, autoSkip: s.autoSkip)
     }
 
     static func valid(_ list: [SkipSegment], duration: Double) -> [SkipSegment] {
         var out: [SkipSegment] = []
         for s in list {
             guard let v = valid(s, duration: duration) else { continue }
-            if !out.contains(where: { $0.kind == v.kind && abs($0.start - v.start) < 1 }) { out.append(v) }
+            if !out.contains(where: { $0.kind == v.kind && $0.label == v.label && abs($0.start - v.start) < 1 }) { out.append(v) }
         }
         return out.sorted { $0.start < $1.start }
     }
@@ -64,6 +81,12 @@ enum SkipSegments {
     /// The intro the playhead is in (and not in its last second), if any.
     static func activeIntro(_ segments: [SkipSegment], at t: Double) -> SkipSegment? {
         segments.first { $0.kind == .intro && t >= $0.start && t < $0.end - 1 }
+    }
+
+    /// The segment to skip automatically at `t`, from a list that holds only
+    /// segments allowed to skip themselves.
+    static func activeAutomatic(_ segments: [SkipSegment], at t: Double) -> SkipSegment? {
+        segments.first { t >= $0.start && t < $0.end - 1 }
     }
 
     static func activeSegment(_ segments: [SkipSegment], at t: Double) -> SkipSegment? {
@@ -273,13 +296,15 @@ struct AutoSkipTracker {
 
     mutating func restart() { last = nil; fresh = true }
 
-    /// Returns the time to seek to, or nil.
+    /// Returns the time to seek to, or nil. `segments` are the ones that may
+    /// skip automatically (intros when the setting is on, and recorded
+    /// segments set to skip by themselves).
     mutating func step(episodeKey: String, segments: [SkipSegment], time t: Double, allowed: Bool) -> Double? {
         let prev = last
         let wasFresh = fresh
         last = t
         fresh = false
-        guard let intro = SkipSegments.activeIntro(segments, at: t) else { return nil }
+        guard let intro = SkipSegments.activeAutomatic(segments, at: t) else { return nil }
         let key = "\(episodeKey)|\(Int(intro.start.rounded()))"
         if handled.contains(key) { return nil }
         let natural = prev.map { t >= $0 && t - $0 <= 2 } ?? false

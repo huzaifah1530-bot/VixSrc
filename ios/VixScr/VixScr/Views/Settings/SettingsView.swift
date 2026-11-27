@@ -153,6 +153,7 @@ struct SettingsView: View {
             playerSection
             introSection
             captionsSection
+            titleSettingsSection
         }
         .navigationTitle("Playback")
         .navigationBarTitleDisplayMode(.inline)
@@ -383,7 +384,7 @@ struct SettingsView: View {
                         HStack {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(o.title.isEmpty ? key : o.title)
-                                Text("Custom intro \(Self.clock(o.start)) – \(Self.clock(o.end))\(o.isComplete ? "" : " (incomplete)")")
+                                Text("Older custom intro \(Self.clock(o.start)) – \(Self.clock(o.end))\(o.isComplete ? "" : " (incomplete)")")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
@@ -402,8 +403,50 @@ struct SettingsView: View {
         } header: {
             Text("Intros")
         } footer: {
-            Text("Skip actions use SkipDB data (ODbL 1.0), with TheIntroDB or AniSkip fallback; in a watch party only the host skips automatically. Set custom intro times in the Intro start / end boxes under a show's player (both 00:00 = off); they apply to every episode.")
+            Text("Skip actions use SkipDB data (ODbL 1.0), with TheIntroDB or AniSkip fallback; in a watch party only the host skips automatically. To skip your own parts of a show, open Show Settings under its player and record a segment.")
         }
+    }
+
+    @ViewBuilder private var titleSettingsSection: some View {
+        let customised = store.titleSettings.filter { $0.value.isCustomised || !$0.value.skipping.segments.isEmpty }
+        if !customised.isEmpty {
+            Section {
+                ForEach(customised.keys.sorted { (customised[$0]?.title ?? $0) < (customised[$1]?.title ?? $1) }, id: \.self) { key in
+                    if let settings = customised[key] {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(settings.title.isEmpty ? key : settings.title)
+                            Text(titleSettingsSummary(settings))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .swipeActions(edge: .trailing) {
+                            Button(role: .destructive) {
+                                store.resetTitleSettings(key: key)
+                                showToast("\(settings.kind.settingsTitle) reset")
+                            } label: {
+                                Label("Reset", systemImage: "arrow.counterclockwise")
+                            }
+                        }
+                    }
+                }
+            } header: {
+                Text("Show & Movie Settings")
+            } footer: {
+                Text("Titles with their own captions, audio or skipping. Change them under each title's player; swipe to reset one.")
+            }
+        }
+    }
+
+    private func titleSettingsSummary(_ settings: TitleSettings) -> String {
+        var parts: [String] = []
+        if settings.caption.enabled { parts.append("Captions") }
+        if settings.captionTiming.enabled { parts.append("Timing") }
+        if settings.audio.enabled { parts.append(settings.kind == .anime ? "Sub/Dub" : "Audio") }
+        if settings.skipping.enabled {
+            let count = settings.skipping.segments.count
+            parts.append(settings.skipping.source == .recorded ? (count == 1 ? "1 segment" : "\(count) segments") : "Online skips")
+        }
+        return parts.isEmpty ? "Recorded segments kept" : parts.joined(separator: " · ")
     }
 
     private var cardSizeSection: some View {

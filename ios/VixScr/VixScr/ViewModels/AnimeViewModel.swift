@@ -295,8 +295,11 @@ final class AnimeViewModel {
                 self.isResolvingStream = false
                 self.statusMessage = nil
                 self.nativeSources = streams
-                let index = streams.firstIndex { $0.audio == self.preferredAudio && $0.quality == self.preferredQuality }
-                    ?? streams.firstIndex { $0.audio == self.preferredAudio }
+                // The show's default Sub / Dub (Anime Settings) wins over the
+                // last one picked.
+                let audio = self.titleAudioPreference ?? self.preferredAudio
+                let index = streams.firstIndex { $0.audio == audio && $0.quality == self.preferredQuality }
+                    ?? streams.firstIndex { $0.audio == audio }
                     ?? 0
                 self.selectedNativeSourceIndex = index
                 self.loadSource(at: index)
@@ -394,6 +397,69 @@ final class AnimeViewModel {
         let showKey = selected.map { "\($0.type.rawValue):\($0.tmdbId)" }
         playerManager.configureIntroSkip(episodeKey: progressID, showKey: showKey, showTitle: selected?.title ?? "",
                                          streamSegments: source.segments, fetch: fetch)
+        applyTitleSettings(switchAudio: false)
+    }
+
+    // MARK: - Title settings
+
+    /// "Sub" / "Dub" from the show's settings, when that option is on.
+    private var titleAudioPreference: String? {
+        guard let key = selected?.id, case .animeTrack(let track)? = store.titleSettings[key]?.playback.audioDefault else { return nil }
+        return track
+    }
+
+    /// Hands the show's saved settings to the player. With `switchAudio`
+    /// (a change made in Anime Settings) a different default Sub / Dub
+    /// switches the playing source too.
+    func applyTitleSettings(switchAudio: Bool = true) {
+        guard let item = selected else { return }
+        let store = store
+        let titleKey = item.id
+        playerManager.onRecordedSegmentFound = { id, episodeKey, start, videoDuration in
+            store.rememberSegmentMatch(titleKey: titleKey, segmentID: id, episodeKey: episodeKey,
+                                       start: start, videoDuration: videoDuration)
+        }
+        playerManager.applyTitleConfig(store.titleSettings[titleKey]?.playback)
+        if switchAudio, let wanted = titleAudioPreference,
+           nativeSources.indices.contains(selectedNativeSourceIndex),
+           nativeSources[selectedNativeSourceIndex].audio != wanted,
+           let index = nativeSources.firstIndex(where: { $0.audio == wanted && $0.quality == preferredQuality })
+            ?? nativeSources.firstIndex(where: { $0.audio == wanted }) {
+            switchSource(to: index)
+        }
+    }
+
+    /// Everything Anime Settings needs for the open show.
+    func titleContext() -> TitleContext? {
+        guard let item = selected else { return nil }
+        let episodes = details?.episodes ?? []
+        let server = currentServer
+        let current = selectedEpisode.map { Self.episodeRef(item: item, episode: $0) }
+        return TitleContext(
+            key: item.id,
+            item: item,
+            kind: .anime,
+            playerManager: playerManager,
+            seasons: [],
+            currentSeason: nil,
+            currentEpisode: current,
+            loadEpisodes: { _ in episodes.map { Self.episodeRef(item: item, episode: $0) } },
+            resolveStream: { [weak self] episode in
+                guard let server, let ids = episode.animeIDs,
+                      let streams = try? await AnimeKaiClient.streams(base: server.base, episodeIds: ids),
+                      !streams.isEmpty else { return nil }
+                let audio = self?.titleAudioPreference ?? self?.preferredAudio ?? "Sub"
+                return streams.first { $0.audio == audio } ?? streams.first
+            },
+            apply: { [weak self] in self?.applyTitleSettings() }
+        )
+    }
+
+    private static func episodeRef(item: MediaItem, episode: AnimeKaiClient.EpisodeInfo) -> EpisodeRef {
+        let label = "Episode \(episode.number)"
+        return EpisodeRef(id: "tv:\(item.tmdbId):1:\(episode.intNumber)", label: label,
+                          title: episode.title == label ? nil : episode.title,
+                          season: nil, number: episode.intNumber, animeIDs: episode.ids)
     }
 
     /// A source failed in AVPlayer: try the next one (same audio first).

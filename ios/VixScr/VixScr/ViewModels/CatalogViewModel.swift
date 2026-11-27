@@ -774,6 +774,79 @@ final class CatalogViewModel {
         }
         playerManager.configureIntroSkip(episodeKey: progressID, showKey: showKey, showTitle: selected?.title ?? "",
                                          streamSegments: [], fetch: fetch)
+        applyTitleSettings()
+    }
+
+    // MARK: - Title settings
+
+    /// Hands the title's saved settings to the player, and remembers where
+    /// recorded segments are found.
+    func applyTitleSettings() {
+        guard let item = selected else { return }
+        let store = store
+        let titleKey = item.id
+        playerManager.onRecordedSegmentFound = { id, episodeKey, start, videoDuration in
+            store.rememberSegmentMatch(titleKey: titleKey, segmentID: id, episodeKey: episodeKey,
+                                       start: start, videoDuration: videoDuration)
+        }
+        playerManager.applyTitleConfig(store.titleSettings[titleKey]?.playback)
+    }
+
+    /// Everything Show / Movie Settings needs for the open title.
+    func titleContext() -> TitleContext? {
+        guard let item = selected else { return nil }
+        let store = store
+        let client = client
+        var current: EpisodeRef?
+        if item.type == .movie {
+            current = EpisodeRef(id: "movie:\(item.tmdbId)", label: item.title, title: nil, season: nil, number: 1)
+        } else if let season = selectedSeason?.seasonNumber, let episode = selectedEpisode {
+            current = Self.episodeRef(item: item, season: season, episode: episode)
+        }
+        let loadedSeason = selectedSeason?.seasonNumber
+        let loadedEpisodes = episodes
+        return TitleContext(
+            key: item.id,
+            item: item,
+            kind: TitleKind(item: item),
+            playerManager: playerManager,
+            seasons: tvDetails?.usableSeasons.map(\.seasonNumber) ?? [],
+            currentSeason: loadedSeason,
+            currentEpisode: current,
+            loadEpisodes: { season in
+                guard item.type == .tv else {
+                    return [EpisodeRef(id: "movie:\(item.tmdbId)", label: item.title, title: nil, season: nil, number: 1)]
+                }
+                guard let season else { return [] }
+                let list: [Episode]
+                if season == loadedSeason, !loadedEpisodes.isEmpty {
+                    list = loadedEpisodes
+                } else {
+                    list = (try? await client.season(tvId: item.tmdbId, seasonNumber: season, credential: store.credential))?.episodes ?? []
+                }
+                return list.map { Self.episodeRef(item: item, season: season, episode: $0) }
+            },
+            resolveStream: { [weak self] episode in
+                // The server being watched first, then the others.
+                let preferred = self?.activeServer
+                let servers = (preferred.map { [$0] } ?? []) + store.servers.filter { $0.id != preferred?.id }
+                for server in servers {
+                    let url = item.type == .movie
+                        ? server.movieURL(tmdbId: item.tmdbId)
+                        : server.tvURL(tmdbId: item.tmdbId, season: episode.season ?? 1, episode: episode.number)
+                    guard let url else { continue }
+                    if let stream = await StreamURLExtractor.resolveStreams(for: url).first { return stream }
+                }
+                return nil
+            },
+            apply: { [weak self] in self?.applyTitleSettings() }
+        )
+    }
+
+    private static func episodeRef(item: MediaItem, season: Int, episode: Episode) -> EpisodeRef {
+        EpisodeRef(id: "tv:\(item.tmdbId):\(season):\(episode.episodeNumber)",
+                   label: "S\(season) · E\(episode.episodeNumber)",
+                   title: episode.name, season: season, number: episode.episodeNumber)
     }
 
     private var nowPlayingEpisodeSubtitle: String? {

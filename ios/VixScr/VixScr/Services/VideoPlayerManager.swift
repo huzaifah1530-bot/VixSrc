@@ -66,6 +66,7 @@ final class VideoPlayerManager {
     @ObservationIgnored private var subtitleTask: Task<Void, Never>?
     @ObservationIgnored private var autoCaptionEngine: AnyObject?
     @ObservationIgnored private var restoreGeneratedOnForeground = false
+    @ObservationIgnored private var generatedToRestore: (locale: String, translated: Bool)?
     @ObservationIgnored private var lifecycleObservers: [NSObjectProtocol] = []
 
     var canGenerateCaptions: Bool {
@@ -137,8 +138,11 @@ final class VideoPlayerManager {
         // Transcription cannot keep running for a paused item, and leaving it
         // attached holds the audio output. Restart from the saved choice when
         // the viewer comes back.
-        if generatedCaptionLocale != nil {
+        if let locale = generatedCaptionLocale {
             restoreGeneratedOnForeground = true
+            // What was actually running, which may be a title's default
+            // rather than the remembered app-wide choice.
+            generatedToRestore = (locale, translateGeneratedCaptions)
             stopGeneratedCaptions()
         }
         saveProgress()
@@ -155,12 +159,12 @@ final class VideoPlayerManager {
         guard restoreGeneratedOnForeground else { return }
         restoreGeneratedOnForeground = false
         // Keep the viewer's chosen caption source across app switches.
-        if case .generated(let locale) = captionPreference, let item = player?.currentItem {
-            let translated = locale == "ja-JP->en"
+        if let restore = generatedToRestore, let item = player?.currentItem {
+            generatedToRestore = nil
             Task { [weak self] in
                 guard let self, self.player?.currentItem === item else { return }
-                await self.selectGeneratedCaptions(locale: translated ? "ja-JP" : locale,
-                                                   translated: translated, remember: false)
+                await self.selectGeneratedCaptions(locale: restore.locale,
+                                                   translated: restore.translated, remember: false)
             }
         }
     }
@@ -240,10 +244,16 @@ final class VideoPlayerManager {
     @ObservationIgnored private var legibleRelay: LegibleRelay?
     @ObservationIgnored private var embeddedCaption: String?
 
+    /// Stream captions with the item time each belongs to, kept while a
+    /// caption offset is set: AVFoundation pushes them at their own time,
+    /// so showing them earlier or later means replaying this list.
+    @ObservationIgnored private var embeddedEvents: [(time: Double, text: String?)] = []
+
     private func attachLegibleOutput(to item: AVPlayerItem) {
-        let relay = LegibleRelay { [weak self] text in
+        let relay = LegibleRelay { [weak self] text, itemTime in
             guard let self else { return }
             self.embeddedCaption = text
+            if self.captionOffset != 0, itemTime.isFinite { self.recordEmbeddedEvent(text, at: itemTime) }
             self.updateCaption(at: self.currentTime)
         }
         let output = AVPlayerItemLegibleOutput()
@@ -253,6 +263,8 @@ final class VideoPlayerManager {
         legibleOutput = output
         legibleRelay = relay
         embeddedCaption = nil
+        embeddedEvents = []
+        applyLegibleAdvance()
     }
 
     private func detachLegibleOutput() {
@@ -261,11 +273,56 @@ final class VideoPlayerManager {
         legibleOutput = nil
         legibleRelay = nil
         embeddedCaption = nil
+        embeddedEvents = []
+    }
+
+    private func recordEmbeddedEvent(_ text: String?, at time: Double) {
+        // Usually in order; after a seek AVFoundation starts over elsewhere.
+        var index = embeddedEvents.count
+        while index > 0, embeddedEvents[index - 1].time > time { index -= 1 }
+        if index > 0, abs(embeddedEvents[index - 1].time - time) < 0.01 {
+            embeddedEvents[index - 1] = (time, text)
+        } else {
+            embeddedEvents.insert((time, text), at: index)
+        }
+        if embeddedEvents.count > 3_000 { embeddedEvents.removeFirst(embeddedEvents.count - 3_000) }
+    }
+
+    /// Earlier captions need AVFoundation to hand them over early.
+    private func applyLegibleAdvance() {
+        legibleOutput?.advanceIntervalForDelegateInvocation = captionOffset < 0 ? -captionOffset + 1 : 0
+    }
+
+    // MARK: - Caption timing
+
+    /// Seconds captions are moved by for the current title; positive shows
+    /// them later. Set from the title's settings.
+    private(set) var captionOffset: Double = 0
+
+    func setCaptionOffset(_ offset: Double) {
+        let clamped = min(max(offset, CaptionTiming.range.lowerBound), CaptionTiming.range.upperBound)
+        guard clamped != captionOffset else { return }
+        captionOffset = clamped
+        if clamped == 0 { embeddedEvents = [] }
+        applyLegibleAdvance()
+        updateCaption(at: currentTime)
     }
 
     private func updateCaption(at time: Double) {
+        // Cues are looked up on the caption's own clock.
+        let cueTime = time - captionOffset
         if generatedCaptionLocale == nil, selectedSubtitleIndex != nil {
-            if embeddedCaption != currentCaption { currentCaption = embeddedCaption }
+            var text = embeddedCaption
+            if captionOffset != 0 {
+                // The last stream caption at or before the shifted time. One
+                // older than 12 s is stale (a gap AVFoundation never filled).
+                if let event = embeddedEvents.last(where: { $0.time <= cueTime }), cueTime - event.time < 12 {
+                    text = event.text
+                } else {
+                    text = nil
+                }
+            }
+            if text != currentCaption { currentCaption = text }
             return
         }
         let cues = generatedCaptionLocale == nil ? externalCues :
@@ -274,11 +331,11 @@ final class VideoPlayerManager {
             if currentCaption != nil { currentCaption = nil }
             return
         }
-        // Binary search for the last cue starting at or before `time`.
+        // Binary search for the last cue starting at or before `cueTime`.
         var low = 0, high = cues.count - 1, found = -1
         while low <= high {
             let mid = (low + high) / 2
-            if cues[mid].start <= time { found = mid; low = mid + 1 } else { high = mid - 1 }
+            if cues[mid].start <= cueTime { found = mid; low = mid + 1 } else { high = mid - 1 }
         }
         var lines: [String] = []
         if found >= 0 {
@@ -286,7 +343,7 @@ final class VideoPlayerManager {
             // Overlapping cues (signs + dialogue) render together.
             while i >= 0, i >= found - 4 {
                 let cue = cues[i]
-                if cue.start <= time, cue.end > time { lines.insert(cue.text, at: 0) }
+                if cue.start <= cueTime, cue.end > cueTime { lines.insert(cue.text, at: 0) }
                 i -= 1
             }
         }
@@ -295,6 +352,21 @@ final class VideoPlayerManager {
     }
     
     // MARK: - Playback Control
+
+    /// An asset that sends the headers and cookies a resolved stream needs.
+    /// Shared with the segment recorder so it opens streams the same way.
+    static func asset(url: URL, requestHeaders: [String: String], httpCookies: [HTTPCookie]) -> AVURLAsset {
+        var options: [String: Any] = [
+            AVURLAssetHTTPUserAgentKey: requestHeaders["User-Agent"] ?? StreamURLExtractor.userAgent
+        ]
+        if !httpCookies.isEmpty { options[AVURLAssetHTTPCookiesKey] = httpCookies }
+        // Anime CDNs (MegaPlay, VidTube) refuse playlists and segments without
+        // a matching Referer. AVFoundation has no public key for arbitrary
+        // headers; this long-standing private key is what every iOS player uses.
+        let extraHeaders = requestHeaders.filter { $0.key != "User-Agent" }
+        if !extraHeaders.isEmpty { options["AVURLAssetHTTPHeaderFieldsKey"] = extraHeaders }
+        return AVURLAsset(url: url, options: options)
+    }
     
     func load(url: URL, requestHeaders: [String: String] = [:], httpCookies: [HTTPCookie] = [], startPosition: Double = 0, progressId: String? = nil, mediaTitle: String? = nil, subtitle: String? = nil, artworkURL: URL? = nil) {
         cleanup()
@@ -308,16 +380,7 @@ final class VideoPlayerManager {
         self.isLoading = true
         self.error = nil
         
-        var options: [String: Any] = [
-            AVURLAssetHTTPUserAgentKey: requestHeaders["User-Agent"] ?? StreamURLExtractor.userAgent
-        ]
-        if !httpCookies.isEmpty { options[AVURLAssetHTTPCookiesKey] = httpCookies }
-        // Anime CDNs (MegaPlay, VidTube) refuse playlists and segments without
-        // a matching Referer. AVFoundation has no public key for arbitrary
-        // headers; this long-standing private key is what every iOS player uses.
-        let extraHeaders = requestHeaders.filter { $0.key != "User-Agent" }
-        if !extraHeaders.isEmpty { options["AVURLAssetHTTPHeaderFieldsKey"] = extraHeaders }
-        let asset = AVURLAsset(url: url, options: options)
+        let asset = Self.asset(url: url, requestHeaders: requestHeaders, httpCookies: httpCookies)
         let item = AVPlayerItem(asset: asset)
         attachLegibleOutput(to: item)
         let player = AVPlayer(playerItem: item)
@@ -345,12 +408,19 @@ final class VideoPlayerManager {
                         self.updateDuration(from: item)
                         self.observeDuration(for: item)
                         self.updateSubtitleOptions(for: item)
-                        if case .generated(let locale) = self.captionPreference {
+                        self.updateAudioOptions(for: item)
+                        if let audio = self.titleConfig?.audioDefault { self.applyTitleAudio(audio) }
+                        // A title's default caption wins over the app-wide
+                        // remembered one; if this episode has nothing that
+                        // matches it, the app-wide choice stays.
+                        let handled = self.titleConfig?.captionDefault.map { self.applyTitleCaption($0) } ?? false
+                        if !handled, case .generated(let locale) = self.captionPreference {
                             let translated = locale == "ja-JP->en"
                             Task { await self.selectGeneratedCaptions(locale: translated ? "ja-JP" : locale,
                                                                       translated: translated, remember: false) }
                         }
                         self.publishNowPlayingInfo()
+                        self.prepareRecordedSegments()
                     }
                     self.setupPeriodicTimeObserver()
                     
@@ -432,6 +502,10 @@ final class VideoPlayerManager {
         introShowKey = showKey
         introShowTitle = showTitle
         introOverride = showKey.flatMap { loadIntroOverride($0) }
+        stopRecordedDetection()
+        recordedFound = []
+        foundSegmentStarts = [:]
+        recordedPreparedFor = ""
         if autoSkipTrackerKey != episodeKey {
             autoSkipTracker = AutoSkipTracker()
             autoSkipTrackerKey = episodeKey
@@ -442,18 +516,15 @@ final class VideoPlayerManager {
         recomputeSegments()
     }
 
-    /// The show's custom intro was edited (IntroTimesTable): apply it now.
-    func reloadIntroOverride() {
-        guard let key = introShowKey else { return }
-        introOverride = loadIntroOverride(key)
-        recomputeSegments()
-        autoSkipTracker.restart()
-    }
-
     private func recomputeSegments() {
         let found = SkipSegments.merge(duration: duration, sources: [introRaw ?? [], streamSkipSegments])
         foundIntro = found.first { $0.kind == .intro }
-        skipSegments = SkipSegments.valid(SkipSegments.withOverride(found, introOverride), duration: duration)
+        if titleConfig?.skipSource == .recorded {
+            // The title uses the viewer's own segments instead of found ones.
+            skipSegments = SkipSegments.valid(recordedFound, duration: duration)
+        } else {
+            skipSegments = SkipSegments.valid(SkipSegments.withOverride(found, introOverride), duration: duration)
+        }
     }
 
     func skipIntro() {
@@ -468,7 +539,8 @@ final class VideoPlayerManager {
     }
 
     private func tickIntro(_ t: Double) {
-        if introRaw == nil, let fetch = introFetch, !introFetchStarted,
+        // A title using recorded segments never asks the online sources.
+        if introRaw == nil, let fetch = introFetch, !introFetchStarted, titleConfig?.skipSource != .recorded,
            duration > 0 || Date().timeIntervalSince(introLoadedAt) > 6 {
             introFetchStarted = true
             let key = introKey
@@ -481,12 +553,195 @@ final class VideoPlayerManager {
             }
         }
         guard !skipSegments.isEmpty, !introKey.isEmpty else { return }
+        // Intros follow the app-wide setting; recorded segments their own.
+        let automatic = autoSkipEnabled()
+        let eligible = skipSegments.filter { $0.autoSkip ?? ($0.kind == .intro && automatic) }
+        guard !eligible.isEmpty else { return }
         // In a watch party only the host skips, through the room's seek.
         let party = PartySession.shared
-        let allowed = autoSkipEnabled() && (!party.active || party.hostId == party.me)
-        if let target = autoSkipTracker.step(episodeKey: introKey, segments: skipSegments, time: t, allowed: allowed) {
+        let allowed = !party.active || party.hostId == party.me
+        if let target = autoSkipTracker.step(episodeKey: introKey, segments: eligible, time: t, allowed: allowed) {
             seek(to: target)
         }
+    }
+
+    // MARK: - Per-title settings
+    //
+    // The view models hand over the playing title's settings (Show / Movie /
+    // Anime Settings) after `load`, and again whenever they change. Caption
+    // and audio defaults apply once the stream is ready; skipping switches
+    // between found timestamps and the viewer's recorded segments.
+
+    @ObservationIgnored private(set) var titleConfig: TitlePlaybackConfig?
+    /// Stream audio tracks (HLS alternate audio), for the title's default
+    /// audio choice.
+    private(set) var audioOptions: [AVMediaSelectionOption] = []
+    private(set) var selectedAudioIndex: Int?
+    /// Recorded segments found (or remembered) in this episode.
+    @ObservationIgnored private var recordedFound: [SkipSegment] = []
+    @ObservationIgnored private var segmentDetector: SegmentDetector?
+    @ObservationIgnored private var recordedPreparedFor = ""
+    /// Recorded segments being looked for right now, for the settings page.
+    private(set) var searchingSegmentIDs: Set<UUID> = []
+    /// Recorded segments found in this episode, with their start.
+    private(set) var foundSegmentStarts: [UUID: Double] = [:]
+    /// Called when a recorded segment is found: (segment, episode key,
+    /// start, video length). The view model remembers it for next time.
+    @ObservationIgnored var onRecordedSegmentFound: ((UUID, String, Double, Double) -> Void)?
+    /// The episode key detection runs against (the progress id).
+    var currentEpisodeKey: String { introKey }
+
+    func applyTitleConfig(_ config: TitlePlaybackConfig?) {
+        let previous = titleConfig
+        titleConfig = config
+        setCaptionOffset(config?.captionOffset ?? 0)
+        let ready = player?.status == .readyToPlay
+        if ready, config?.captionDefault != previous?.captionDefault {
+            if let choice = config?.captionDefault { _ = applyTitleCaption(choice) }
+        }
+        if ready, config?.audioDefault != previous?.audioDefault, let audio = config?.audioDefault {
+            applyTitleAudio(audio)
+        }
+        if config?.skipSignature != previous?.skipSignature {
+            stopRecordedDetection()
+            recordedFound = []
+            foundSegmentStarts = [:]
+            recordedPreparedFor = ""
+            prepareRecordedSegments()
+            recomputeSegments()
+            autoSkipTracker.restart()
+        }
+    }
+
+    /// Selects the title's default caption. False when nothing in this
+    /// episode matches it.
+    @discardableResult
+    func applyTitleCaption(_ choice: CaptionChoice) -> Bool {
+        switch choice {
+        case .off:
+            stopGeneratedCaptions()
+            selectSubtitle(at: nil, remember: false)
+            selectExternalSubtitle(at: nil, remember: false)
+            return true
+        case .generated(let locale):
+            guard canGenerateCaptions, player?.currentItem != nil else { return false }
+            let translated = locale == "ja-JP->en"
+            if generatedCaptionLocale == (translated ? "ja-JP" : locale), translateGeneratedCaptions == translated { return true }
+            Task { await selectGeneratedCaptions(locale: translated ? "ja-JP" : locale, translated: translated, remember: false) }
+            return true
+        case .language(let code, let label):
+            // The exact track it was picked from, then any in its language.
+            if let label {
+                if let index = subtitleOptions.firstIndex(where: { $0.displayName == label }) {
+                    if selectedSubtitleIndex != index { selectSubtitle(at: index, remember: false) }
+                    return true
+                }
+                if let index = externalSubtitles.firstIndex(where: { $0.label == label }) {
+                    if selectedExternalSubtitleIndex != index { selectExternalSubtitle(at: index, remember: false) }
+                    return true
+                }
+            }
+            if let index = subtitleOptions.firstIndex(where: { MediaLanguage.matches(option: $0, code: code) }) {
+                if selectedSubtitleIndex != index { selectSubtitle(at: index, remember: false) }
+                return true
+            }
+            if let index = externalSubtitles.firstIndex(where: { MediaLanguage.matches(label: $0.label, code: code) }) {
+                if selectedExternalSubtitleIndex != index { selectExternalSubtitle(at: index, remember: false) }
+                return true
+            }
+            return false
+        }
+    }
+
+    /// Picks the title's default audio track. Sub / Dub is a choice of
+    /// source, which the anime view model makes; only HLS tracks apply here.
+    func applyTitleAudio(_ choice: AudioChoice) {
+        guard case .language(let code, let label) = choice else { return }
+        let index = label.flatMap { label in audioOptions.firstIndex { $0.displayName == label } }
+            ?? audioOptions.firstIndex { MediaLanguage.matches(option: $0, code: code) }
+        if let index, index != selectedAudioIndex { selectAudio(at: index) }
+    }
+
+    private func updateAudioOptions(for item: AVPlayerItem) {
+        guard let group = item.asset.mediaSelectionGroup(forMediaCharacteristic: .audible) else {
+            audioOptions = []
+            selectedAudioIndex = nil
+            return
+        }
+        audioOptions = group.options
+        if let selected = item.currentMediaSelection.selectedMediaOption(in: group) {
+            selectedAudioIndex = audioOptions.firstIndex { $0 === selected }
+        } else {
+            selectedAudioIndex = nil
+        }
+    }
+
+    func selectAudio(at index: Int) {
+        guard let item = player?.currentItem,
+              let group = item.asset.mediaSelectionGroup(forMediaCharacteristic: .audible),
+              audioOptions.indices.contains(index) else { return }
+        item.select(audioOptions[index], in: group)
+        selectedAudioIndex = index
+    }
+
+    /// Recorded segments for this episode: remembered positions apply at
+    /// once; the rest are looked for as the episode plays.
+    private func prepareRecordedSegments() {
+        guard let config = titleConfig, config.skipSource == .recorded, !config.recordedSegments.isEmpty,
+              !introKey.isEmpty, duration > 0, let item = player?.currentItem else { return }
+        let marker = "\(introKey)|\(config.skipSignature.joined(separator: ","))"
+        guard recordedPreparedFor != marker else { return }
+        recordedPreparedFor = marker
+        stopRecordedDetection()
+
+        var known: [SkipSegment] = []
+        var targets: [SegmentDetector.Target] = []
+        var starts: [UUID: Double] = [:]
+        for segment in config.recordedSegments {
+            if let match = segment.match(for: introKey, videoDuration: duration) {
+                known.append(recordedSkip(segment, start: match.start))
+                starts[segment.id] = match.start
+            } else if let print = SegmentLibrary.load(segment.id) {
+                targets.append(SegmentDetector.Target(segment: segment, print: print))
+            }
+        }
+        recordedFound = known
+        foundSegmentStarts = starts
+        if !targets.isEmpty {
+            segmentDetector = SegmentDetector(item: item, targets: targets,
+                                              playbackTime: { [weak self] in self?.livePosition ?? 0 }) { [weak self] id, start in
+                self?.recordedSegmentFound(id, start: start)
+            }
+            searchingSegmentIDs = segmentDetector?.searching ?? []
+        }
+        recomputeSegments()
+    }
+
+    private func recordedSkip(_ segment: RecordedSegment, start: Double) -> SkipSegment {
+        let begin = max(0, start)
+        return SkipSegment(kind: .custom, start: begin, end: start + segment.duration, source: .recorded,
+                           label: segment.buttonTitle, autoSkip: segment.autoSkip)
+    }
+
+    private func recordedSegmentFound(_ id: UUID, start: Double) {
+        searchingSegmentIDs.remove(id)
+        guard let segment = titleConfig?.recordedSegments.first(where: { $0.id == id }) else { return }
+        // Must fit this video; a "match" past the end is noise.
+        guard start > -segment.duration, duration <= 0 || start < duration - SkipSegments.minSegmentSeconds else { return }
+        recordedFound.removeAll { $0.label == segment.buttonTitle && abs($0.start - max(0, start)) < 1 }
+        recordedFound.append(recordedSkip(segment, start: start))
+        foundSegmentStarts[id] = start
+        recomputeSegments()
+        // Found partway in: let the tracker treat it as just reached, so an
+        // automatic skip still happens.
+        autoSkipTracker.restart()
+        onRecordedSegmentFound?(id, introKey, start, duration)
+    }
+
+    private func stopRecordedDetection() {
+        segmentDetector?.stop()
+        segmentDetector = nil
+        searchingSegmentIDs = []
     }
 
     func rawPlay() { player?.play(); isPlaying = true }
@@ -496,6 +751,7 @@ final class VideoPlayerManager {
         player?.seek(to: CMTime(seconds: clamped, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
         currentTime = clamped
         pendingResumePosition = 0
+        segmentDetector?.noteSeek()
         updateCaption(at: clamped)
     }
     /// The player's real position right now. `currentTime` only updates on
@@ -576,6 +832,7 @@ final class VideoPlayerManager {
         }
         currentTime = clamped
         noteCaptionSeek(clamped)
+        segmentDetector?.noteSeek()
         updateCaption(at: clamped)
         pendingResumePosition = 0
         publishNowPlayingInfo()
@@ -671,7 +928,8 @@ final class VideoPlayerManager {
         let seconds = item.duration.seconds
         guard seconds.isFinite, seconds > 0 else { return }
         duration = seconds
-        if introRaw != nil || !streamSkipSegments.isEmpty || introOverride != nil { recomputeSegments() }
+        if introRaw != nil || !streamSkipSegments.isEmpty || introOverride != nil || !recordedFound.isEmpty { recomputeSegments() }
+        prepareRecordedSegments()
         publishNowPlayingInfo()
         if pendingResumePosition > 0 {
             let resume = min(pendingResumePosition, seconds)
@@ -1028,6 +1286,15 @@ final class VideoPlayerManager {
         foundIntro = nil
         introOverride = nil
         introShowKey = nil
+        // Title settings are handed over again after the next load.
+        stopRecordedDetection()
+        recordedFound = []
+        foundSegmentStarts = [:]
+        recordedPreparedFor = ""
+        titleConfig = nil
+        captionOffset = 0
+        audioOptions = []
+        selectedAudioIndex = nil
     }
 }
 
@@ -1073,9 +1340,10 @@ extension VideoPlayerManager {
 /// Receives stream subtitle text from AVFoundation on the main queue and
 /// hands it to the player manager.
 private final class LegibleRelay: NSObject, AVPlayerItemLegibleOutputPushDelegate {
-    private let deliver: @MainActor (String?) -> Void
+    /// (text, item time it belongs to).
+    private let deliver: @MainActor (String?, Double) -> Void
 
-    init(deliver: @escaping @MainActor (String?) -> Void) {
+    init(deliver: @escaping @MainActor (String?, Double) -> Void) {
         self.deliver = deliver
     }
 
@@ -1087,7 +1355,8 @@ private final class LegibleRelay: NSObject, AVPlayerItemLegibleOutputPushDelegat
             .map { line in line.string.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { line in !line.isEmpty }
         let text = lines.isEmpty ? nil : lines.joined(separator: "\n")
+        let seconds = itemTime.seconds
         // The delegate queue is .main.
-        MainActor.assumeIsolated { deliver(text) }
+        MainActor.assumeIsolated { deliver(text, seconds) }
     }
 }

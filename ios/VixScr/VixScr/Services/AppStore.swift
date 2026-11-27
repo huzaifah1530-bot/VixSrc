@@ -39,6 +39,7 @@ final class AppStore {
         static let animeEnabled = "vixsrc_live_anime_enabled"
         static let autoSkipIntro = "vela_auto_skip_intro"
         static let introOverrides = "vela_intro_overrides"
+        static let titleSettings = "vela_title_settings"
         /// Set once the saved server list has been cut to VixSrc + VidSrc.
         
         static let serversMigratedNuvio = "vela_servers_migrated_v4"
@@ -197,6 +198,23 @@ final class AppStore {
         }
     }
 
+    /// Per-title settings (Show / Movie / Anime Settings), keyed by
+    /// `MediaItem.id`. Recorded segment fingerprints live in files
+    /// (`SegmentLibrary`); only their descriptions are here.
+    @ObservationIgnored private var storedTitleSettings: [String: TitleSettings]
+    var titleSettings: [String: TitleSettings] {
+        get {
+            access(keyPath: \.titleSettings)
+            return storedTitleSettings
+        }
+        set {
+            withMutation(keyPath: \.titleSettings) {
+                storedTitleSettings = newValue
+                save(newValue, key: Keys.titleSettings)
+            }
+        }
+    }
+
     /// Shows the Anime tab and enables anime servers. On by default.
     @ObservationIgnored private var storedAnimeEnabled: Bool
     var animeEnabled: Bool {
@@ -329,6 +347,7 @@ final class AppStore {
         self.storedUltraPerformanceMode = defaults.bool(forKey: Keys.ultraPerfMode)
         self.storedAutoSkipIntro = defaults.bool(forKey: Keys.autoSkipIntro)
         self.storedIntroOverrides = AppStore.load([String: IntroOverride].self, key: Keys.introOverrides, defaults: defaults) ?? [:]
+        self.storedTitleSettings = AppStore.load([String: TitleSettings].self, key: Keys.titleSettings, defaults: defaults) ?? [:]
         var servers = AppStore.load([StreamServer].self, key: Keys.servers, defaults: defaults) ?? StreamServer.defaults
         if !defaults.bool(forKey: Keys.serversMigratedNuvio) {
             servers = StreamServer.migrated(servers)
@@ -460,6 +479,50 @@ final class AppStore {
         animeServers.remove(at: index)
     }
 
+    // MARK: Per-title settings
+
+    /// Saved settings for a title, or fresh (unsaved) defaults.
+    func settings(forTitle key: String, title: String, kind: TitleKind) -> TitleSettings {
+        if var saved = titleSettings[key] {
+            // Keep the name current; ids never change but titles can.
+            if !title.isEmpty { saved.title = title }
+            return saved
+        }
+        return TitleSettings(title: title, kind: kind)
+    }
+
+    func saveTitleSettings(_ settings: TitleSettings, key: String) {
+        var copy = settings
+        copy.updatedAt = Date()
+        titleSettings[key] = copy
+    }
+
+    /// Remembers where a recorded segment was found in an episode.
+    func rememberSegmentMatch(titleKey: String, segmentID: UUID, episodeKey: String, start: Double, videoDuration: Double) {
+        guard var settings = titleSettings[titleKey],
+              let index = settings.skipping.segments.firstIndex(where: { $0.id == segmentID }) else { return }
+        var segment = settings.skipping.segments[index]
+        segment.matches[episodeKey] = SegmentMatch(start: start, videoDuration: videoDuration, foundAt: Date())
+        if segment.matches.count > RecordedSegment.maxRememberedMatches {
+            let oldest = segment.matches.sorted { $0.value.foundAt < $1.value.foundAt }
+                .prefix(segment.matches.count - RecordedSegment.maxRememberedMatches)
+            for (key, _) in oldest { segment.matches[key] = nil }
+        }
+        settings.skipping.segments[index] = segment
+        // Not `saveTitleSettings`: a match isn't an edit by the viewer.
+        titleSettings[titleKey] = settings
+    }
+
+    /// Clears a title's settings and its recorded fingerprints.
+    func resetTitleSettings(key: String) {
+        for segment in titleSettings[key]?.skipping.segments ?? [] { SegmentLibrary.delete(segment.id) }
+        titleSettings[key] = nil
+    }
+
+    var allRecordedSegmentIDs: Set<UUID> {
+        Set(titleSettings.values.flatMap { $0.skipping.segments.map(\.id) })
+    }
+
     // MARK: Backup (export / import)
 
     /// Everything the app persists, as one versioned JSON document.
@@ -483,6 +546,8 @@ final class AppStore {
         var ultraPerformanceMode: Bool
         var autoSkipIntro: Bool?
         var introOverrides: [String: IntroOverride]?
+        /// Segment fingerprints stay on the device that recorded them.
+        var titleSettings: [String: TitleSettings]?
         var captionScale: Double?
         var captionPreferenceData: Data?
         var partyPasteBanner: Bool?
@@ -506,6 +571,7 @@ final class AppStore {
             ultraPerformanceMode: ultraPerformanceMode,
             autoSkipIntro: autoSkipIntro,
             introOverrides: introOverrides,
+            titleSettings: titleSettings,
             captionScale: defaults.object(forKey: CaptionSize.storageKey) as? Double ?? CaptionSize.medium.rawValue,
             captionPreferenceData: defaults.data(forKey: "vela_caption_preference"),
             partyPasteBanner: defaults.object(forKey: "vela_party_paste_banner") as? Bool ?? true
@@ -538,6 +604,11 @@ final class AppStore {
         ultraPerformanceMode = backup.ultraPerformanceMode
         if let enabled = backup.autoSkipIntro { autoSkipIntro = enabled }
         if let overrides = backup.introOverrides { introOverrides = overrides }
+        if let titles = backup.titleSettings {
+            titleSettings = titles
+            // Fingerprints for segments the backup doesn't have are dropped.
+            SegmentLibrary.prune(keeping: allRecordedSegmentIDs)
+        }
         if let scale = backup.captionScale, CaptionSize(rawValue: scale) != nil {
             defaults.set(scale, forKey: CaptionSize.storageKey)
         }

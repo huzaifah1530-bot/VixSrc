@@ -81,7 +81,7 @@ struct PlayerSheet: View {
                     .padding(.horizontal, 20)
                 actionRow
                     .padding(.horizontal, 20)
-                introTimes
+                titleSettings
                     .padding(.horizontal, 20)
                 descriptionView
                     .padding(.horizontal, 20)
@@ -249,12 +249,10 @@ struct PlayerSheet: View {
         return options
     }
 
-    /// Custom intro start / end for this show (TV only).
-    @ViewBuilder private var introTimes: some View {
-        if let item = viewModel.selected, item.type == .tv {
-            IntroTimesTable(showKey: "\(item.type.rawValue):\(item.tmdbId)", title: item.title, found: viewModel.playerManager.foundIntro) {
-                viewModel.playerManager.reloadIntroOverride()
-            }
+    /// Show / Movie Settings: captions, audio and skipping for this title.
+    @ViewBuilder private var titleSettings: some View {
+        if let item = viewModel.selected {
+            TitleSettingsCard(item: item) { viewModel.titleContext() }
         }
     }
 
