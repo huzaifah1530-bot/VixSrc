@@ -75,6 +75,9 @@ struct SettingsView: View {
                     NavigationLink { dataPage } label: {
                         SettingsCategoryRow(title: "Data", symbol: "externaldrive.fill", color: .orange)
                     }
+                    NavigationLink { ModelsSettingsView() } label: {
+                        SettingsCategoryRow(title: "Models", symbol: "cpu.fill", color: .purple)
+                    }
                 }
             }
             .navigationTitle("Settings")
@@ -359,7 +362,11 @@ struct SettingsView: View {
     }
 
     @AppStorage(CaptionOverlay.diagnosticsKey) private var captionDiagnostics = false
-    @AppStorage(AutoCaptionEngine.speakersKey) private var captionSpeakers = true
+    @AppStorage(SpeakerModelChoice.key) private var speakerModelRaw = SpeakerModelChoice.current.rawValue
+
+    private var speakerModelLabel: String {
+        SpeakerModelChoice(rawValue: speakerModelRaw)?.title ?? SpeakerModelChoice.current.title
+    }
 
     private var captionsSection: some View {
         Section {
@@ -368,12 +375,16 @@ struct SettingsView: View {
             } label: {
                 LabeledContent("Caption Style", value: CaptionSize(rawValue: captionScale)?.label ?? "")
             }
-            Toggle("Split Auto Captions by Speaker", isOn: $captionSpeakers)
+            NavigationLink {
+                SpeakerModelSettingsView()
+            } label: {
+                LabeledContent("Split by Speaker", value: speakerModelLabel)
+            }
             Toggle("Caption Diagnostics", isOn: $captionDiagnostics)
         } header: {
             Text("Captions")
         } footer: {
-            Text("Caption Style: size, colour, font, background and edge for every caption Vela shows. Split by Speaker starts a new auto-caption line when someone else talks, with an em dash for each speaker when two share the screen; its speaker model downloads once. Caption Diagnostics shows how far ahead auto captions are ready, at the top of the player.")
+            Text("Caption Style: size, colour, font, background and edge for every caption Vela shows. Split by Speaker starts a new auto-caption line when someone else talks, with an em dash for each speaker in a quick exchange. Caption Diagnostics shows how far ahead auto captions are ready, at the top of the player.")
         }
     }
 

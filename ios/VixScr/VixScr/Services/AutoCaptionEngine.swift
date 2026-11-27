@@ -59,8 +59,6 @@ final class AutoCaptionEngine {
     private var vocabulary: [String] = []
     /// Who is speaking when (`SpeakerTracker`), for speaker-change lines.
     private var speakers: SpeakerTracker?
-    static let speakersKey = "vela_caption_speakers"
-    private var speakersEnabled: Bool { UserDefaults.standard.object(forKey: Self.speakersKey) as? Bool ?? true }
 
     /// Nonisolated on purpose: Speech calls this handler on a background queue.
     /// A closure formed inside this @MainActor class would inherit main-actor
@@ -109,8 +107,7 @@ final class AutoCaptionEngine {
             throw Failure.unavailable
         }
         recognizers = made
-        if speakersEnabled {
-            let tracker = SpeakerTracker()
+        if let tracker = SpeakerTracker(choice: SpeakerModelChoice.current, compressed: SpeakerModelChoice.compressed) {
             tracker.onChange = { [weak self] time in self?.rebuild(from: time - 2) }
             tracker.start()
             speakers = tracker
@@ -426,6 +423,37 @@ final class AutoCaptionEngine {
         rebuild(from: start)
     }
 
+    /// The speaker of each word, cleaned up so one stray word can't split a
+    /// line: a word only takes a speaker who covers most of it, unlabelled
+    /// words inherit the one before, and a speaker change only counts when
+    /// the new voice lasts at least a second and two words.
+    private func speakerLabels(for words: [Word]) -> [Int?] {
+        guard let speakers else { return words.map { _ in nil } }
+        var labels: [Int?] = words.map { word in
+            guard let found = speakers.speaker(from: word.start, to: max(word.end, word.start + 0.1)),
+                  found.share >= 0.6 else { return nil }
+            return found.speaker
+        }
+        var last: Int?
+        for i in labels.indices {
+            if labels[i] == nil { labels[i] = last } else { last = labels[i] }
+        }
+        var i = 0
+        var previous: Int?
+        while i < labels.count {
+            var j = i
+            while j + 1 < labels.count, labels[j + 1] == labels[i] { j += 1 }
+            let length = words[j].end - words[i].start
+            if let p = previous, labels[i] != p, length < 1.0 || j - i + 1 < 2 {
+                for k in i...j { labels[k] = p }
+            } else {
+                previous = labels[i]
+            }
+            i = j + 1
+        }
+        return labels
+    }
+
     /// Rebuilds the lines from just before `time` onwards.
     private func rebuild(from time: Double) {
         // Start at a line boundary before the change, and never in the
@@ -440,6 +468,7 @@ final class AutoCaptionEngine {
         func line(_ words: [Word]) -> String { CaptionText.format(words.map(\.text).joined(separator: joiner)) }
         let enders: Set<Character> = [".", "?", "!", "。", "？", "！", "…"]
 
+        let labels = speakerLabels(for: words)
         var lines: [(words: [Word], speaker: Int?)] = []
         var group: [Word] = []
         var groupSpeaker: Int?
@@ -449,8 +478,7 @@ final class AutoCaptionEngine {
             group = []
             groupSpeaker = nil
         }
-        for word in words {
-            let speaker = speakers?.speaker(from: word.start, to: max(word.end, word.start + 0.1))
+        for (word, speaker) in zip(words, labels) {
             if let last = group.last {
                 // A pause, a new speaker, or a line that would get too long
                 // starts a new line.
@@ -468,11 +496,12 @@ final class AutoCaptionEngine {
             let first = lines[index]
             guard let firstStart = first.words.first?.start, let firstEnd = first.words.last?.end else { index += 1; continue }
             let firstText = line(first.words)
-            // Two speakers back to back: both on screen, an em dash each,
-            // the reply added when it's spoken.
+            // A quick exchange between two speakers: both on screen, an em
+            // dash each, the reply added when it's spoken. Long lines get
+            // the screen to themselves, as in subtitles.
             if index + 1 < lines.count, let a = first.speaker, let b = lines[index + 1].speaker, a != b,
                let replyStart = lines[index + 1].words.first?.start, let replyEnd = lines[index + 1].words.last?.end,
-               replyStart - firstEnd < 1.5 {
+               replyStart - firstEnd < 1.0, firstEnd - firstStart <= 4, replyEnd - replyStart <= 4 {
                 let replyText = line(lines[index + 1].words)
                 builtCues.append(SubtitleCue(start: firstStart, end: replyStart, text: "— " + firstText))
                 builtCues.append(SubtitleCue(start: replyStart, end: replyEnd + 0.7, text: "— \(firstText)\n— \(replyText)"))

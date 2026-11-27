@@ -141,14 +141,15 @@ let rules = [
     Rule(name: "share≥0.6", minShare: 0.6, minRun: 0, minWords: 1),
     Rule(name: "run≥0.8s,2w", minShare: 0, minRun: 0.8, minWords: 2),
     Rule(name: "share≥0.6 run≥0.8s,2w", minShare: 0.6, minRun: 0.8, minWords: 2),
+    Rule(name: "APP: share≥0.6 run≥1s,2w", minShare: 0.6, minRun: 1.0, minWords: 2),
     Rule(name: "share≥0.6 run≥1.2s,3w", minShare: 0.6, minRun: 1.2, minWords: 3),
     Rule(name: "share≥0.6 run≥1.8s,4w", minShare: 0.6, minRun: 1.8, minWords: 4),
 ]
 
-var configs: [(String, SortformerConfig)] = [("fast (app now)", .default), ("balanced v2.1", .balancedV2_1)]
+var configs: [(String, SortformerConfig)] = [("fast", .fastV2_1), ("balanced", .balancedV2_1)]
 var high = SortformerConfig.highContextV2_1
 high.precision = .palettized
-configs.append(("high context v2.1 (6-bit)", high))
+configs.append(("high context (compressed)", high))
 
 for name in CommandLine.arguments.dropFirst() {
     let base = URL(fileURLWithPath: "lab/\(name)")
