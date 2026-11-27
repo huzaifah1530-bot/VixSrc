@@ -266,7 +266,7 @@ final class SegmentRecorderModel {
             }
             if method.usesVisual {
                 let base = method.usesAudio ? 0.3 : 0
-                let samples = try await reader.visualSamples(from: max(0, start - 0.5), to: end + 0.5) { fraction in
+                let samples = try await reader.visualSamples(from: max(0, start - 0.5), to: end + 0.5) { [weak self] fraction in
                     Task { @MainActor [weak self] in
                         guard let self, self.recordingProgress != nil else { return }
                         self.recordingProgress = base + (1 - base) * fraction
