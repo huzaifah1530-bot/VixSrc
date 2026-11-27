@@ -29,7 +29,8 @@ struct AnimeView: View {
             let shouldShow = active && searchText.trimmingCharacters(in: .whitespaces).isEmpty
             withAnimation(.easeInOut(duration: 0.22)) { showSearchOverlay = shouldShow }
         }
-        .onSubmit(of: .search) { isSearchActive = false }
+        // Only put the keyboard away; see HomeView.
+        .onSubmit(of: .search) { UIApplication.shared.dismissKeyboard() }
         .task {
             if !viewModel.homeLoaded { await viewModel.loadHome() }
         }

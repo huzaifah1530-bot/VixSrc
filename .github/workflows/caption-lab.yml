@@ -1,0 +1,35 @@
+name: Caption Lab
+
+# Speaker-split test bench for auto captions (tools/caption-lab). Builds
+# nothing that ships; it prints scores to the log.
+on:
+  push:
+    branches: ["codex/**"]
+    paths:
+      - "tools/caption-lab/**"
+      - ".github/workflows/caption-lab.yml"
+  workflow_dispatch: {}
+
+jobs:
+  lab:
+    runs-on: xcode-27
+    defaults:
+      run:
+        working-directory: tools/caption-lab
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Fetch test audio and subtitles
+        run: |
+          set +e
+          node fetch.mjs 1399 1 1 600 1500 got
+          node fetch.mjs 1396 1 1 300 1200 bb
+          mkdir -p lab
+          curl -sfL -o lab/tos.srt https://download.blender.org/demo/movies/ToS/subtitles/TOS-en.srt &&
+            curl -sfL -o lab/tos.aif https://download.blender.org/demo/movies/ToS/TOS_DVDSTEREOMIX.aif &&
+            node srt2json.mjs lab/tos.srt lab/tos.json
+          ls -la lab
+      - name: Score speaker splitting
+        run: swift run -c release CaptionLab got bb tos

@@ -46,8 +46,10 @@ struct HomeView: View {
             withAnimation(.easeInOut(duration: 0.22)) { showSearchOverlay = shouldShow }
         }
         .onSubmit(of: .search) {
-            // Dismiss keyboard without opening the first result
-            isSearchActive = false
+            // Only put the keyboard away. Turning the search off here acted
+            // like Cancel: the field collapsed and showed empty while the
+            // results (and the text) stayed.
+            UIApplication.shared.dismissKeyboard()
         }
         .task {
             if viewModel == nil {

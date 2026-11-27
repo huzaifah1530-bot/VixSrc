@@ -84,7 +84,8 @@ struct TitleSettings: Codable, Hashable, Sendable {
             audioDefault: audio.enabled ? audio.choice : nil,
             skipSource: skipping.enabled ? skipping.source : .online,
             recordedSegments: skipping.enabled && skipping.source == .recorded ? available : [],
-            nextEpisodeSegments: triggerSegments
+            nextEpisodeSegments: triggerSegments,
+            segmentsAsFallback: skipping.segmentsAsFallback
         )
     }
 
@@ -280,6 +281,9 @@ enum SegmentScope: String, Codable, Hashable, Sendable {
 struct SkipSettings: Codable, Hashable, Sendable {
     var enabled = false
     var source: SkipSource = .online
+    /// My Segments only fill gaps: where an online skip covers the same
+    /// stretch, the online one is used, unless the segment overrides it.
+    var segmentsAsFallback = false
     var scope: SegmentScope = .show
     /// Segments for the whole title.
     var segments: [RecordedSegment] = []
@@ -288,7 +292,7 @@ struct SkipSettings: Codable, Hashable, Sendable {
     /// Possible segments found in seasons that don't have them yet.
     var suggestions: [String: [SegmentSuggestion]] = [:]
 
-    private enum CodingKeys: String, CodingKey { case enabled, source, scope, segments, seasonSegments, suggestions }
+    private enum CodingKeys: String, CodingKey { case enabled, source, segmentsAsFallback, scope, segments, seasonSegments, suggestions }
 
     init() {}
 
@@ -296,6 +300,7 @@ struct SkipSettings: Codable, Hashable, Sendable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
         source = (try? c.decodeIfPresent(SkipSource.self, forKey: .source)) ?? .online
+        segmentsAsFallback = try c.decodeIfPresent(Bool.self, forKey: .segmentsAsFallback) ?? false
         scope = (try? c.decodeIfPresent(SegmentScope.self, forKey: .scope)) ?? .show
         segments = (try? c.decodeIfPresent([RecordedSegment].self, forKey: .segments)) ?? []
         seasonSegments = (try? c.decodeIfPresent([String: [RecordedSegment]].self, forKey: .seasonSegments)) ?? [:]
@@ -431,6 +436,9 @@ struct RecordedSegment: Codable, Hashable, Identifiable, Sendable {
     var name: String
     var isEnabled = true
     var autoSkip = false
+    /// With My Segments as a fallback: use this one even where an online
+    /// skip covers the same stretch.
+    var overridesOnline = false
     var detection: DetectionMethod
     /// How sure Vela must be before it calls a match, 0...1.
     var matchConfidence: Double = 0.5
@@ -475,7 +483,7 @@ struct RecordedSegment: Codable, Hashable, Identifiable, Sendable {
     static let maxRememberedMatches = 150
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, isEnabled, autoSkip, detection, matchConfidence, duration, sourceLabel, sourceKey, sourceStart,
+        case id, name, isEnabled, autoSkip, overridesOnline, detection, matchConfidence, duration, sourceLabel, sourceKey, sourceStart,
              hasVisual, hasAudio, createdAt, matches
     }
 
@@ -501,6 +509,7 @@ struct RecordedSegment: Codable, Hashable, Identifiable, Sendable {
         name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
         isEnabled = try c.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
         autoSkip = try c.decodeIfPresent(Bool.self, forKey: .autoSkip) ?? false
+        overridesOnline = try c.decodeIfPresent(Bool.self, forKey: .overridesOnline) ?? false
         detection = (try? c.decodeIfPresent(DetectionMethod.self, forKey: .detection)) ?? .visual
         matchConfidence = min(1, max(0, try c.decodeIfPresent(Double.self, forKey: .matchConfidence) ?? 0.5))
         duration = try c.decodeIfPresent(Double.self, forKey: .duration) ?? 0
@@ -534,6 +543,7 @@ struct TitlePlaybackConfig: Equatable, Sendable {
     /// Segments whose start shows the Next Episode button; looked for even
     /// when skipping doesn't use them.
     var nextEpisodeSegments: [RecordedSegment] = []
+    var segmentsAsFallback = false
 
     /// Every segment the detector should look for.
     var detectionTargets: [RecordedSegment] {
@@ -543,8 +553,8 @@ struct TitlePlaybackConfig: Equatable, Sendable {
     /// Changes that need the segment detector restarted. Remembered matches
     /// are left out: saving one must not restart the search that found it.
     var skipSignature: [String] {
-        [skipSource.rawValue] + nextEpisodeSegments.map { "next|\($0.id)" } + recordedSegments.map {
-            "\($0.id)|\($0.name)|\($0.autoSkip)|\($0.detection.rawValue)|\($0.matchConfidence)|\($0.duration)|\($0.hasVisual)|\($0.hasAudio)"
+        [skipSource.rawValue, "fallback|\(segmentsAsFallback)"] + nextEpisodeSegments.map { "next|\($0.id)" } + recordedSegments.map {
+            "\($0.id)|\($0.name)|\($0.autoSkip)|\($0.overridesOnline)|\($0.detection.rawValue)|\($0.matchConfidence)|\($0.duration)|\($0.hasVisual)|\($0.hasAudio)"
         }
     }
 

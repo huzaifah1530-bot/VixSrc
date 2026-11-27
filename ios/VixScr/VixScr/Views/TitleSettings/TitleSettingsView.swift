@@ -198,6 +198,13 @@ struct TitleSettingsView: View {
         }
 
         if settings.skipping.enabled && settings.skipping.source == .recorded {
+            Section {
+                Toggle("Use My Segments as Fallback", isOn: binding(\.skipping.segmentsAsFallback))
+            } footer: {
+                Text(settings.skipping.segmentsAsFallback
+                     ? "Online skips come first. Your segments are used where online has nothing for that stretch, or where a segment is set to override."
+                     : "Your segments replace online skips for this \(kind.noun.lowercased()).")
+            }
             if kind == .show {
                 Section {
                     Picker("Segments Apply To", selection: binding(\.skipping.scope)) {

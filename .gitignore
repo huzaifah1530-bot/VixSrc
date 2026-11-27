@@ -12,3 +12,6 @@ ios/**/*.xcodeproj/
 ios/**/DerivedData/
 ios/**/build/
 ios/**/*.ipa
+
+tools/caption-lab/lab/
+tools/caption-lab/.build/

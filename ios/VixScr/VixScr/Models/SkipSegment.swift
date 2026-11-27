@@ -21,6 +21,16 @@ struct SkipSegment: Hashable, Sendable {
     /// Recorded segments choose for themselves; nil follows the app's
     /// "Automatically Skip Intros" setting (intros only).
     var autoSkip: Bool? = nil
+    /// A recorded segment that wins over an online skip in the same stretch.
+    var overridesOnline = false
+
+    /// The two cover the same stretch: they overlap by at least half of
+    /// the shorter one.
+    func coversSameStretch(as other: SkipSegment) -> Bool {
+        let overlap = min(end, other.end) - max(start, other.start)
+        let shorter = min(end - start, other.end - other.start)
+        return shorter > 0 && overlap >= shorter / 2
+    }
 
     var buttonTitle: String {
         if let label { return label }
@@ -66,7 +76,8 @@ enum SkipSegments {
         }
         guard end - s.start >= minSegmentSeconds else { return nil }
         if s.kind == .intro && end - s.start > maxIntroSeconds { return nil }
-        return SkipSegment(kind: s.kind, start: s.start, end: end, source: s.source, label: s.label, autoSkip: s.autoSkip)
+        return SkipSegment(kind: s.kind, start: s.start, end: end, source: s.source, label: s.label, autoSkip: s.autoSkip,
+                           overridesOnline: s.overridesOnline)
     }
 
     static func valid(_ list: [SkipSegment], duration: Double) -> [SkipSegment] {

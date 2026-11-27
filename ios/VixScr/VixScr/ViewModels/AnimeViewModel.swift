@@ -419,6 +419,7 @@ final class AnimeViewModel {
             store.rememberSegmentMatch(titleKey: titleKey, segmentID: id, episodeKey: episodeKey,
                                        start: start, videoDuration: videoDuration)
         }
+        playerManager.titleIsAnime = true
         playerManager.applyTitleConfig(store.titleSettings[titleKey]?.playback)
         playerManager.captionVocabulary = ([item.title, details?.show.japaneseTitle ?? "", selectedEpisode?.title ?? ""]
             + (details?.identity?.titles ?? [])).filter { !$0.isEmpty && !$0.hasPrefix("Episode ") }

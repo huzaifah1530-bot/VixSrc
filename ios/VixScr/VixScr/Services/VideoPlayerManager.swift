@@ -419,7 +419,10 @@ final class VideoPlayerManager {
                         // remembered one; if this episode has nothing that
                         // matches it, the app-wide choice stays.
                         let handled = self.titleConfig?.captionDefault.map { self.applyTitleCaption($0) } ?? false
-                        if !handled, case .generated(let locale) = self.captionPreference {
+                        if !handled, case .generated(let saved) = self.captionPreference {
+                            // Japanese (and Japanese → English) are anime-only;
+                            // anything else falls back to English auto captions.
+                            let locale = saved.hasPrefix("ja") && !self.titleIsAnime ? "en-US" : saved
                             let translated = locale == "ja-JP->en"
                             Task { await self.selectGeneratedCaptions(locale: translated ? "ja-JP" : locale,
                                                                       translated: translated, remember: false) }
@@ -524,7 +527,18 @@ final class VideoPlayerManager {
     private func recomputeSegments() {
         let found = SkipSegments.merge(duration: duration, sources: [introRaw ?? [], streamSkipSegments])
         foundIntro = found.first { $0.kind == .intro }
-        if titleConfig?.skipSource == .recorded {
+        if titleConfig?.skipSource == .recorded, titleConfig?.segmentsAsFallback == true {
+            // Online skips first; a segment fills the gaps, or replaces the
+            // online skip in its stretch when it's set to override.
+            let online = SkipSegments.valid(SkipSegments.withOverride(found, introOverride), duration: duration)
+            let mine = SkipSegments.valid(recordedFound, duration: duration)
+            let overriding = mine.filter(\.overridesOnline)
+            let keptOnline = online.filter { skip in !overriding.contains { $0.coversSameStretch(as: skip) } }
+            let fillers = mine.filter { segment in
+                segment.overridesOnline || !keptOnline.contains { $0.coversSameStretch(as: segment) }
+            }
+            skipSegments = (keptOnline + fillers).sorted { $0.start < $1.start }
+        } else if titleConfig?.skipSource == .recorded {
             // The title uses the viewer's own segments instead of found ones.
             skipSegments = SkipSegments.valid(recordedFound, duration: duration)
         } else {
@@ -545,7 +559,8 @@ final class VideoPlayerManager {
 
     private func tickIntro(_ t: Double) {
         // A title using recorded segments never asks the online sources.
-        if introRaw == nil, let fetch = introFetch, !introFetchStarted, titleConfig?.skipSource != .recorded,
+        if introRaw == nil, let fetch = introFetch, !introFetchStarted,
+           titleConfig?.skipSource != .recorded || titleConfig?.segmentsAsFallback == true,
            duration > 0 || Date().timeIntervalSince(introLoadedAt) > 6 {
             introFetchStarted = true
             let key = introKey
@@ -631,8 +646,9 @@ final class VideoPlayerManager {
             selectSubtitle(at: nil, remember: false)
             selectExternalSubtitle(at: nil, remember: false)
             return true
-        case .generated(let locale):
+        case .generated(let chosen):
             guard canGenerateCaptions, player?.currentItem != nil else { return false }
+            let locale = chosen.hasPrefix("ja") && !titleIsAnime ? "en-US" : chosen
             let translated = locale == "ja-JP->en"
             if generatedCaptionLocale == (translated ? "ja-JP" : locale), translateGeneratedCaptions == translated { return true }
             Task { await selectGeneratedCaptions(locale: translated ? "ja-JP" : locale, translated: translated, remember: false) }
@@ -757,7 +773,8 @@ final class VideoPlayerManager {
     private func recordedSkip(_ segment: RecordedSegment, start: Double) -> SkipSegment {
         let begin = max(0, start)
         return SkipSegment(kind: .custom, start: begin, end: start + segment.duration, source: .recorded,
-                           label: segment.buttonTitle, autoSkip: segment.autoSkip)
+                           label: segment.buttonTitle, autoSkip: segment.autoSkip,
+                           overridesOnline: segment.overridesOnline)
     }
 
     private func recordedSegmentFound(_ id: UUID, start: Double) {
@@ -1046,6 +1063,9 @@ final class VideoPlayerManager {
     /// Names generated captions should listen for (title, cast, characters),
     /// set by the view models.
     @ObservationIgnored var captionVocabulary: [String] = []
+    /// Japanese auto captions are only offered for anime; set by the view
+    /// models so a choice made on an anime doesn't follow into a regular show.
+    @ObservationIgnored var titleIsAnime = false
 
     /// The audio language the title's settings ask for, so the sound Vela
     /// reads is the track that's playing.

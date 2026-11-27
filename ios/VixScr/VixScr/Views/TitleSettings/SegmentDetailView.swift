@@ -75,12 +75,14 @@ struct SegmentDetailView: View {
             Toggle("Enabled", isOn: binding(\.isEnabled))
             Toggle("Skip Automatically", isOn: binding(\.autoSkip))
                 .disabled(!segment.isEnabled)
+            Toggle("Override Online Skips", isOn: binding(\.overridesOnline))
+                .disabled(!segment.isEnabled || settings?.skipping.segmentsAsFallback != true)
             MatchConfidenceControl(value: $confidence) {
                 update { $0.matchConfidence = confidence }
             }
             .disabled(!segment.isEnabled)
         } footer: {
-            Text("Automatic skipping jumps past this part once per episode, the first time it plays. In a watch party only the host skips.")
+            Text("Automatic skipping jumps past this part once per episode, the first time it plays. In a watch party only the host skips. Override Online Skips works when Use My Segments as Fallback is on: this segment is used even where an online skip covers the same part.")
         }
     }
 

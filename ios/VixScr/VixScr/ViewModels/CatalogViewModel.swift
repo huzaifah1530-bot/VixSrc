@@ -789,6 +789,7 @@ final class CatalogViewModel {
             store.rememberSegmentMatch(titleKey: titleKey, segmentID: id, episodeKey: episodeKey,
                                        start: start, videoDuration: videoDuration)
         }
+        playerManager.titleIsAnime = item.isAnime
         playerManager.applyTitleConfig(store.titleSettings[titleKey]?.playback(season: selectedSeason?.seasonNumber))
         updateCaptionVocabulary()
     }
