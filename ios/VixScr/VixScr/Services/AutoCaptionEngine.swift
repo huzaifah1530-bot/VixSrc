@@ -233,7 +233,7 @@ private final class ResumeOnce: @unchecked Sendable {
     private let lock = NSLock()
     private var done = false
 
-    func resume<T>(_ continuation: CheckedContinuation<T, Never>, with value: T) {
+    func resume<T: Sendable>(_ continuation: CheckedContinuation<T, Never>, with value: T) {
         lock.lock()
         defer { lock.unlock() }
         guard !done else { return }
